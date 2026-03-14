@@ -278,16 +278,11 @@ token management, handler dispatch for play and scan events, and
 XML parsing for Plex shared server responses. Property-based tests
 verify scoring invariants and panic-freedom on arbitrary input.
 
-The 43% coverage reflects the large surface area of HTTP and
-WebSocket glue code. All extracted pure logic (stream matching,
-scoring, caching, config parsing) is fully tested — the untested
-code is exclusively network I/O that can't be meaningfully unit
-tested.
-
 Not tested: WebSocket connection management, HTTP API calls to
 Plex, the main event loop, scheduler tick loop, and cache file
-I/O — these are I/O-bound runtime paths validated by Docker
-healthchecks and structured logging in production.
+I/O — these are I/O-bound runtime paths that can't be
+meaningfully unit tested, validated instead by Docker healthchecks
+and structured logging in production.
 
 ## Dependencies
 
