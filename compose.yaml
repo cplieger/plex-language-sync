@@ -1,0 +1,32 @@
+services:
+  plex-language-sync:
+    image: ghcr.io/cplieger/plex-language-sync:latest
+    container_name: plex-language-sync
+    restart: unless-stopped
+    user: "1000:1000"  # match your host user
+    mem_limit: 128m
+
+    environment:
+      TZ: "Europe/Paris"
+      PLEX_URL: "http://plex:32400"  # full URL including scheme and port
+      PLEX_TOKEN: "your-plex-token"  # admin token from Plex Web settings
+      UPDATE_LEVEL: "show"  # show = entire show, season = current season only
+      UPDATE_STRATEGY: "all"  # all = every episode, next = future episodes only
+      TRIGGER_ON_PLAY: "true"
+      TRIGGER_ON_SCAN: "true"
+      LANGUAGE_PROFILES: "true"  # learn and apply audio→subtitle pairs for new shows
+      SCHEDULER_ENABLE: "true"
+      SCHEDULER_SCHEDULE_TIME: "02:00"
+
+    volumes:
+      - /opt/appdata/plex-language-sync:/config
+
+    healthcheck:
+      test:
+        - CMD
+        - /plex-language-sync
+        - health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
