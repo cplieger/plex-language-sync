@@ -1,8 +1,8 @@
-# docker-plex-language-sync
+# plex-language-sync
 
 ![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
-[![GitHub release](https://img.shields.io/github/v/release/cplieger/docker-plex-language-sync)](https://github.com/cplieger/docker-plex-language-sync/releases)
-[![Image Size](https://ghcr-badge.egpl.dev/cplieger/plex-language-sync/size)](https://github.com/cplieger/docker-plex-language-sync/pkgs/container/plex-language-sync)
+[![GitHub release](https://img.shields.io/github/v/release/cplieger/plex-language-sync)](https://github.com/cplieger/plex-language-sync/releases)
+[![Image Size](https://ghcr-badge.egpl.dev/cplieger/plex-language-sync/size)](https://github.com/cplieger/plex-language-sync/pkgs/container/plex-language-sync)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Distroless](https://img.shields.io/badge/base-Distroless_nonroot-4285F4?logo=google)
 
