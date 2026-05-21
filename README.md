@@ -165,7 +165,6 @@ services:
     container_name: plex-language-sync
     restart: unless-stopped
     user: "1000:1000"  # match your host user
-    mem_limit: 128m
 
     environment:
       TZ: "Europe/Paris"
@@ -181,16 +180,6 @@ services:
 
     volumes:
       - /opt/appdata/plex-language-sync:/config
-
-    healthcheck:
-      test:
-        - CMD
-        - /plex-language-sync
-        - health
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
 ```
 
 ## Deployment
@@ -262,10 +251,10 @@ automatically reconnects with exponential backoff (1s→30s).
 
 | Metric | Value |
 |--------|-------|
-| [Test Coverage](https://go.dev/blog/cover) | 41.6% |
-| Tests | 286 |
-| [Cyclomatic Complexity](https://en.wikipedia.org/wiki/Cyclomatic_complexity) (avg) | 3.8 |
-| [Cognitive Complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf) (avg) | 3.6 |
+| [Test Coverage](https://go.dev/blog/cover) | 60.3% |
+| Tests | 376 |
+| [Cyclomatic Complexity](https://en.wikipedia.org/wiki/Cyclomatic_complexity) (avg) | 3.7 |
+| [Cognitive Complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf) (avg) | 3.4 |
 | [Mutation Efficacy](https://en.wikipedia.org/wiki/Mutation_testing) | 90.1% (59 runs) |
 | Test Framework | Property-based ([rapid](https://github.com/flyingmutant/rapid)) + table-driven |
 
@@ -274,9 +263,13 @@ with comprehensive input combinations), subtitle codec preference
 ranking, language profile learning and application, episode
 filtering, cache lifecycle with boundary tests, config loading and
 validation (including Docker secrets via `_FILE` suffix), multi-user
-token management, handler dispatch for play and scan events, and
-XML parsing for Plex shared server responses. Property-based tests
-verify scoring invariants and panic-freedom on arbitrary input.
+token management, handler dispatch for play and scan events, XML
+parsing for Plex shared server responses, WebSocket disconnect
+classification with stable reason labels, backoff math with stable-
+connection reset semantics, and the shared-reference cost-collapse
+invariant that pins the ~93% reduction in per-episode HTTP calls as
+a regression guard. Property-based tests verify scoring invariants
+and panic-freedom on arbitrary input.
 
 Not tested: WebSocket connection management, HTTP API calls to
 Plex, the main event loop, scheduler tick loop, and cache file

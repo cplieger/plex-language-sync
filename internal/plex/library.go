@@ -1,0 +1,88 @@
+package plex
+
+import (
+	"context"
+	"fmt"
+
+	"plex-language-sync/internal/streams"
+)
+
+// ShowSections returns the TV-show library sections.
+func (c *Client) ShowSections(ctx context.Context) ([]Section, error) {
+	sections, err := fetchDirectory[Section](ctx, c, "/library/sections")
+	if err != nil {
+		return nil, err
+	}
+	shows := sections[:0]
+	for _, s := range sections {
+		if s.Type == SectionTypeShow {
+			shows = append(shows, s)
+		}
+	}
+	return shows, nil
+}
+
+// Episode fetches episode (or any library item) metadata by rating key.
+// Returns ErrNotFound when the item is missing. /library/metadata/{key} is
+// type-agnostic; ShowMetadata wraps this variant for show-level lookups.
+func (c *Client) Episode(ctx context.Context, rk RatingKey) (*streams.Episode, error) {
+	if err := rk.Validate(); err != nil {
+		return nil, err
+	}
+	eps, err := fetchMetadata[streams.Episode](ctx, c, "/library/metadata/"+rk.String())
+	if err != nil {
+		return nil, err
+	}
+	if len(eps) == 0 {
+		return nil, ErrNotFound
+	}
+	return &eps[0], nil
+}
+
+// ShowEpisodes returns every episode in a show (allLeaves).
+func (c *Client) ShowEpisodes(ctx context.Context, rk RatingKey) ([]streams.Episode, error) {
+	if err := rk.Validate(); err != nil {
+		return nil, err
+	}
+	return fetchMetadata[streams.Episode](ctx, c, "/library/metadata/"+rk.String()+"/allLeaves")
+}
+
+// SeasonEpisodes returns the episodes of a single season (children).
+func (c *Client) SeasonEpisodes(ctx context.Context, rk RatingKey) ([]streams.Episode, error) {
+	if err := rk.Validate(); err != nil {
+		return nil, err
+	}
+	return fetchMetadata[streams.Episode](ctx, c, "/library/metadata/"+rk.String()+"/children")
+}
+
+// ShowMetadata fetches the show-level metadata (labels, library) for a show.
+// /library/metadata/{key} returns whatever type the key points to, so this
+// delegates to the same endpoint as Episode but decodes into *Show.
+// Runtime-types-p1 split this off from Episode: a show response does not
+// have Media/Part/Stream, so typing it as *Show instead of *Episode keeps
+// the field set honest for callers (e.g. shouldIgnoreShow reads only
+// LibraryTitle + Label).
+func (c *Client) ShowMetadata(ctx context.Context, rk RatingKey) (*Show, error) {
+	if err := rk.Validate(); err != nil {
+		return nil, err
+	}
+	shows, err := fetchMetadata[Show](ctx, c, "/library/metadata/"+rk.String())
+	if err != nil {
+		return nil, err
+	}
+	if len(shows) == 0 {
+		return nil, ErrNotFound
+	}
+	return &shows[0], nil
+}
+
+// RecentlyAdded fetches recently added episodes from a library section,
+// filtered server-side by addedAt >= sinceUnix.
+func (c *Client) RecentlyAdded(ctx context.Context, sectionKey RatingKey, sinceUnix int64) ([]streams.Episode, error) {
+	if err := sectionKey.Validate(); err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/library/sections/%s/all?type=%d&sort=addedAt:desc&addedAt>=%d",
+		sectionKey.String(), MetadataTypeEpisode, sinceUnix)
+	return fetchMetadata[streams.Episode](ctx, c, path)
+}

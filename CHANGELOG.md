@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026.05.19-f357801 (2026-05-21)
+
+### Added
+
+- Add modular internal architecture with caching and sync logic
+- Improve security, health signaling, and subtitle matching
+- Add file-based healthcheck for distroless container
+- Add file-based healthcheck for distroless containers
+
+### Fixed
+
+- Fsync before atomic rename in cache writer
+- Resolve revive var-naming on Users.AllResult
+- Resolve golangci-lint findings from cycle 1
+- Remove stale //nolint:goconst directives in score.go
+- Refactor health probe to enable unit testing
+
+### Security
+
+- Block in-container privilege escalation (security hardening)
+
+### Changed
+
+- Refactor(plex-language-sync): replace 5min read timeout with TCP keepalive + 1h backstop
+- Refactor(plex-language-sync): cycle 1 structural improvements
+- Update Dockerfile to include internal package directory
+- Test(plex-language-sync): update test IP to RFC 5737 documentation range
+- Move healthcheck to Dockerfile and standardize resource limits
+- Refactor(plex-language-sync): replace magic strings with named constants
+- Test(plex-language-sync): update test IP to RFC 5737 documentation range
+- Hoist reference search out of per-user loop, harden scheduler and WebSocket
+
+### Dependencies
+
+- Update gcr.io/distroless/static-debian13:nonroot docker digest to 963fa6c (#300)
+- Update golang:1.26-alpine docker digest to 91eda97
+- Update third-party dependencies
+- fix(deps): update module pgregory.net/rapid to v1.3.0 (#231)
+
 ## 2026.04.16-19b3cfe (2026-04-17)
 
 ### Dependencies
