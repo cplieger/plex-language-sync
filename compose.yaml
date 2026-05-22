@@ -1,6 +1,6 @@
 services:
   plex-language-sync:
-    image: ghcr.io/cplieger/plex-language-sync:latest@sha256:4da13b0c831dd05b0375d0091a962390e2a50ecc014b955a35c4797f4d994c0d
+    image: ghcr.io/cplieger/plex-language-sync:latest
     container_name: plex-language-sync
     restart: unless-stopped
     user: "1000:1000"  # match your host user
