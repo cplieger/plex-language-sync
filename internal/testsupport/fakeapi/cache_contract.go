@@ -39,7 +39,7 @@ func RunCacheContract(t *testing.T, c api.Cache) {
 		}
 	})
 
-	t.Run("concurrent_writers", func(t *testing.T) {
+	t.Run("concurrent_writers", func(_ *testing.T) {
 		var wg sync.WaitGroup
 		for i := range 50 {
 			wg.Go(func() {
