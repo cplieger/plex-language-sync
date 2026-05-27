@@ -14,15 +14,15 @@ func TestPolicyIgnoreLibrary(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
-		libraries []string
 		title     string
+		libraries []string
 		want      bool
 	}{
-		{"match", []string{"Music", "Photos"}, "Music", true},
-		{"no match", []string{"Music"}, "TV Shows", false},
-		{"empty libraries", nil, "Music", false},
-		{"case-sensitive miss", []string{"Music"}, "music", false},
-		{"empty title", []string{"Music"}, "", false},
+		{name: "match", libraries: []string{"Music", "Photos"}, title: "Music", want: true},
+		{name: "no match", libraries: []string{"Music"}, title: "TV Shows", want: false},
+		{name: "empty libraries", libraries: nil, title: "Music", want: false},
+		{name: "case-sensitive miss", libraries: []string{"Music"}, title: "music", want: false},
+		{name: "empty title", libraries: []string{"Music"}, title: "", want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,11 +97,11 @@ func (r *stubReader) UserFromSession(context.Context, string) (string, string, e
 func TestPolicyShouldSkipEpisode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
+		ref       *streams.Episode
+		reader    *stubReader
 		name      string
 		libraries []string
 		labels    []string
-		ref       *streams.Episode
-		reader    *stubReader
 		want      bool
 	}{
 		{

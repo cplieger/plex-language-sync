@@ -20,9 +20,9 @@ import (
 // tests can assert on the observed sequence without standing up a
 // full WebSocket server.
 type fakeHandler struct {
-	mu        sync.Mutex
 	plays     []PlayEvent
 	timelines [][]TimelineEntry
+	mu        sync.Mutex
 }
 
 func (f *fakeHandler) OnPlay(_ context.Context, ev PlayEvent) {
@@ -150,8 +150,8 @@ func TestNotificationRoundTripJSON(t *testing.T) {
 // surface.
 type fakePlexClient struct {
 	base   *url.URL
-	token  string
 	client *http.Client
+	token  string
 }
 
 func (f *fakePlexClient) BaseURL() *url.URL { return f.base }

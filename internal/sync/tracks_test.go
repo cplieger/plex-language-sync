@@ -78,11 +78,11 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name           string
+		episodeLibrary string
+		episodeShowKey string
 		ignoreLibs     []string
 		ignoreLabels   []string
 		showLabels     []streams.Label
-		episodeLibrary string
-		episodeShowKey string
 		want           bool
 	}{
 		{
@@ -134,25 +134,25 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 func TestLearnProfileFromReference(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name             string
-		languageProfiles bool
 		refAudio         *streams.Stream
 		refSub           *streams.Stream
-		wantProfile      bool
+		name             string
 		wantSubLang      string
+		languageProfiles bool
+		wantProfile      bool
 	}{
-		{"disabled", false, &streams.Stream{LanguageCode: "jpn"}, &streams.Stream{LanguageCode: "eng"}, false, ""},
-		{"nil refAudio", true, nil, &streams.Stream{LanguageCode: "eng"}, false, ""},
-		{"empty audio language", true, &streams.Stream{LanguageCode: ""}, &streams.Stream{LanguageCode: "eng"}, false, ""},
-		{"happy path with subtitle", true, &streams.Stream{LanguageCode: "jpn"}, &streams.Stream{LanguageCode: "eng"}, true, "eng"},
-		{"happy path nil subtitle", true, &streams.Stream{LanguageCode: "eng"}, nil, true, ""},
+		{name: "disabled", languageProfiles: false, refAudio: &streams.Stream{LanguageCode: "jpn"}, refSub: &streams.Stream{LanguageCode: "eng"}, wantProfile: false, wantSubLang: ""},
+		{name: "nil refAudio", languageProfiles: true, refAudio: nil, refSub: &streams.Stream{LanguageCode: "eng"}, wantProfile: false, wantSubLang: ""},
+		{name: "empty audio language", languageProfiles: true, refAudio: &streams.Stream{LanguageCode: ""}, refSub: &streams.Stream{LanguageCode: "eng"}, wantProfile: false, wantSubLang: ""},
+		{name: "happy path with subtitle", languageProfiles: true, refAudio: &streams.Stream{LanguageCode: "jpn"}, refSub: &streams.Stream{LanguageCode: "eng"}, wantProfile: true, wantSubLang: "eng"},
+		{name: "happy path nil subtitle", languageProfiles: true, refAudio: &streams.Stream{LanguageCode: "eng"}, refSub: nil, wantProfile: true, wantSubLang: ""},
 		{
-			"commentary track skipped",
-			true,
-			&streams.Stream{LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"},
-			&streams.Stream{LanguageCode: "fre"},
-			false,
-			"",
+			name:             "commentary track skipped",
+			languageProfiles: true,
+			refAudio:         &streams.Stream{LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"},
+			refSub:           &streams.Stream{LanguageCode: "fre"},
+			wantProfile:      false,
+			wantSubLang:      "",
 		},
 	}
 	for _, tc := range tests {
