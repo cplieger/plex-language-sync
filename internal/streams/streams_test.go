@@ -93,13 +93,13 @@ func TestStreamIsAudioIsSubtitle(t *testing.T) {
 func TestTitleForMatch(t *testing.T) {
 	tests := []struct {
 		name string
-		s    Stream
 		want string
+		s    Stream
 	}{
-		{"extended first", Stream{ExtendedDisplayTitle: "ext", DisplayTitle: "disp", Title: "t"}, "ext"},
-		{"display second", Stream{DisplayTitle: "disp", Title: "t"}, "disp"},
-		{"title last", Stream{Title: "t"}, "t"},
-		{"empty", Stream{}, ""},
+		{name: "extended first", s: Stream{ExtendedDisplayTitle: "ext", DisplayTitle: "disp", Title: "t"}, want: "ext"},
+		{name: "display second", s: Stream{DisplayTitle: "disp", Title: "t"}, want: "disp"},
+		{name: "title last", s: Stream{Title: "t"}, want: "t"},
+		{name: "empty", s: Stream{}, want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -157,23 +157,23 @@ func TestContainsDescriptiveAllTerms(t *testing.T) {
 func TestEpisodeShortNameFormatting(t *testing.T) {
 	tests := []struct {
 		name string
-		ep   Episode
 		want string
+		ep   Episode
 	}{
 		{
-			"single digit season and episode",
-			Episode{ParentIndex: 1, Index: 3, GrandparentTitle: "Show"},
-			"'Show' (S01E03)",
+			name: "single digit season and episode",
+			ep:   Episode{ParentIndex: 1, Index: 3, GrandparentTitle: "Show"},
+			want: "'Show' (S01E03)",
 		},
 		{
-			"double digit",
-			Episode{ParentIndex: 12, Index: 24, GrandparentTitle: "Big Show"},
-			"'Big Show' (S12E24)",
+			name: "double digit",
+			ep:   Episode{ParentIndex: 12, Index: 24, GrandparentTitle: "Big Show"},
+			want: "'Big Show' (S12E24)",
 		},
 		{
-			"zero (absent or null JSON)",
-			Episode{GrandparentTitle: "Bad"},
-			"'Bad' (S00E00)",
+			name: "zero (absent or null JSON)",
+			ep:   Episode{GrandparentTitle: "Bad"},
+			want: "'Bad' (S00E00)",
 		},
 	}
 	for _, tt := range tests {

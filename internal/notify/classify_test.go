@@ -69,13 +69,13 @@ func TestClassifyError_CloseError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		code websocket.StatusCode
 		want string
+		code websocket.StatusCode
 	}{
-		{"normal_closure_1000", websocket.StatusNormalClosure, ReasonServerClose},
-		{"going_away_1001", websocket.StatusGoingAway, ReasonServerClose},
-		{"abnormal_closure_1006", websocket.StatusAbnormalClosure, ReasonServerClose},
-		{"protocol_error_1002", websocket.StatusProtocolError, ReasonUnknown},
+		{"normal_closure_1000", ReasonServerClose, websocket.StatusNormalClosure},
+		{"going_away_1001", ReasonServerClose, websocket.StatusGoingAway},
+		{"abnormal_closure_1006", ReasonServerClose, websocket.StatusAbnormalClosure},
+		{"protocol_error_1002", ReasonUnknown, websocket.StatusProtocolError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,13 +127,13 @@ func TestBuildStreamCacheKey(t *testing.T) {
 		name      string
 		userID    string
 		ratingKey string
+		want      string
 		audioID   int
 		subID     int
-		want      string
 	}{
-		{"typical", "42", "1234", 100, 200, "streams:42:1234:100:200"},
-		{"zero IDs", "1", "999", 0, 0, "streams:1:999:0:0"},
-		{"large IDs", "100", "99999", 65535, 32768, "streams:100:99999:65535:32768"},
+		{name: "typical", userID: "42", ratingKey: "1234", want: "streams:42:1234:100:200", audioID: 100, subID: 200},
+		{name: "zero IDs", userID: "1", ratingKey: "999", want: "streams:1:999:0:0", audioID: 0, subID: 0},
+		{name: "large IDs", userID: "100", ratingKey: "99999", want: "streams:100:99999:65535:32768", audioID: 65535, subID: 32768},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -205,23 +205,23 @@ func TestTimelineAction(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
-		entry TimelineEntry
 		want  string
+		entry TimelineEntry
 	}{
-		{"metadata created", TimelineEntry{MetadataState: stateCreated}, "scan_new"},
-		{"media created", TimelineEntry{MediaState: stateCreated}, "scan_new"},
+		{name: "metadata created", entry: TimelineEntry{MetadataState: stateCreated}, want: "scan_new"},
+		{name: "media created", entry: TimelineEntry{MediaState: stateCreated}, want: "scan_new"},
 		{
-			"both created",
-			TimelineEntry{MetadataState: stateCreated, MediaState: stateCreated},
-			"scan_new",
+			name:  "both created",
+			entry: TimelineEntry{MetadataState: stateCreated, MediaState: stateCreated},
+			want:  "scan_new",
 		},
-		{"metadata updated", TimelineEntry{MetadataState: stateUpdated}, "scan_updated"},
-		{"media updated", TimelineEntry{MediaState: stateUpdated}, "scan_updated"},
-		{"neither", TimelineEntry{}, "scan_updated"},
+		{name: "metadata updated", entry: TimelineEntry{MetadataState: stateUpdated}, want: "scan_updated"},
+		{name: "media updated", entry: TimelineEntry{MediaState: stateUpdated}, want: "scan_updated"},
+		{name: "neither", entry: TimelineEntry{}, want: "scan_updated"},
 		{
-			"metadata created media updated",
-			TimelineEntry{MetadataState: stateCreated, MediaState: stateUpdated},
-			"scan_new",
+			name:  "metadata created media updated",
+			entry: TimelineEntry{MetadataState: stateCreated, MediaState: stateUpdated},
+			want:  "scan_new",
 		},
 	}
 	for _, tt := range tests {

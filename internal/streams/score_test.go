@@ -428,45 +428,45 @@ func TestFindSubtitleByLanguage(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		streams  []*Stream
 		langCode string
+		streams  []*Stream
 		wantID   int
 		wantNil  bool
 	}{
-		{"finds english", []*Stream{eng, jpn, fra}, "eng", 1, false},
-		{"finds japanese", []*Stream{eng, jpn, fra}, "jpn", 2, false},
-		{"finds french", []*Stream{eng, jpn, fra}, "fra", 3, false},
-		{"not found", []*Stream{eng, jpn}, "kor", 0, true},
-		{"empty streams", nil, "eng", 0, true},
-		{"empty language", []*Stream{eng}, "", 0, true},
-		{"returns first match", []*Stream{
+		{name: "finds english", streams: []*Stream{eng, jpn, fra}, langCode: "eng", wantID: 1, wantNil: false},
+		{name: "finds japanese", streams: []*Stream{eng, jpn, fra}, langCode: "jpn", wantID: 2, wantNil: false},
+		{name: "finds french", streams: []*Stream{eng, jpn, fra}, langCode: "fra", wantID: 3, wantNil: false},
+		{name: "not found", streams: []*Stream{eng, jpn}, langCode: "kor", wantID: 0, wantNil: true},
+		{name: "empty streams", streams: nil, langCode: "eng", wantID: 0, wantNil: true},
+		{name: "empty language", streams: []*Stream{eng}, langCode: "", wantID: 0, wantNil: true},
+		{name: "returns first match", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
-		}, "eng", 10, false},
-		{"prefers ASS over SRT", []*Stream{
+		}, langCode: "eng", wantID: 10, wantNil: false},
+		{name: "prefers ASS over SRT", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "ass"},
-		}, "eng", 11, false},
-		{"prefers ASS over PGS", []*Stream{
+		}, langCode: "eng", wantID: 11, wantNil: false},
+		{name: "prefers ASS over PGS", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "pgs"},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "ass"},
-		}, "eng", 11, false},
-		{"prefers PGS over SRT", []*Stream{
+		}, langCode: "eng", wantID: 11, wantNil: false},
+		{name: "prefers PGS over SRT", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "pgs"},
-		}, "eng", 11, false},
-		{"prefers vobsub over SRT", []*Stream{
+		}, langCode: "eng", wantID: 11, wantNil: false},
+		{name: "prefers vobsub over SRT", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "vobsub"},
-		}, "eng", 11, false},
-		{"unknown codec loses to SRT", []*Stream{
+		}, langCode: "eng", wantID: 11, wantNil: false},
+		{name: "unknown codec loses to SRT", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: ""},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-		}, "eng", 11, false},
-		{"same codec picks first", []*Stream{
+		}, langCode: "eng", wantID: 11, wantNil: false},
+		{name: "same codec picks first", streams: []*Stream{
 			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-		}, "eng", 10, false},
+		}, langCode: "eng", wantID: 10, wantNil: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
