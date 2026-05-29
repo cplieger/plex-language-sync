@@ -17,6 +17,7 @@
 package users
 
 import (
+	"log/slog"
 	"net/url"
 	"sync"
 
@@ -55,13 +56,13 @@ type Info struct {
 // the admin user identity. All fields are guarded by mu; the manager is
 // safe for concurrent use.
 type Manager struct {
-	baseURL *url.URL
-	cache   api.Cache
-	shared  map[ID]Info         // keyed by typed userID
-	clients map[ID]*plex.Client // cached per-user clients
-	admin   Info
-	mu      sync.Mutex
-	skipTLS bool
+	baseURL    *url.URL
+	cache      api.Cache
+	shared     map[ID]Info         // keyed by typed userID
+	clients    map[ID]*plex.Client // cached per-user clients
+	caCertPath string
+	admin      Info
+	mu         sync.Mutex
 }
 
 // NewManager returns a Manager with empty shared-user and client maps.
@@ -79,12 +80,12 @@ func NewManager(c api.Cache) *Manager {
 // multiple times; existing shared-user state is preserved so a re-init
 // (e.g., after a token refresh during startup) does not clobber in-flight
 // data.
-func (m *Manager) Init(admin *plex.User, baseURL *url.URL, skipTLS bool) {
+func (m *Manager) Init(admin *plex.User, baseURL *url.URL, caCertPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.admin = Info{ID: ID(admin.ID), Name: admin.Name}
 	m.baseURL = baseURL
-	m.skipTLS = skipTLS
+	m.caCertPath = caCertPath
 	if m.shared == nil {
 		m.shared = make(map[ID]Info)
 	}
@@ -134,7 +135,15 @@ func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.C
 		}
 	}
 	if info, ok := m.shared[uid]; ok && info.Token != "" {
-		c := plex.NewClientForUser(m.baseURL, info.Token, m.skipTLS)
+		c, err := plex.NewClientForUser(m.baseURL, info.Token, m.caCertPath)
+		if err != nil {
+			// caCertPath was validated at startup, so an error here means
+			// something on disk changed mid-run (file removed/corrupted).
+			// Fall back to admin rather than crash.
+			slog.Warn("per-user plex client construction failed; using admin client",
+				"user_id", uid, "error", err)
+			return adminClient
+		}
 		m.clients[uid] = c
 		return c
 	}

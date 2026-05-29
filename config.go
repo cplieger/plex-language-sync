@@ -47,6 +47,7 @@ type config struct {
 	updateLevel         string // "show" or "season"
 	updateStrategy      string // "all" or "next"
 	schedulerTime       string // "HH:MM"
+	caCertPath          string
 	ignoreLabels        []string
 	ignoreLibraries     []string
 	triggerOnPlay       bool
@@ -54,7 +55,6 @@ type config struct {
 	schedulerEnable     bool
 	languageProfiles    bool
 	debug               bool
-	skipTLSVerification bool
 }
 
 // loadConfig reads environment variables into a config value, applying
@@ -81,7 +81,7 @@ func loadConfig() config {
 		languageProfiles:    envBool("LANGUAGE_PROFILES", true),
 		schedulerTime:       envOr("SCHEDULER_SCHEDULE_TIME", defaultScheduleTime),
 		debug:               debug,
-		skipTLSVerification: envBool("SKIP_TLS_VERIFICATION", false),
+		caCertPath:          envOr("PLEX_CA_CERT_PATH", ""),
 	}
 
 	if v := os.Getenv("IGNORE_LABELS"); v != "" {
@@ -126,7 +126,7 @@ func logConfig(cfg *config) {
 		"ignore_labels", cfg.ignoreLabels,
 		"ignore_libraries", cfg.ignoreLibraries,
 		"debug", cfg.debug,
-		"skip_tls_verification", cfg.skipTLSVerification)
+		"ca_cert_path", cfg.caCertPath)
 }
 
 // ---------------------------------------------------------------------------
