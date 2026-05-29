@@ -2,16 +2,56 @@ package plex
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// writeSelfSignedPEM generates an in-memory self-signed CA cert and writes
+// it to a tempfile under t.TempDir(). Returns the path. Used by the
+// caCertPath tests; the cert is parsed by the production code, not actually
+// validated against a TLS handshake.
+func writeSelfSignedPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-plex-ca"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+		KeyUsage:     x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	return path
+}
 
 // newTestClient builds a Client pointed at an httptest server running the
 // given handler. The server is torn down when the test ends. Shared across
@@ -41,7 +81,7 @@ func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
 func TestNewClient_HappyPath(t *testing.T) {
 	t.Parallel()
-	c, err := NewClient("http://plex:32400", "tok", false)
+	c, err := NewClient("http://plex:32400", "tok", "")
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -52,7 +92,7 @@ func TestNewClient_HappyPath(t *testing.T) {
 
 func TestNewClient_InvalidURL(t *testing.T) {
 	t.Parallel()
-	_, err := NewClient("://bad", "tok", false)
+	_, err := NewClient("://bad", "tok", "")
 	if err == nil {
 		t.Fatal("NewClient() with invalid URL should return error")
 	}
@@ -60,7 +100,7 @@ func TestNewClient_InvalidURL(t *testing.T) {
 
 func TestNewClient_BadScheme(t *testing.T) {
 	t.Parallel()
-	_, err := NewClient("ftp://plex:32400", "tok", false)
+	_, err := NewClient("ftp://plex:32400", "tok", "")
 	if err == nil {
 		t.Fatal("NewClient() with ftp scheme should return error")
 	}
@@ -70,7 +110,10 @@ func TestNewClient_BadScheme(t *testing.T) {
 
 func TestNewClientForUser(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
-	c := NewClientForUser(parsed, "test-token", false)
+	c, err := NewClientForUser(parsed, "test-token", "")
+	if err != nil {
+		t.Fatalf("NewClientForUser: %v", err)
+	}
 	if c.token != "test-token" {
 		t.Errorf("token = %q, want test-token", c.token)
 	}
@@ -81,25 +124,75 @@ func TestNewClientForUser(t *testing.T) {
 
 func TestNewClientForUserSkipTLS(t *testing.T) {
 	parsed, _ := url.Parse("https://plex:32400")
-	c := NewClientForUser(parsed, "test-token", true)
+	caPath := writeSelfSignedPEM(t)
+	c, err := NewClientForUser(parsed, "test-token", caPath)
+	if err != nil {
+		t.Fatalf("NewClientForUser: %v", err)
+	}
 	if c.httpClient.Transport == nil {
-		t.Fatal("expected custom transport for skipTLS")
+		t.Fatal("expected custom transport when caCertPath is set")
 	}
 }
 
 // --- Tests: newHTTPClient ---
 
-func TestNewHTTPClientNoTLS(t *testing.T) {
-	c := newHTTPClient(false)
-	if c.Transport != nil {
-		t.Error("expected nil transport for no TLS skip")
+func TestNewClientForUserCACert(t *testing.T) {
+	parsed, _ := url.Parse("https://plex:32400")
+	caPath := writeSelfSignedPEM(t)
+	c, err := NewClientForUser(parsed, "test-token", caPath)
+	if err != nil {
+		t.Fatalf("NewClientForUser: %v", err)
+	}
+	if c.httpClient.Transport == nil {
+		t.Fatal("expected custom transport when caCertPath set")
 	}
 }
 
-func TestNewHTTPClientSkipTLS(t *testing.T) {
-	c := newHTTPClient(true)
+// --- Tests: newHTTPClient ---
+
+func TestNewHTTPClientNoCA(t *testing.T) {
+	c, err := newHTTPClient("")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+	if c.Transport != nil {
+		t.Error("expected nil transport when caCertPath is empty (use OS trust store)")
+	}
+}
+
+func TestNewHTTPClientWithCA(t *testing.T) {
+	caPath := writeSelfSignedPEM(t)
+	c, err := newHTTPClient(caPath)
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
 	if c.Transport == nil {
-		t.Fatal("expected non-nil transport for TLS skip")
+		t.Fatal("expected non-nil transport when caCertPath is set")
+	}
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok || tr.TLSClientConfig == nil || tr.TLSClientConfig.RootCAs == nil {
+		t.Fatal("expected TLSClientConfig.RootCAs to be populated")
+	}
+	if tr.TLSClientConfig.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify must remain false; CA-pool path is the SECURE path")
+	}
+}
+
+func TestNewHTTPClient_missing_file_errors(t *testing.T) {
+	_, err := newHTTPClient("/nonexistent/ca.pem")
+	if err == nil {
+		t.Fatal("newHTTPClient should error when caCertPath points to a missing file")
+	}
+}
+
+func TestNewHTTPClient_invalid_pem_errors(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "bogus.pem")
+	if err := os.WriteFile(bogus, []byte("not a pem"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	_, err := newHTTPClient(bogus)
+	if err == nil {
+		t.Fatal("newHTTPClient should error when caCertPath has no PEM-encoded certs")
 	}
 }
 
@@ -124,7 +217,10 @@ func TestNewHTTPClient_RefusesRedirects(t *testing.T) {
 	}))
 	defer src.Close()
 
-	c := newHTTPClient(false)
+	c, err := newHTTPClient("")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, src.URL, http.NoBody)
 	req.Header.Set("X-Plex-Token", "secret")
 

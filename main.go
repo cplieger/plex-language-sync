@@ -70,7 +70,7 @@ func run() int {
 	marker := newHealthMarker(healthMarkerPath)
 	marker.Set(false)
 
-	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.skipTLSVerification)
+	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.caCertPath)
 	if err != nil {
 		slog.Error("invalid PLEX_URL", "error", err)
 		return 1
@@ -104,7 +104,7 @@ func run() int {
 
 	// User manager — admin identity + cached shared-user tokens.
 	um := users.NewManager(c)
-	um.Init(admin, client.BaseURL(), cfg.skipTLSVerification)
+	um.Init(admin, client.BaseURL(), cfg.caCertPath)
 	um.LoadFromCache()
 
 	// Synchronous initial refresh with bounded exponential backoff. See

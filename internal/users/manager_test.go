@@ -30,7 +30,7 @@ func TestID_StringRoundTrip(t *testing.T) {
 func TestManager_InitSeedsAdminAndBaseURL(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, true)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	admin := m.Admin()
 	if admin.ID != "1" || admin.Name != "admin" {
@@ -45,7 +45,7 @@ func TestManager_InitPreservesExistingShared(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "pre-token"})
 	m.LoadFromCache()
 
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	// After Init, shared user "2" should still be resolvable because
 	// Init only resets the clients cache, not the shared map.
@@ -63,7 +63,7 @@ func TestManager_LoadFromCacheSeedsTokens(t *testing.T) {
 	})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	if m.SharedCount() != 2 {
@@ -84,7 +84,7 @@ func TestManager_LoadFromCacheSkipsAdmin(t *testing.T) {
 	})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	// SharedCount should be 1 — the admin entry must be ignored.
@@ -99,7 +99,7 @@ func TestManager_ClientForUser(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -124,7 +124,7 @@ func TestManager_AllReturnsAdminAndShared(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "t-bob", "3": "t-carol"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	all := m.All()
@@ -142,7 +142,7 @@ func TestManager_AllReturnsAdminAndShared(t *testing.T) {
 
 func TestManager_NameUnknownReturnsPlaceholder(t *testing.T) {
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, &url.URL{}, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, &url.URL{}, "")
 	if got := m.Name("999"); got != "unknown-999" {
 		t.Errorf("Name(unknown) = %q, want unknown-999", got)
 	}
@@ -155,7 +155,7 @@ func TestManager_ConcurrentClientForUserAndTokenUpdate(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "t-v1"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -227,7 +227,7 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
 
@@ -262,7 +262,7 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	// Pre-populate the per-user client cache so we can assert eviction.
@@ -306,7 +306,7 @@ func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"100": "existing-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
@@ -336,7 +336,7 @@ func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
 
@@ -369,7 +369,7 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"100": "cached-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	m.LoadFromCache()
 
 	cfg := testRefreshConfig(5, 10*time.Millisecond, 20*time.Millisecond)
@@ -405,7 +405,7 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	cfg := testRefreshConfig(5, 5*time.Millisecond, 20*time.Millisecond)
 	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
@@ -431,7 +431,7 @@ func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	cfg := testRefreshConfig(3, 5*time.Millisecond, 10*time.Millisecond)
 	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
@@ -457,7 +457,7 @@ func TestInitialRefreshWithRetry_context_cancellation(t *testing.T) {
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 
 	// Long delays so the test must rely on context cancellation to exit.
 	cfg := testRefreshConfig(10, 5*time.Second, 10*time.Second)

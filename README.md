@@ -87,7 +87,17 @@ services:
 | `LANGUAGE_PROFILES` | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history | `true` | No |
 | `SCHEDULER_ENABLE` | Run a daily deep analysis that processes recent play history and newly added episodes as a safety net for missed real-time events | `true` | No |
 | `SCHEDULER_SCHEDULE_TIME` | Time of day (HH:MM, 24-hour) to run the daily deep analysis | `02:00` | No |
-| `SKIP_TLS_VERIFICATION` | Skip TLS certificate verification for self-signed certificates | `false` | No |
+| `PLEX_CA_CERT_PATH` | Path to a PEM file containing your Plex server's CA certificate. When set, that CA is added to the TLS RootCAs pool — TLS verification stays **on**, pinned to your CA. Required only when (a) your `PLEX_URL` uses `https://` and (b) the cert isn't trusted by the OS bundle (i.e. you signed it yourself or with a private CA). Plain `http://` URLs and Plex's official `*.plex.direct` HTTPS URLs need **no** TLS env var. | unset | No |
+
+### TLS / certificate setup
+
+Pick the configuration that matches your Plex server:
+
+| Your `PLEX_URL` looks like | What to do |
+|---|---|
+| `http://plex:32400` (Docker network, LAN, etc.) | nothing — TLS isn't in use |
+| `https://<hash>.plex.direct:32400` (Plex's official cert) | nothing — Let's Encrypt is trusted by default |
+| `https://192.0.2.100:32400` or `https://plex.local` (self-signed / private CA) | set `PLEX_CA_CERT_PATH` to the PEM file of the CA that signed your Plex cert. Mount it into the container and point the env var at the in-container path. |
 
 ### Volumes
 

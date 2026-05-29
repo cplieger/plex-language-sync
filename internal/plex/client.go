@@ -3,6 +3,7 @@ package plex
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -33,10 +35,15 @@ type Client struct {
 }
 
 // NewClient parses serverURL, validates scheme, and returns a Client
-// configured with the given token and TLS behaviour. Returns an error on
-// invalid URL or unsupported scheme; the caller (main.go) is responsible
-// for logging and exiting.
-func NewClient(serverURL, token string, skipTLS bool) (*Client, error) {
+// configured with the given token and TLS behaviour. When caCertPath is
+// non-empty, the PEM file at that path is loaded into the TLS RootCAs pool
+// so verification stays ON, pinned to that CA — recommended for users with
+// self-signed Plex certificates. Empty caCertPath uses the OS trust store
+// (works for plex.direct + any publicly-issued cert; works as a no-op for
+// plain http:// URLs). Returns an error on invalid URL, unsupported scheme,
+// missing cert file, or unparseable PEM; the caller (main.go) is
+// responsible for logging and exiting.
+func NewClient(serverURL, token, caCertPath string) (*Client, error) {
 	parsed, err := url.Parse(serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PLEX_URL: %w", err)
@@ -44,13 +51,22 @@ func NewClient(serverURL, token string, skipTLS bool) (*Client, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("PLEX_URL must use http or https scheme, got %q", parsed.Scheme)
 	}
-	return &Client{baseURL: parsed, token: token, httpClient: newHTTPClient(skipTLS)}, nil
+	hc, err := newHTTPClient(caCertPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{baseURL: parsed, token: token, httpClient: hc}, nil
 }
 
 // NewClientForUser creates a Client using a different token but the same
-// server base URL and TLS settings as an existing client.
-func NewClientForUser(baseURL *url.URL, token string, skipTLS bool) *Client {
-	return &Client{baseURL: baseURL, token: token, httpClient: newHTTPClient(skipTLS)}
+// server base URL and TLS settings as an existing client. Same caCertPath
+// semantics as NewClient.
+func NewClientForUser(baseURL *url.URL, token, caCertPath string) (*Client, error) {
+	hc, err := newHTTPClient(caCertPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{baseURL: baseURL, token: token, httpClient: hc}, nil
 }
 
 // NewClientFromHTTP builds a Client from an already-parsed base URL and a
@@ -103,21 +119,37 @@ func WarnIfPlaintextURL(u *url.URL) {
 // newHTTPClient returns the HTTP client used for local Plex Media Server
 // calls. Refuses to follow redirects to prevent X-Plex-Token exfiltration
 // via a hostile 3xx (MITM, DNS poisoning, compromised upstream). Matches
-// PLEX-SEC-01. TLS verification may be skipped for self-signed homelab
-// certs via skipTLS.
-func newHTTPClient(skipTLS bool) *http.Client {
+// PLEX-SEC-01.
+//
+// When caCertPath is non-empty, the PEM file at that path is loaded into a
+// custom TLS RootCAs pool — verification stays ON, pinned to that CA. This
+// supports self-signed homelab Plex certs without disabling cert checking.
+// Empty caCertPath means: use the OS trust store (default Transport, nil).
+// For http:// URLs the TLS config is unused either way.
+func newHTTPClient(caCertPath string) (*http.Client, error) {
 	c := &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	if skipTLS {
+	if caCertPath != "" {
+		pemBytes, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading PLEX_CA_CERT_PATH=%q: %w", caCertPath, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("PLEX_CA_CERT_PATH=%q: no PEM-encoded certificates found", caCertPath)
+		}
 		c.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, //nolint:gosec // G402: user opts in via --skip-tls flag
+			TLSClientConfig: &tls.Config{
+				RootCAs:    pool,
+				MinVersion: tls.VersionTLS12,
+			},
 		}
 	}
-	return c
+	return c, nil
 }
 
 // tvClient is a shared HTTP client for plex.tv API calls. Always uses

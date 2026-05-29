@@ -558,7 +558,7 @@ func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) notifyAdapt
 	c := cache.New()
 	client := plex.NewClientFromHTTP(parsed, "test-token", nil)
 	mgr := users.NewManager(c)
-	mgr.Init(&plex.User{ID: "1", Name: "admin"}, parsed, false)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
 	return notifyAdapter{
 		syncer: nil, // unused on the gated-off paths
 		cfg:    &config{triggerOnPlay: triggerOnPlay, triggerOnScan: triggerOnScan},
