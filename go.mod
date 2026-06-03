@@ -6,4 +6,8 @@ require github.com/coder/websocket v1.8.14
 
 require pgregory.net/rapid v1.3.0
 
-require golang.org/x/sync v0.20.0
+require (
+	github.com/cplieger/atomicfile v1.0.0
+	github.com/cplieger/health v1.0.0
+	golang.org/x/sync v0.20.0
+)

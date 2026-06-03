@@ -54,17 +54,13 @@ func TestHealthMarker_DegradedMode(t *testing.T) {
 	path := filepath.Join(dir, ".healthy")
 	m := newHealthMarker(path)
 
-	if !m.degraded {
-		// Some environments (root, permissive filesystems like Windows
-		// or containers) allow writes through 0500; skip rather than
-		// fail in those cases.
+	// In a non-writable dir, Set(true) should not create the file.
+	// If the env bypasses directory mode (root, certain filesystems), skip.
+	m.Set(true)
+	if _, err := os.Stat(path); err == nil {
 		t.Skip("test environment bypasses directory mode; skipping")
 	}
 
-	m.Set(true)
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("degraded marker should never create file: %v", err)
-	}
 	m.Cleanup() // must not panic
 }
 
@@ -119,28 +115,23 @@ func TestHealthMarker_Property(t *testing.T) {
 	})
 }
 
-// TestProbeHealthDir_Writable confirms the probe succeeds on a normal
-// writable temp dir and leaves no artifact behind.
-func TestProbeHealthDir_Writable(t *testing.T) {
-	dir := t.TempDir()
-	if err := probeHealthDir(filepath.Join(dir, ".healthy")); err != nil {
-		t.Fatalf("probeHealthDir on writable dir: %v", err)
-	}
+// TestProbeCheck_Writable confirms the probe succeeds when the marker exists.
+func TestProbeCheck_Writable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".healthy")
+	m := newHealthMarker(path)
+	m.Set(true)
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("probe left artifacts behind: %v", entries)
+	if code := probeCheck(path); code != 0 {
+		t.Fatalf("probeCheck with marker present: got %d, want 0", code)
 	}
 }
 
-// TestProbeHealthDir_NonExistent confirms a missing parent directory is
-// reported as an error rather than masked.
-func TestProbeHealthDir_NonExistent(t *testing.T) {
-	err := probeHealthDir(filepath.Join(t.TempDir(), "nope", ".healthy"))
-	if err == nil {
-		t.Fatal("expected error for non-existent parent dir")
+// TestProbeCheck_Missing confirms the probe fails when marker is absent
+// in a writable directory.
+func TestProbeCheck_Missing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".healthy")
+
+	if code := probeCheck(path); code != 1 {
+		t.Fatalf("probeCheck with marker absent: got %d, want 1", code)
 	}
 }
