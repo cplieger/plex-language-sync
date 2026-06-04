@@ -8,6 +8,6 @@ require pgregory.net/rapid v1.3.0
 
 require (
 	github.com/cplieger/atomicfile v1.0.0
-	github.com/cplieger/health v1.0.0
+	github.com/cplieger/health v1.0.1
 	golang.org/x/sync v0.20.0
 )
