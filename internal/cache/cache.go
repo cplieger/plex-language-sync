@@ -9,14 +9,16 @@
 package cache
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
+
+	"github.com/cplieger/atomicfile"
 
 	"plex-language-sync/internal/api"
 )
@@ -119,34 +121,8 @@ func (c *Cache) SaveTo(path string) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".cache-*.tmp")
-	if err != nil {
-		return fmt.Errorf("temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("sync: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close: %w", err)
-	}
-	// Enforce 0o600 explicitly (os.CreateTemp defaults to 0o600 on Unix,
-	// but make the invariant auditable rather than accidental).
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("chmod: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename: %w", err)
+	if err := atomicfile.WriteFile(context.Background(), path, data, atomicfile.WithMode(0o600)); err != nil {
+		return err
 	}
 	slog.Debug("cache saved", "path", path, "bytes", len(data))
 	return nil
