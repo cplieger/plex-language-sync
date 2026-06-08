@@ -6,6 +6,8 @@ github.com/cplieger/atomicfile v1.0.1 h1:egWe0ngT8ITYALuRSApSPRs5PeRzRfcCc4FbFl3
 github.com/cplieger/atomicfile v1.0.1/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
 github.com/cplieger/atomicfile v1.0.3 h1:yeQlIMsGdYQkTEH5KHd4qnhtiT9kwMKRaXTf4R6wufY=
 github.com/cplieger/atomicfile v1.0.3/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
+github.com/cplieger/atomicfile v1.1.0 h1:lXTD6YVLAz72j8kTkHJElUo1PeYOhZxUAhzkvQa00H8=
+github.com/cplieger/atomicfile v1.1.0/go.mod h1:V9XmBWRC+keTJQk7I4pMGNXJBt5MMcoXrZUFKQR6PnE=
 github.com/cplieger/health v1.0.0 h1:mevbZo10XtMAzfWaYoi6UrcGooFgHJvlhIJwbNQIVoM=
 github.com/cplieger/health v1.0.0/go.mod h1:INjkN9qJnR14X5AFqX6ymFaHvx51djYgk2oQb/gJ9u8=
 github.com/cplieger/health v1.0.1 h1:ZzOL6vEVOncHU2i2XDVg4G4v654vFaoCuE+Wvp0mXF0=
