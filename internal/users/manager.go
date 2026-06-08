@@ -21,8 +21,8 @@ import (
 	"net/url"
 	"sync"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
 // Compile-time interface satisfaction assertion.

@@ -1,4 +1,4 @@
-module plex-language-sync
+module github.com/cplieger/plex-language-sync
 
 go 1.26.4
 

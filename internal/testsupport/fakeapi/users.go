@@ -1,8 +1,8 @@
 package fakeapi
 
 import (
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
 // Users implements api.UserLookup for tests. The zero value returns

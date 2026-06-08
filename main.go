@@ -24,15 +24,15 @@ import (
 	"syscall"
 	"time"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/cache"
-	"plex-language-sync/internal/ignore"
-	"plex-language-sync/internal/notify"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/scheduler"
-	"plex-language-sync/internal/streams"
-	syncpkg "plex-language-sync/internal/sync"
-	"plex-language-sync/internal/users"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/ignore"
+	"github.com/cplieger/plex-language-sync/internal/notify"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/scheduler"
+	"github.com/cplieger/plex-language-sync/internal/streams"
+	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
+	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
 // Compile-time interface satisfaction assertions for concrete types

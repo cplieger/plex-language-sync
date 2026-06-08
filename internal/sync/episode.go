@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"slices"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // EpisodeRef bundles a shared reference episode and its selected

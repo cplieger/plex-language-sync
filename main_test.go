@@ -46,10 +46,10 @@ import (
 	"testing"
 	"time"
 
-	"plex-language-sync/internal/cache"
-	"plex-language-sync/internal/notify"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/users"
+	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/notify"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
 // ---------------------------------------------------------------------------

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 func TestPolicyIgnoreLibrary(t *testing.T) {
@@ -72,24 +72,31 @@ type stubReader struct {
 func (r *stubReader) Episode(context.Context, plex.RatingKey) (*streams.Episode, error) {
 	panic("Episode: not used")
 }
+
 func (r *stubReader) ShowEpisodes(context.Context, plex.RatingKey) ([]streams.Episode, error) {
 	panic("ShowEpisodes: not used")
 }
+
 func (r *stubReader) SeasonEpisodes(context.Context, plex.RatingKey) ([]streams.Episode, error) {
 	panic("SeasonEpisodes: not used")
 }
+
 func (r *stubReader) ShowMetadata(_ context.Context, _ plex.RatingKey) (*plex.Show, error) {
 	return r.show, r.err
 }
+
 func (r *stubReader) RecentlyAdded(context.Context, plex.RatingKey, int64) ([]streams.Episode, error) {
 	panic("RecentlyAdded: not used")
 }
+
 func (r *stubReader) History(context.Context, int64) ([]plex.HistoryItem, error) {
 	panic("History: not used")
 }
+
 func (r *stubReader) ShowSections(context.Context) ([]plex.Section, error) {
 	panic("ShowSections: not used")
 }
+
 func (r *stubReader) UserFromSession(context.Context, string) (string, string, error) {
 	panic("UserFromSession: not used")
 }

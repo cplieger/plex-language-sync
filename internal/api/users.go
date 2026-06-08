@@ -1,6 +1,6 @@
 package api
 
-import "plex-language-sync/internal/plex"
+import "github.com/cplieger/plex-language-sync/internal/plex"
 
 // UserInfo is the minimal user record consumers pass across the api
 // spine. Mirrors internal/users.Info but uses primitive string IDs so

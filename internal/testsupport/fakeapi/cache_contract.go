@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/api"
 )
 
 // RunCacheContract exercises the api.Cache contract against any
