@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 )
 
 // Verify *Manager satisfies api.UserLookup at compile time.

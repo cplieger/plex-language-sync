@@ -10,8 +10,8 @@ package api
 import (
 	"context"
 
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // PlexReader is the read side of the Plex HTTP client as consumed by the

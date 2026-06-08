@@ -31,9 +31,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // Config captures the subset of application configuration the Syncer

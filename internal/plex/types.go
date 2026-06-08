@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // Plex wire-protocol constants. These strings/numbers appear in the

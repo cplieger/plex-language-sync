@@ -7,8 +7,7 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
-
-	"plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
 // TestClassifyError covers the substring-free, typed-sentinel

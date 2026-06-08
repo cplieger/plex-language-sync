@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 func FuzzSharedServersXMLUnmarshal(f *testing.F) {

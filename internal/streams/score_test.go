@@ -501,11 +501,20 @@ func TestSubtitleCodecScore(t *testing.T) {
 		codec string
 		want  int
 	}{
-		{"ass", 3}, {"ssa", 3}, {"ASS", 3},
-		{"pgs", 2}, {"vobsub", 2}, {"dvdsub", 2},
-		{"dvb_subtitle", 2}, {"hdmv_pgs_subtitle", 2},
-		{"srt", 1}, {"subrip", 1}, {"mov_text", 1}, {"webvtt", 1},
-		{"", 0}, {"unknown", 0},
+		{"ass", 3},
+		{"ssa", 3},
+		{"ASS", 3},
+		{"pgs", 2},
+		{"vobsub", 2},
+		{"dvdsub", 2},
+		{"dvb_subtitle", 2},
+		{"hdmv_pgs_subtitle", 2},
+		{"srt", 1},
+		{"subrip", 1},
+		{"mov_text", 1},
+		{"webvtt", 1},
+		{"", 0},
+		{"unknown", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.codec, func(t *testing.T) {

@@ -42,13 +42,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/timeutil"
 	"golang.org/x/sync/singleflight"
-
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/cache"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
-	"plex-language-sync/internal/timeutil"
 )
 
 // deepAnalysisConcurrency is the upper bound on in-flight per-item work

@@ -19,8 +19,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/atomicfile"
-
-	"plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/api"
 )
 
 // Compile-time interface satisfaction assertion.

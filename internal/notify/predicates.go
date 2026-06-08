@@ -3,8 +3,8 @@ package notify
 import (
 	"fmt"
 
-	"plex-language-sync/internal/cache"
-	"plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
 // Plex wire-format constants used by the event predicates. These mirror

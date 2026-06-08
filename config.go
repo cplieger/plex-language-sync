@@ -17,8 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	syncpkg "plex-language-sync/internal/sync"
-	"plex-language-sync/internal/timeutil"
+	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
+	"github.com/cplieger/plex-language-sync/internal/timeutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -42,19 +42,19 @@ const (
 // ---------------------------------------------------------------------------
 
 type config struct {
-	plexURL             string
-	plexToken           string
-	updateLevel         string // "show" or "season"
-	updateStrategy      string // "all" or "next"
-	schedulerTime       string // "HH:MM"
-	caCertPath          string
-	ignoreLabels        []string
-	ignoreLibraries     []string
-	triggerOnPlay       bool
-	triggerOnScan       bool
-	schedulerEnable     bool
-	languageProfiles    bool
-	debug               bool
+	plexURL          string
+	plexToken        string
+	updateLevel      string // "show" or "season"
+	updateStrategy   string // "all" or "next"
+	schedulerTime    string // "HH:MM"
+	caCertPath       string
+	ignoreLabels     []string
+	ignoreLibraries  []string
+	triggerOnPlay    bool
+	triggerOnScan    bool
+	schedulerEnable  bool
+	languageProfiles bool
+	debug            bool
 }
 
 // loadConfig reads environment variables into a config value, applying
@@ -71,17 +71,17 @@ func loadConfig() config {
 		&slog.HandlerOptions{Level: level})))
 
 	cfg := config{
-		plexURL:             requireEnv("PLEX_URL"),
-		plexToken:           requireEnv("PLEX_TOKEN"),
-		updateLevel:         envOr("UPDATE_LEVEL", defaultUpdateLevel),
-		updateStrategy:      envOr("UPDATE_STRATEGY", defaultUpdateStrategy),
-		triggerOnPlay:       envBool("TRIGGER_ON_PLAY", true),
-		triggerOnScan:       envBool("TRIGGER_ON_SCAN", true),
-		schedulerEnable:     envBool("SCHEDULER_ENABLE", true),
-		languageProfiles:    envBool("LANGUAGE_PROFILES", true),
-		schedulerTime:       envOr("SCHEDULER_SCHEDULE_TIME", defaultScheduleTime),
-		debug:               debug,
-		caCertPath:          envOr("PLEX_CA_CERT_PATH", ""),
+		plexURL:          requireEnv("PLEX_URL"),
+		plexToken:        requireEnv("PLEX_TOKEN"),
+		updateLevel:      envOr("UPDATE_LEVEL", defaultUpdateLevel),
+		updateStrategy:   envOr("UPDATE_STRATEGY", defaultUpdateStrategy),
+		triggerOnPlay:    envBool("TRIGGER_ON_PLAY", true),
+		triggerOnScan:    envBool("TRIGGER_ON_SCAN", true),
+		schedulerEnable:  envBool("SCHEDULER_ENABLE", true),
+		languageProfiles: envBool("LANGUAGE_PROFILES", true),
+		schedulerTime:    envOr("SCHEDULER_SCHEDULE_TIME", defaultScheduleTime),
+		debug:            debug,
+		caCertPath:       envOr("PLEX_CA_CERT_PATH", ""),
 	}
 
 	if v := os.Getenv("IGNORE_LABELS"); v != "" {

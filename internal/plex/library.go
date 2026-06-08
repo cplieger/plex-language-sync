@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // ShowSections returns the TV-show library sections.

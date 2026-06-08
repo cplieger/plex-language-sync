@@ -11,8 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"plex-language-sync/internal/testsupport/fakeapi"
-
+	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"pgregory.net/rapid"
 )
 

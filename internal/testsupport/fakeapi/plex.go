@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // Plex implements api.PlexReadWriter for tests. All methods are

@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // ApplyLanguageProfile applies a learned language profile to a new

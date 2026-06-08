@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
 // RefreshConfig bundles retry tunables for the initial token-refresh

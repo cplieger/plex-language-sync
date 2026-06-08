@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/api"
 )
 
 // Cache is a concurrency-safe in-memory implementation of api.Cache.

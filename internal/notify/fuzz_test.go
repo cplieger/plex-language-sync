@@ -9,7 +9,7 @@ import (
 // nopHandler is a no-op Handler for fuzz dispatch safety.
 type nopHandler struct{}
 
-func (nopHandler) OnPlay(_ context.Context, _ PlayEvent)         {}
+func (nopHandler) OnPlay(_ context.Context, _ PlayEvent)           {}
 func (nopHandler) OnTimeline(_ context.Context, _ []TimelineEntry) {}
 
 func FuzzNotificationUnmarshal(f *testing.F) {

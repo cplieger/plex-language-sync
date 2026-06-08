@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/cplieger/plex-language-sync/internal/plex"
 	"pgregory.net/rapid"
-
-	"plex-language-sync/internal/plex"
 )
 
 // fakeHandler records the events delivered by dispatch / Listen so

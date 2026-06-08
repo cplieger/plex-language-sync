@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"plex-language-sync/internal/api"
-	"plex-language-sync/internal/ignore"
-	"plex-language-sync/internal/plex"
-	"plex-language-sync/internal/streams"
-	"plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/ignore"
+	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 )
 
 // ---------------------------------------------------------------------------
