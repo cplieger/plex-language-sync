@@ -17,6 +17,7 @@ plex-language-sync eliminates that friction. It watches your Plex playback in re
 It also learns your habits. If you always watch anime in Japanese with English subtitles, brand new shows that arrive (via Sonarr or manual import) get those settings applied before you even press play.
 
 **Key features:**
+
 - Real-time WebSocket listener for play and library scan events
 - Per-show language propagation with scored stream matching
   (language, codec, channel layout, title, forced, hearing
@@ -179,6 +180,7 @@ All dependencies are updated automatically via [Renovate](https://github.com/ren
 ## Credits
 
 This is an original tool that builds upon [Plex-Auto-Languages](https://github.com/RemiRigal/Plex-Auto-Languages).
+
 - [Plex-Auto-Languages](https://github.com/RemiRigal/Plex-Auto-Languages)
   by [@RemiRigal](https://github.com/RemiRigal) — the original
   Python project that pioneered per-show language automation for
