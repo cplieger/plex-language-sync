@@ -9,5 +9,5 @@ require pgregory.net/rapid v1.3.0
 require (
 	github.com/cplieger/atomicfile v1.0.3
 	github.com/cplieger/health v1.0.2
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.21.0
 )
