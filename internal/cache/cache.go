@@ -121,7 +121,18 @@ func (c *Cache) SaveTo(path string) error {
 	}
 
 	if err := atomicfile.WriteFile(context.Background(), path, data, atomicfile.WithMode(0o600)); err != nil {
-		return err
+		// cache.json is reconstructible: a parent-dir fsync failure
+		// (PhaseDirSync) means the cache was written to disk but its
+		// durability across an immediate crash is not guaranteed. Don't
+		// fail the save for that — the data is present and would be rebuilt
+		// from Plex on the next run anyway. Surface it as a warning instead.
+		var we *atomicfile.WriteError
+		if errors.As(err, &we) && we.Phase == atomicfile.PhaseDirSync {
+			slog.Warn("cache written but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
+				"path", path, "error", err)
+		} else {
+			return err
+		}
 	}
 	slog.Debug("cache saved", "path", path, "bytes", len(data))
 	return nil
