@@ -2,11 +2,9 @@ package main
 
 import "github.com/cplieger/health"
 
-// healthMarkerPath is the default marker location. Docker healthchecks
-// stat this path; the app creates and removes it at lifecycle points.
-// /tmp is conventional because strict-tier compose services mount
-// /tmp as tmpfs (see base.yaml -strict templates).
-const healthMarkerPath = "/tmp/.healthy"
+// healthMarkerPath is the marker location, sourced from the library so
+// the literal lives in exactly one place.
+const healthMarkerPath = health.DefaultPath
 
 // healthMarker wraps *health.Marker for backward-compatible usage in main.
 type healthMarker = health.Marker
