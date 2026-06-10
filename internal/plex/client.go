@@ -135,7 +135,8 @@ func newHTTPClient(caCertPath string) (*http.Client, error) {
 		},
 	}
 	if caCertPath != "" {
-		pemBytes, err := atomicfile.ReadBounded(context.Background(), caCertPath, 1<<20)
+		const maxCACertSize = 1 << 20 // 1 MB
+		pemBytes, err := atomicfile.ReadBounded(context.Background(), caCertPath, maxCACertSize)
 		if err != nil {
 			return nil, fmt.Errorf("reading PLEX_CA_CERT_PATH=%q: %w", caCertPath, err)
 		}
