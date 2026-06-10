@@ -518,10 +518,16 @@ func TestCacheSaveToEnforces0600Permissions(t *testing.T) {
 
 func TestCacheSaveToRejectsBadDir(t *testing.T) {
 	t.Parallel()
+	// Parent is a regular file, so MkdirAll fails with ENOTDIR even as root;
+	// SaveTo (via atomicfile.SaveBytes, which auto-creates the dir) must error.
+	f := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
 	c := New()
-	err := c.SaveTo("/nonexistent/path-never-created/cache.json")
+	err := c.SaveTo(filepath.Join(f, "subdir", "cache.json"))
 	if err == nil {
-		t.Fatal("SaveTo() on bad dir should return error, got nil")
+		t.Fatal("SaveTo() under a file should return error, got nil")
 	}
 }
 

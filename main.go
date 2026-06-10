@@ -20,10 +20,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/health"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
@@ -55,7 +58,7 @@ const shutdownWaitBudget = 10 * time.Second
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
-		runProbe(healthMarkerPath)
+		health.RunProbe(health.DefaultPath)
 	}
 	os.Exit(run())
 }
@@ -67,7 +70,7 @@ func run() int {
 	cfg := loadConfig()
 	logConfig(&cfg)
 
-	marker := newHealthMarker(healthMarkerPath)
+	marker := health.NewMarker(health.DefaultPath)
 	marker.Set(false)
 
 	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.caCertPath)
@@ -101,6 +104,9 @@ func run() int {
 	if err := c.LoadFrom(cachePath); err != nil {
 		slog.Warn("cache load failed, starting fresh", "error", err)
 	}
+	// Reap any temp orphaned by an interrupted SaveTo so they don't accumulate
+	// on the persistent /config volume.
+	atomicfile.CleanupStaleTemps(filepath.Dir(cachePath), time.Hour)
 
 	// User manager — admin identity + cached shared-user tokens.
 	um := users.NewManager(c)
@@ -112,19 +118,19 @@ func run() int {
 	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
 	marker.Set(true)
-	defer marker.Cleanup()
-	// A failed cache save on shutdown loses the latest learned language
-	// profiles and user tokens — treat as Error (operator-actionable)
-	// rather than the Warn used for transient mid-run save failures.
+	// Shutdown sequence: flag unhealthy first so Docker stops routing health
+	// probes as passing while the (slow) cache save runs, then persist the
+	// cache. Set(false) removes the marker, so no separate Cleanup is needed.
+	// A failed save here loses the latest learned language profiles and user
+	// tokens, so it is logged at Error (operator-actionable), not the Warn used
+	// for transient mid-run save failures.
 	defer func() {
+		marker.Set(false)
 		if err := c.SaveTo(cachePath); err != nil {
 			slog.Error("cache save on shutdown failed, profiles may be lost",
 				"path", cachePath, "error", err)
 		}
 	}()
-	// Signal unhealthy immediately on shutdown so Docker stops routing
-	// health probes as passing while cache save / cleanup run.
-	defer marker.Set(false)
 
 	// Compose the sync and scheduler subsystems from the concrete
 	// internal/* packages, passing api.* interfaces so the subsystems

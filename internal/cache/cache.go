@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -68,7 +67,7 @@ func New() *Cache {
 }
 
 // LoadFrom reads the cache from the given path. A missing file returns nil
-// (fresh start). Capped at maxCacheSize bytes via io.LimitReader. Warns if
+// (fresh start). Capped at maxCacheSize bytes via atomicfile.LoadJSON. Warns if
 // the file has permissive mode bits set, as tokens are stored here.
 func (c *Cache) LoadFrom(path string) error {
 	c.mu.Lock()
@@ -77,33 +76,21 @@ func (c *Cache) LoadFrom(path string) error {
 	c.data.LanguageProfiles = make(map[string]map[string]string)
 	c.data.UserTokens = make(map[string]string)
 
-	f, err := os.Open(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			return nil // missing file = fresh start
 		}
-		return err
+		return statErr
 	}
-	defer f.Close()
-
-	if info, statErr := f.Stat(); statErr == nil {
-		if info.Mode().Perm()&0o077 != 0 {
-			slog.Warn("cache file has permissive mode; user tokens may be "+
-				"readable by other host users",
-				"path", path,
-				"mode", info.Mode().Perm().String())
-		}
+	if info.Mode().Perm()&0o077 != 0 {
+		slog.Warn("cache file has permissive mode; user tokens may be "+
+			"readable by other host users",
+			"path", path, "mode", info.Mode().Perm().String())
 	}
-
-	data, err := io.ReadAll(io.LimitReader(f, maxCacheSize))
-	if err != nil {
-		return err
-	}
-	if int64(len(data)) >= maxCacheSize {
-		slog.Warn("cache file at size limit, may be truncated",
-			"path", path, "bytes", len(data), "limit", maxCacheSize)
-	}
-	return json.Unmarshal(data, &c.data)
+	// LoadJSON bounds the read at maxCacheSize and unmarshals; an oversize
+	// file returns an error (caller starts fresh) rather than truncating.
+	return atomicfile.LoadJSON(context.Background(), path, maxCacheSize, &c.data)
 }
 
 // SaveTo atomically writes the cache to the given path (temp file + rename)
@@ -120,8 +107,19 @@ func (c *Cache) SaveTo(path string) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 
-	if err := atomicfile.WriteFile(context.Background(), path, data, atomicfile.WithMode(0o600)); err != nil {
-		return err
+	if err := atomicfile.SaveBytes(path, data, 0o600); err != nil {
+		// cache.json is reconstructible: a parent-dir fsync failure
+		// (PhaseDirSync) means the cache was written to disk but its
+		// durability across an immediate crash is not guaranteed. Don't
+		// fail the save for that — the data is present and would be rebuilt
+		// from Plex on the next run anyway. Surface it as a warning instead.
+		var we *atomicfile.WriteError
+		if errors.As(err, &we) && we.Phase == atomicfile.PhaseDirSync {
+			slog.Warn("cache written but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
+				"path", path, "error", err)
+		} else {
+			return err
+		}
 	}
 	slog.Debug("cache saved", "path", path, "bytes", len(data))
 	return nil
