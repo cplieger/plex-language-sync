@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/health"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
@@ -57,7 +58,7 @@ const shutdownWaitBudget = 10 * time.Second
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
-		runProbe(healthMarkerPath)
+		health.RunProbe(health.DefaultPath)
 	}
 	os.Exit(run())
 }
@@ -69,7 +70,7 @@ func run() int {
 	cfg := loadConfig()
 	logConfig(&cfg)
 
-	marker := newHealthMarker(healthMarkerPath)
+	marker := health.NewMarker(health.DefaultPath)
 	marker.Set(false)
 
 	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.caCertPath)
