@@ -11,9 +11,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/cplieger/atomicfile"
 )
 
 // maxResponseBody caps the number of bytes read from any single Plex JSON
@@ -134,7 +135,7 @@ func newHTTPClient(caCertPath string) (*http.Client, error) {
 		},
 	}
 	if caCertPath != "" {
-		pemBytes, err := os.ReadFile(caCertPath)
+		pemBytes, err := atomicfile.ReadBounded(context.Background(), caCertPath, 1<<20)
 		if err != nil {
 			return nil, fmt.Errorf("reading PLEX_CA_CERT_PATH=%q: %w", caCertPath, err)
 		}

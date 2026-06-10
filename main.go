@@ -20,10 +20,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/cplieger/atomicfile"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
@@ -101,6 +103,9 @@ func run() int {
 	if err := c.LoadFrom(cachePath); err != nil {
 		slog.Warn("cache load failed, starting fresh", "error", err)
 	}
+	// Reap any temp orphaned by an interrupted SaveTo so they don't accumulate
+	// on the persistent /config volume.
+	atomicfile.CleanupStaleTemps(filepath.Dir(cachePath), time.Hour)
 
 	// User manager — admin identity + cached shared-user tokens.
 	um := users.NewManager(c)
