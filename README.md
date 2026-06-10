@@ -110,36 +110,6 @@ Pick the configuration that matches your Plex server:
 
 The container includes a built-in CLI health probe (`/plex-language-sync health`) that checks for a marker file written at `/tmp/.healthy` once the initial Plex connection succeeds and the admin user is verified. It requires no shell, HTTP client, or open port. The probe reports unhealthy only if the initial connection to Plex fails or the admin user cannot be resolved — WebSocket disconnects do not cause unhealthy status because the tool automatically reconnects with exponential backoff (1s→30s).
 
-## Code quality
-
-| Metric | Value |
-|--------|-------|
-| [Test Coverage](https://go.dev/blog/cover) | 60.3% |
-| Tests | 376 |
-| [Cyclomatic Complexity](https://en.wikipedia.org/wiki/Cyclomatic_complexity) (avg) | 3.7 |
-| [Cognitive Complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf) (avg) | 3.4 |
-| [Mutation Efficacy](https://en.wikipedia.org/wiki/Mutation_testing) | 90.1% (59 runs) |
-| Test Framework | Property-based ([rapid](https://github.com/flyingmutant/rapid)) + table-driven |
-
-Tests cover stream matching and scoring (audio/subtitle selection
-with comprehensive input combinations), subtitle codec preference
-ranking, language profile learning and application, episode
-filtering, cache lifecycle with boundary tests, config loading and
-validation (including Docker secrets via `_FILE` suffix), multi-user
-token management, handler dispatch for play and scan events, XML
-parsing for Plex shared server responses, WebSocket disconnect
-classification with stable reason labels, backoff math with stable-
-connection reset semantics, and the shared-reference cost-collapse
-invariant that pins the ~93% reduction in per-episode HTTP calls as
-a regression guard. Property-based tests verify scoring invariants
-and panic-freedom on arbitrary input.
-
-Not tested: WebSocket connection management, HTTP API calls to
-Plex, the main event loop, scheduler tick loop, and cache file
-I/O — these are I/O-bound runtime paths that can't be
-meaningfully unit tested, validated instead by Docker healthchecks
-and structured logging in production.
-
 ## Security
 
 **No vulnerabilities found.** All scans clean across 7 tools.
