@@ -118,19 +118,19 @@ func run() int {
 	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
 	marker.Set(true)
-	defer marker.Cleanup()
-	// A failed cache save on shutdown loses the latest learned language
-	// profiles and user tokens — treat as Error (operator-actionable)
-	// rather than the Warn used for transient mid-run save failures.
+	// Shutdown sequence: flag unhealthy first so Docker stops routing health
+	// probes as passing while the (slow) cache save runs, then persist the
+	// cache. Set(false) removes the marker, so no separate Cleanup is needed.
+	// A failed save here loses the latest learned language profiles and user
+	// tokens, so it is logged at Error (operator-actionable), not the Warn used
+	// for transient mid-run save failures.
 	defer func() {
+		marker.Set(false)
 		if err := c.SaveTo(cachePath); err != nil {
 			slog.Error("cache save on shutdown failed, profiles may be lost",
 				"path", cachePath, "error", err)
 		}
 	}()
-	// Signal unhealthy immediately on shutdown so Docker stops routing
-	// health probes as passing while cache save / cleanup run.
-	defer marker.Set(false)
 
 	// Compose the sync and scheduler subsystems from the concrete
 	// internal/* packages, passing api.* interfaces so the subsystems
