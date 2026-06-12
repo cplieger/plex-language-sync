@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/health"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
@@ -105,8 +105,11 @@ func run() int {
 		slog.Warn("cache load failed, starting fresh", "error", err)
 	}
 	// Reap any temp orphaned by an interrupted SaveTo so they don't accumulate
-	// on the persistent /config volume.
-	atomicfile.CleanupStaleTemps(filepath.Dir(cachePath), time.Hour)
+	// on the persistent /config volume. Best-effort: a cleanup failure is
+	// non-fatal at startup, so log at Debug and continue.
+	if _, err := atomicfile.CleanupStaleTemps(filepath.Dir(cachePath), time.Hour); err != nil {
+		slog.Debug("stale temp cleanup failed", "error", err)
+	}
 
 	// User manager — admin identity + cached shared-user tokens.
 	um := users.NewManager(c)

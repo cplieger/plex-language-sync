@@ -17,7 +17,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/plex-language-sync/internal/api"
 )
 
@@ -67,8 +67,8 @@ func New() *Cache {
 }
 
 // LoadFrom reads the cache from the given path. A missing file returns nil
-// (fresh start). Capped at maxCacheSize bytes via atomicfile.LoadJSON. Warns if
-// the file has permissive mode bits set, as tokens are stored here.
+// (fresh start). Capped at maxCacheSize bytes via atomicfile.ReadBounded. Warns
+// if the file has permissive mode bits set, as tokens are stored here.
 func (c *Cache) LoadFrom(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -88,9 +88,14 @@ func (c *Cache) LoadFrom(path string) error {
 			"readable by other host users",
 			"path", path, "mode", info.Mode().Perm().String())
 	}
-	// LoadJSON bounds the read at maxCacheSize and unmarshals; an oversize
-	// file returns an error (caller starts fresh) rather than truncating.
-	return atomicfile.LoadJSON(context.Background(), path, maxCacheSize, &c.data)
+	// ReadBounded caps the read at maxCacheSize; an oversize file returns an
+	// error (caller starts fresh) rather than truncating. Unmarshal then maps
+	// the bytes onto the frozen schema.
+	raw, err := atomicfile.ReadBounded(context.Background(), path, maxCacheSize)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, &c.data)
 }
 
 // SaveTo atomically writes the cache to the given path (temp file + rename)
@@ -107,19 +112,25 @@ func (c *Cache) SaveTo(path string) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 
-	if err := atomicfile.SaveBytes(path, data, 0o600); err != nil {
-		// cache.json is reconstructible: a parent-dir fsync failure
-		// (PhaseDirSync) means the cache was written to disk but its
-		// durability across an immediate crash is not guaranteed. Don't
-		// fail the save for that — the data is present and would be rebuilt
-		// from Plex on the next run anyway. Surface it as a warning instead.
-		var we *atomicfile.WriteError
-		if errors.As(err, &we) && we.Phase == atomicfile.PhaseDirSync {
-			slog.Warn("cache written but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
-				"path", path, "error", err)
-		} else {
-			return err
-		}
+	// The token cache is user-only (0o600). SaveBytes used to auto-create the
+	// parent dir at a perm derived from the file perm (0o700 when the file perm
+	// has no group/other bits, else 0o755); preserve that via WithMkdirMode.
+	// Our file perm is 0o600 (0o600&0o077 == 0), so the derived dir perm is 0o700.
+	res, err := atomicfile.WriteFile(context.Background(), path, data,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+	if err != nil {
+		// A non-nil error is now unambiguously a real failure: the data did
+		// not reach its final path.
+		return err
+	}
+	if !res.Durable {
+		// cache.json is reconstructible: a non-durable result means the cache
+		// reached disk but the parent-dir fsync was unconfirmed, so durability
+		// across an immediate crash is not guaranteed. The data is present and
+		// would be rebuilt from Plex on the next run anyway, so warn rather
+		// than fail.
+		slog.Warn("cache written but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
+			"path", path)
 	}
 	slog.Debug("cache saved", "path", path, "bytes", len(data))
 	return nil
