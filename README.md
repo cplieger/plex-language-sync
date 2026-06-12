@@ -40,7 +40,7 @@ It also learns your habits. If you always watch anime in Japanese with English s
 
 ### Why this design
 
-- **Single binary, one dependency.** Written in Go with only one external library (`coder/websocket`). No Python runtime, no YAML config files, no notification frameworks — just a ~8 MB distroless container that does one job well.
+- **Single binary, one dependency.** Written in Go with only one external library (`coder/websocket`). No Python runtime, no YAML config files, no notification frameworks — just a distroless container that does one job well.
 - **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65534) on `gcr.io/distroless/static` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
 - **Learns, not just copies.** Language profiles close the gap that upstream tools leave open: new shows get correct subtitles from day one, without requiring you to watch an episode first.
 - **Resilient by default.** WebSocket reconnects with exponential backoff, a daily scheduler catches missed events, and a persistent cache survives restarts — so your preferences are never lost.
@@ -113,7 +113,7 @@ The container includes a built-in CLI health probe (`/plex-language-sync health`
 
 ## Security
 
-**No vulnerabilities found.** All scans clean across 7 tools.
+**No vulnerabilities found.** All scans clean across all CI security tools.
 
 | Tool | Result |
 |------|--------|
@@ -143,10 +143,10 @@ opt-in TLS skip (both intentional).
 
 All dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate) and pinned by digest or version for reproducibility.
 
-| Dependency | Version | Source |
-|------------|---------|--------|
-| golang | `1.26-alpine` | [Go](https://hub.docker.com/_/golang) |
-| gcr.io/distroless/static-debian13 | `nonroot` | [Distroless](https://github.com/GoogleContainerTools/distroless) |
+| Dependency | Source |
+|------------|--------|
+| golang | [Go](https://hub.docker.com/_/golang) |
+| gcr.io/distroless/static:nonroot | [Distroless](https://github.com/GoogleContainerTools/distroless) |
 
 ## Credits
 
