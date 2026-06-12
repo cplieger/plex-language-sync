@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/atomicfile"
+	"github.com/cplieger/atomicfile/v2"
 )
 
 // maxResponseBody caps the number of bytes read from any single Plex JSON

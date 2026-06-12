@@ -519,7 +519,8 @@ func TestCacheSaveToEnforces0600Permissions(t *testing.T) {
 func TestCacheSaveToRejectsBadDir(t *testing.T) {
 	t.Parallel()
 	// Parent is a regular file, so MkdirAll fails with ENOTDIR even as root;
-	// SaveTo (via atomicfile.SaveBytes, which auto-creates the dir) must error.
+	// SaveTo (via atomicfile.WriteFile with WithMkdirMode, which auto-creates
+	// the dir) must error.
 	f := filepath.Join(t.TempDir(), "afile")
 	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
