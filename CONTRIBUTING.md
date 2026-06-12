@@ -7,7 +7,7 @@ bits that are specific to this repo; org-wide defaults still apply.
 
 A single Go binary that listens to Plex over a WebSocket and
 propagates your per-show audio/subtitle language choices to the rest
-of a series. It ships as a ~8 MB distroless image with one non-cplieger
+of a series. It ships as a distroless image with one non-cplieger
 runtime dependency (`coder/websocket`). There is no HTTP server, no
 config file, and no inbound listener — everything is configured through
 environment variables (see the README's configuration reference).
@@ -57,7 +57,7 @@ external surface should not drift.
 
 ## Local development
 
-Requires the Go toolchain matching `go.mod` (currently Go 1.26).
+Requires the Go toolchain matching `go.mod`.
 
 ```sh
 go build ./...
