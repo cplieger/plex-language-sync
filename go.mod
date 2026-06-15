@@ -7,7 +7,7 @@ require github.com/coder/websocket v1.8.15
 require pgregory.net/rapid v1.3.0
 
 require (
-	github.com/cplieger/health v1.1.2
+	github.com/cplieger/health v1.1.3
 	golang.org/x/sync v0.21.0
 )
 
