@@ -1,7 +1,7 @@
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/cplieger/atomicfile/v2 v2.0.1 h1:VCM4Vp4uXajHgFNweD9CuuRnqjczbLFnfXHXdWOaV9I=
-github.com/cplieger/atomicfile/v2 v2.0.1/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
+github.com/cplieger/atomicfile/v2 v2.0.2 h1:RFQnLRu7So6BcVlPAkiIyB1rxcw4gfQJ8ilZ5cU4Hi0=
+github.com/cplieger/atomicfile/v2 v2.0.2/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
 github.com/cplieger/health v1.1.2 h1:FskL5oUhfB11X0lLd2Kr0YVAcQmln86iFvnw3aiXg6Q=
 github.com/cplieger/health v1.1.2/go.mod h1:INjkN9qJnR14X5AFqX6ymFaHvx51djYgk2oQb/gJ9u8=
 golang.org/x/sync v0.21.0 h1:HLII4xRRTtCRkxYp4HNFF0Js/Og6q2i++KXbg0gHCwM=
