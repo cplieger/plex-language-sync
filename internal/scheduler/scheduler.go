@@ -69,10 +69,9 @@ const maxConsecutiveErrors = 5
 // the package boundary clean and lets tests construct a Scheduler
 // without mimicking the app's full env-var surface.
 type Config struct {
-	Ignore           api.IgnoreChecker // library skip rules; nil means "never skip"
-	ScheduleTime     string            // "HH:MM"
-	Enable           bool              // scheduler on/off
-	LanguageProfiles bool              // reserved for future use
+	Ignore       api.IgnoreChecker // library skip rules; nil means "never skip"
+	ScheduleTime string            // "HH:MM"
+	Enable       bool              // scheduler on/off
 }
 
 // CacheSaver is the narrow persistence sink the scheduler needs: a
