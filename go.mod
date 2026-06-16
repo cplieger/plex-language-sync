@@ -11,6 +11,6 @@ require (
 	golang.org/x/sync v0.21.0
 )
 
-require github.com/cplieger/atomicfile/v2 v2.0.2
+require github.com/cplieger/atomicfile/v2 v2.0.3
 
 require golang.org/x/crypto v0.53.0
