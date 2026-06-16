@@ -101,6 +101,15 @@ func run() int {
 
 	// Cache — load persistent state, or start fresh on error.
 	c := cache.New()
+	// Derive encryption key from admin PLEX_TOKEN for user-token at-rest
+	// encryption. The key is deterministic for a given token — decryption
+	// works offline (no plex.tv round-trip needed on restart).
+	encKey, err := cache.DeriveKey(cfg.plexToken)
+	if err != nil {
+		slog.Error("cannot derive encryption key", "error", err)
+		return 1
+	}
+	c.SetEncryptionKey(encKey)
 	if err := c.LoadFrom(cachePath); err != nil {
 		slog.Warn("cache load failed, starting fresh", "error", err)
 	}
@@ -156,10 +165,9 @@ func run() int {
 	)
 	sched := scheduler.New(
 		scheduler.Config{
-			ScheduleTime:     cfg.schedulerTime,
-			Enable:           cfg.schedulerEnable,
-			Ignore:           ignorePolicy,
-			LanguageProfiles: cfg.languageProfiles,
+			ScheduleTime: cfg.schedulerTime,
+			Enable:       cfg.schedulerEnable,
+			Ignore:       ignorePolicy,
 		},
 		client,
 		c,

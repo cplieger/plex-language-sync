@@ -48,8 +48,9 @@ type Data struct {
 // Cache is the concurrent-safe persistent cache. The zero value is usable;
 // prefer New for explicit initialization of the backing maps.
 type Cache struct {
-	data Data
-	mu   sync.Mutex
+	data   Data
+	encKey []byte // AES-256 key for user-token encryption at rest; nil = no encryption
+	mu     sync.Mutex
 }
 
 // New returns a Cache with its maps pre-initialized. The zero value also
@@ -64,6 +65,16 @@ func New() *Cache {
 			UserTokens:        make(map[string]string),
 		},
 	}
+}
+
+// SetEncryptionKey configures the AES-256 key used to encrypt user tokens
+// at the disk boundary (SaveTo/LoadFrom). The key should be derived from
+// the admin PLEX_TOKEN via DeriveKey. When nil, tokens are stored and read
+// as plaintext (backward-compatible with pre-encryption cache files).
+func (c *Cache) SetEncryptionKey(key []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.encKey = key
 }
 
 // LoadFrom reads the cache from the given path. A missing file returns nil
@@ -95,19 +106,56 @@ func (c *Cache) LoadFrom(path string) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(raw, &c.data)
+	if err := json.Unmarshal(raw, &c.data); err != nil {
+		return err
+	}
+
+	// Decrypt user tokens if an encryption key is configured. Plaintext
+	// values (pre-migration) pass through unchanged — on next SaveTo they
+	// are encrypted transparently.
+	if c.encKey != nil {
+		for uid, val := range c.data.UserTokens {
+			plain, decErr := DecryptToken(c.encKey, val)
+			if decErr != nil {
+				// Decryption failure (e.g. key rotation): treat as stale;
+				// the next plex.tv refresh will replace it.
+				slog.Warn("cache: failed to decrypt user token, will refresh from plex.tv",
+					"user", uid, "error", decErr)
+				delete(c.data.UserTokens, uid)
+				continue
+			}
+			c.data.UserTokens[uid] = plain
+		}
+	}
+
+	return nil
 }
 
 // SaveTo atomically writes the cache to the given path (temp file + rename)
 // and ensures the final file is 0o600 (user tokens live here). The temp
 // file is removed on any failure path so partial writes don't clutter the
-// dir.
+// dir. User tokens are encrypted at the disk boundary if an encryption key
+// is configured; the in-memory Data.UserTokens map stays plaintext.
 func (c *Cache) SaveTo(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pruneOldEntriesLocked()
 
-	data, err := json.MarshalIndent(&c.data, "", "  ")
+	// Encrypt user tokens for the on-disk copy without mutating in-memory state.
+	saveData := c.data
+	if c.encKey != nil && len(c.data.UserTokens) > 0 {
+		encrypted := make(map[string]string, len(c.data.UserTokens))
+		for uid, plain := range c.data.UserTokens {
+			ct, encErr := EncryptToken(c.encKey, plain)
+			if encErr != nil {
+				return fmt.Errorf("encrypt token for user %s: %w", uid, encErr)
+			}
+			encrypted[uid] = ct
+		}
+		saveData.UserTokens = encrypted
+	}
+
+	data, err := json.MarshalIndent(&saveData, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}

@@ -655,3 +655,89 @@ func TestSubtitleCodecScore_OrderInvariant(t *testing.T) {
 }
 
 // --- Tests: findEpisodeReference (ops-6 wrapper) ---
+
+// ---------------------------------------------------------------------------
+// Mutation-killing boundary tests (gremlins live mutants)
+// ---------------------------------------------------------------------------
+
+// TestScoreAudio_PreferMoreChannelsBoundaries pins the exact comparator
+// boundaries of the prefer_more_channels rule (score.go L34/L35). The rule
+// adds 2 only when 0 < ref.Channels < 3 and s.Channels > ref.Channels.
+//
+// given a reference/candidate pair sitting exactly on a comparator boundary
+// when ScoreAudio is computed with no other matching fields
+// then the channel bonus must NOT apply (score stays 0).
+func TestScoreAudio_PreferMoreChannelsBoundaries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		refChannels int
+		sChannels   int
+		want        int
+	}{
+		// ref.Channels==0 must fail the `ref.Channels > 0` guard. A `>=`
+		// mutation would let it through and add 2.
+		{name: "ref channels at zero, candidate higher", refChannels: 0, sChannels: 2, want: 0},
+		// ref.Channels==3 must fail the `ref.Channels < 3` guard. A `<=`
+		// mutation would let it through and add 2.
+		{name: "ref channels at upper limit, candidate higher", refChannels: 3, sChannels: 4, want: 0},
+		// Sanity anchor: 2 channels ref with a richer candidate DOES earn
+		// the bonus, so the rule is genuinely exercised by the boundary
+		// cases above (not dead code).
+		{name: "ref channels in range, candidate higher earns bonus", refChannels: 2, sChannels: 6, want: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ref := &Stream{Channels: tc.refChannels}
+			s := &Stream{Channels: tc.sChannels}
+
+			got := ScoreAudio(ref, s)
+
+			if got != tc.want {
+				t.Errorf("ScoreAudio(ref.Channels=%d, s.Channels=%d) = %d, want %d",
+					tc.refChannels, tc.sChannels, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBestByScore_SelectsHighestAmongNegativeScores pins the bestScore
+// sentinel initialiser (score.go L196: `bestScore := -1`). When every
+// candidate scores below zero except one at exactly 0, the sentinel must
+// start strictly below the lowest possible score so the real maximum still
+// wins. An INVERT_NEGATIVES (`-1`→`1`) or ARITHMETIC_BASE mutation pushes the
+// sentinel to >= 0, so the score-0 stream at index 1 never overtakes the
+// default index 0.
+func TestBestByScore_SelectsHighestAmongNegativeScores(t *testing.T) {
+	t.Parallel()
+	streams := []*Stream{{ID: 1}, {ID: 2}}
+	scoreFn := func(s *Stream) int {
+		if s.ID == 1 {
+			return -10
+		}
+		return 0
+	}
+
+	got := BestByScore(streams, scoreFn)
+
+	if got == nil || got.ID != 2 {
+		t.Errorf("BestByScore with scores [-10, 0] = %v, want stream ID=2 (the 0-score max)", got)
+	}
+}
+
+// TestBestByScore_TieGoesToEarliest pins the strict `>` comparator
+// (score.go L199). Documented contract: "Ties go to the earlier entry." A
+// `>`→`>=` mutation would let a later equal-scoring stream overwrite the
+// earlier one.
+func TestBestByScore_TieGoesToEarliest(t *testing.T) {
+	t.Parallel()
+	streams := []*Stream{{ID: 1}, {ID: 2}}
+	scoreFn := func(_ *Stream) int { return 5 }
+
+	got := BestByScore(streams, scoreFn)
+
+	if got == nil || got.ID != 1 {
+		t.Errorf("BestByScore with tied scores = %v, want stream ID=1 (earliest on tie)", got)
+	}
+}

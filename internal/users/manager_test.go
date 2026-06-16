@@ -507,3 +507,32 @@ func TestPeriodicRefreshInterval(t *testing.T) {
 		t.Errorf("PeriodicRefreshInterval = %v, want 12h", got)
 	}
 }
+
+// TestManager_ClientForUserCachesInstance pins the cache-hit guard in
+// ClientForUser (manager.go L133: `cached.Token() == info.Token`). When a
+// user's token is unchanged between calls, the same cached *plex.Client must
+// be returned rather than constructing a fresh one. A CONDITIONALS_NEGATION
+// mutation (`==`→`!=`) inverts the freshness check so every call rebuilds the
+// client (new HTTP connection pool), defeating the cache.
+//
+// given a known shared user with a stable token
+// when ClientForUser is called twice
+// then both calls return the identical cached client instance.
+func TestManager_ClientForUserCachesInstance(t *testing.T) {
+	parsed, _ := url.Parse("http://plex:32400")
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"2": "friend-token"})
+
+	m := NewManager(fc)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.LoadFromCache()
+
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
+
+	first := m.ClientForUser("2", adminClient)
+	second := m.ClientForUser("2", adminClient)
+
+	if first != second {
+		t.Error("ClientForUser returned a new instance on the second call; want the cached client when the token is unchanged")
+	}
+}

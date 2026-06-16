@@ -481,3 +481,151 @@ func TestFindEpisodeReference(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Mutation-killing tests for the apply-stream guards (gremlins live mutants)
+// ---------------------------------------------------------------------------
+
+// TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected pins the
+// `cur != nil` guard in applyAudioStream (tracks.go L200). When the target
+// has no currently-selected audio, the matched reference audio must be
+// applied. A CONDITIONALS_NEGATION mutation (`cur != nil`→`cur == nil`) makes
+// the guard dereference the nil cur and panic on this exact path.
+//
+// given a target whose only audio stream is NOT selected (cur == nil)
+// when UpdateEpisodeStreams applies a matching reference audio
+// then SetAudioStream is called and the update reports changed.
+func TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected(t *testing.T) {
+	t.Parallel()
+	ep := &streams.Episode{
+		RatingKey: "123",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}, // not selected
+		}}}}},
+	}
+	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+
+	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, nil)
+
+	if !changed {
+		t.Error("UpdateEpisodeStreams = false, want true (audio applied when none selected)")
+	}
+	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
+		t.Errorf("SetAudio called %d times, want 1", got)
+	}
+}
+
+// TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect pins the
+// `curSub != nil` guard in applySubtitleStream (tracks.go L248). When the
+// currently-selected subtitle already equals the matched reference subtitle,
+// no write should happen. A CONDITIONALS_NEGATION mutation
+// (`curSub != nil`→`curSub == nil`) flips the guard so the redundant write
+// fires and the update wrongly reports changed.
+//
+// given a target whose selected subtitle already matches the reference
+// when UpdateEpisodeStreams runs with that reference
+// then no SetSubtitleStream call is made and changed is false.
+func TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect(t *testing.T) {
+	t.Parallel()
+	ep := &streams.Episode{
+		RatingKey: "123",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn", Selected: true},
+		}}}}},
+	}
+	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	// Reference audio matches the already-selected audio (no audio change),
+	// reference subtitle matches the already-selected jpn subtitle.
+	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
+
+	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+
+	if changed {
+		t.Error("UpdateEpisodeStreams = true, want false (subtitle already correct, nothing to change)")
+	}
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+		t.Errorf("SetSubtitle called %d times, want 0 (no redundant write)", got)
+	}
+}
+
+// TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess pins the
+// post-write error check in applySubtitleStream (tracks.go L251:
+// `err != nil`). On a successful SetSubtitleStream the method must return
+// true. A CONDITIONALS_NEGATION mutation (`err != nil`→`err == nil`) inverts
+// the check so a successful write is treated as a failure and reports false.
+//
+// Audio is left unchanged so the returned `changed` flag depends solely on
+// the subtitle write outcome (the existing "applies audio and subtitle" test
+// masks this because its audio change already sets changed=true).
+//
+// given a target needing only a subtitle change, and the write succeeds
+// when UpdateEpisodeStreams runs
+// then changed is true.
+func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T) {
+	t.Parallel()
+	ep := &streams.Episode{
+		RatingKey: "123",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
+		}}}}},
+	}
+	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	// Audio matches the selected audio (no audio change). Subtitle reference
+	// is jpn, so the jpn subtitle (ID 21) replaces the selected eng (ID 20).
+	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
+
+	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+
+	if !changed {
+		t.Error("UpdateEpisodeStreams = false, want true (subtitle write succeeded)")
+	}
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 1 {
+		t.Errorf("SetSubtitle called %d times, want 1", got)
+	}
+}
+
+// TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile pins the
+// `curSub.ID == bestSub.ID` guard in applyProfileSubtitle (profile.go L101).
+// When the currently-selected subtitle already matches the best subtitle for
+// the learned profile, no write should happen. A CONDITIONALS_NEGATION
+// mutation (`==`→`!=`) flips the guard so a redundant write fires and the
+// method wrongly reports changed.
+//
+// given a profile jpn→eng and a target whose selected eng subtitle is the
+//
+//	best eng candidate
+//
+// when ApplyLanguageProfile runs
+// then no SetSubtitleStream call is made and the result is false.
+func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{}
+	c := fakeapi.NewCache()
+	c.LearnLanguageProfile("1", "jpn", "eng")
+	s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeapi.Users{})
+	ep := &streams.Episode{
+		RatingKey: "100",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+			{ID: 12, StreamType: streams.StreamTypeSubtitle, Selected: true, LanguageCode: "eng", Codec: "srt"},
+		}}}}},
+	}
+
+	changed := s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test")
+
+	if changed {
+		t.Error("ApplyLanguageProfile = true, want false (selected subtitle already matches profile)")
+	}
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+		t.Errorf("SetSubtitle called %d times, want 0 (no redundant write)", got)
+	}
+}
