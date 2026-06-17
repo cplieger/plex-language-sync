@@ -39,14 +39,13 @@ type Policy struct {
 // slices. Nil inputs are allowed and produce an empty policy (which
 // always reports "do not skip").
 func NewPolicy(libraries, labels []string) *Policy {
-	p := &Policy{}
-	if len(libraries) > 0 {
-		p.Libraries = append([]string(nil), libraries...)
+	// append([]string(nil), x...) defensively copies x and yields nil for a
+	// nil or empty x (appending zero elements to a nil slice returns nil), so
+	// the empty case needs no len() guard.
+	return &Policy{
+		Libraries: append([]string(nil), libraries...),
+		Labels:    append([]string(nil), labels...),
 	}
-	if len(labels) > 0 {
-		p.Labels = append([]string(nil), labels...)
-	}
-	return p
 }
 
 // IgnoreLibrary reports whether a library section title is on the
