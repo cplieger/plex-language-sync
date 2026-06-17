@@ -82,9 +82,9 @@ func TestGkPlexLanguageSyncU1_DecryptTokenLengthBoundary(t *testing.T) {
 
 	tests := []struct {
 		name    string
+		wantMsg string
+		notMsg  string
 		rawLen  int
-		wantMsg string // substring the error MUST contain
-		notMsg  string // substring the error MUST NOT contain
 	}{
 		{
 			// Below the threshold: original returns "ciphertext too short"
