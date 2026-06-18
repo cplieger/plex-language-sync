@@ -80,34 +80,34 @@ services:
 
 ### Environment variables
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `TZ` | Container timezone | `Europe/Paris` | No |
-| `PLEX_URL` | Full URL of your Plex Media Server including scheme and port (e.g. `http://192.0.2.100:32400`) | `http://plex:32400` | Yes |
-| `PLEX_TOKEN` | Plex authentication token for the server administrator. Get it from Plex Web → Settings → XML view → myPlexAccessToken. Also supports Docker secrets via `PLEX_TOKEN_FILE` | - | Yes |
-| `UPDATE_LEVEL` | Scope of language propagation. `show` applies to all episodes in the show. `season` applies only to the current season | `show` | No |
-| `UPDATE_STRATEGY` | Which episodes to update. `all` updates every episode in scope. `next` updates only episodes after the one being played | `all` | No |
-| `TRIGGER_ON_PLAY` | React to playback events — when you play an episode, propagate its language settings | `true` | No |
-| `TRIGGER_ON_SCAN` | React to library scan events — when new episodes are added, apply language settings from the show's history | `true` | No |
-| `LANGUAGE_PROFILES` | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history | `true` | No |
-| `SCHEDULER_ENABLE` | Run a daily deep analysis that processes recent play history and newly added episodes as a safety net for missed real-time events | `true` | No |
-| `SCHEDULER_SCHEDULE_TIME` | Time of day (HH:MM, 24-hour) to run the daily deep analysis | `02:00` | No |
-| `PLEX_CA_CERT_PATH` | Path to a PEM file containing your Plex server's CA certificate. When set, that CA is added to the TLS RootCAs pool — TLS verification stays **on**, pinned to your CA. Required only when (a) your `PLEX_URL` uses `https://` and (b) the cert isn't trusted by the OS bundle (i.e. you signed it yourself or with a private CA). Plain `http://` URLs and Plex's official `*.plex.direct` HTTPS URLs need **no** TLS env var. | unset | No |
+| Variable                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                     | Default             | Required |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | -------- |
+| `TZ`                      | Container timezone                                                                                                                                                                                                                                                                                                                                                                                                              | `Europe/Paris`      | No       |
+| `PLEX_URL`                | Full URL of your Plex Media Server including scheme and port (e.g. `http://192.0.2.100:32400`)                                                                                                                                                                                                                                                                                                                                  | `http://plex:32400` | Yes      |
+| `PLEX_TOKEN`              | Plex authentication token for the server administrator. Get it from Plex Web → Settings → XML view → myPlexAccessToken. Also supports Docker secrets via `PLEX_TOKEN_FILE`                                                                                                                                                                                                                                                      | -                   | Yes      |
+| `UPDATE_LEVEL`            | Scope of language propagation. `show` applies to all episodes in the show. `season` applies only to the current season                                                                                                                                                                                                                                                                                                          | `show`              | No       |
+| `UPDATE_STRATEGY`         | Which episodes to update. `all` updates every episode in scope. `next` updates only episodes after the one being played                                                                                                                                                                                                                                                                                                         | `all`               | No       |
+| `TRIGGER_ON_PLAY`         | React to playback events — when you play an episode, propagate its language settings                                                                                                                                                                                                                                                                                                                                            | `true`              | No       |
+| `TRIGGER_ON_SCAN`         | React to library scan events — when new episodes are added, apply language settings from the show's history                                                                                                                                                                                                                                                                                                                     | `true`              | No       |
+| `LANGUAGE_PROFILES`       | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history                                                                                                                                                                                                                                                                                                                  | `true`              | No       |
+| `SCHEDULER_ENABLE`        | Run a daily deep analysis that processes recent play history and newly added episodes as a safety net for missed real-time events                                                                                                                                                                                                                                                                                               | `true`              | No       |
+| `SCHEDULER_SCHEDULE_TIME` | Time of day (HH:MM, 24-hour) to run the daily deep analysis                                                                                                                                                                                                                                                                                                                                                                     | `02:00`             | No       |
+| `PLEX_CA_CERT_PATH`       | Path to a PEM file containing your Plex server's CA certificate. When set, that CA is added to the TLS RootCAs pool — TLS verification stays **on**, pinned to your CA. Required only when (a) your `PLEX_URL` uses `https://` and (b) the cert isn't trusted by the OS bundle (i.e. you signed it yourself or with a private CA). Plain `http://` URLs and Plex's official `*.plex.direct` HTTPS URLs need **no** TLS env var. | unset               | No       |
 
 ### TLS / certificate setup
 
 Pick the configuration that matches your Plex server:
 
-| Your `PLEX_URL` looks like | What to do |
-|---|---|
-| `http://plex:32400` (Docker network, LAN, etc.) | nothing — TLS isn't in use |
-| `https://<hash>.plex.direct:32400` (Plex's official cert) | nothing — Let's Encrypt is trusted by default |
+| Your `PLEX_URL` looks like                                                     | What to do                                                                                                                                                |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http://plex:32400` (Docker network, LAN, etc.)                                | nothing — TLS isn't in use                                                                                                                                |
+| `https://<hash>.plex.direct:32400` (Plex's official cert)                      | nothing — Let's Encrypt is trusted by default                                                                                                             |
 | `https://192.0.2.100:32400` or `https://plex.local` (self-signed / private CA) | set `PLEX_CA_CERT_PATH` to the PEM file of the CA that signed your Plex cert. Mount it into the container and point the env var at the in-container path. |
 
 ### Volumes
 
-| Mount | Description |
-|-------|-------------|
+| Mount     | Description                                                                                                                                                                                                    |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/config` | Persistent cache storage. Contains `cache.json` with processed episode tracking, learned language profiles, and scheduler state. Mount a named volume or host path to preserve data across container restarts. |
 
 ## Healthcheck
@@ -118,15 +118,15 @@ The container includes a built-in CLI health probe (`/plex-language-sync health`
 
 **No vulnerabilities found.** All scans clean across all CI security tools.
 
-| Tool | Result |
-|------|--------|
-| [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | No vulnerabilities in call graph |
-| [golangci-lint](https://golangci-lint.run/) (gosec, gocritic) | 0 issues |
-| [trivy](https://trivy.dev/) | 0 vulnerabilities (distroless base) |
-| [grype](https://github.com/anchore/grype) | 0 vulnerabilities |
-| [gitleaks](https://github.com/gitleaks/gitleaks) | No secrets detected |
-| [semgrep](https://semgrep.dev/) | 2 info (false positives) |
-| [hadolint](https://github.com/hadolint/hadolint) | Clean |
+| Tool                                                                | Result                              |
+| ------------------------------------------------------------------- | ----------------------------------- |
+| [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | No vulnerabilities in call graph    |
+| [golangci-lint](https://golangci-lint.run/) (gosec, gocritic)       | 0 issues                            |
+| [trivy](https://trivy.dev/)                                         | 0 vulnerabilities (distroless base) |
+| [grype](https://github.com/anchore/grype)                           | 0 vulnerabilities                   |
+| [gitleaks](https://github.com/gitleaks/gitleaks)                    | No secrets detected                 |
+| [semgrep](https://semgrep.dev/)                                     | 2 info (false positives)            |
+| [hadolint](https://github.com/hadolint/hadolint)                    | Clean                               |
 
 No inbound network listener; connects outbound to Plex and
 plex.tv only. Supports Docker secrets via `PLEX_TOKEN_FILE`.
@@ -146,9 +146,9 @@ opt-in TLS skip (both intentional).
 
 All dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate) and pinned by digest or version for reproducibility.
 
-| Dependency | Source |
-|------------|--------|
-| golang | [Go](https://hub.docker.com/_/golang) |
+| Dependency                       | Source                                                           |
+| -------------------------------- | ---------------------------------------------------------------- |
+| golang                           | [Go](https://hub.docker.com/_/golang)                            |
 | gcr.io/distroless/static:nonroot | [Distroless](https://github.com/GoogleContainerTools/distroless) |
 
 ## Credits
