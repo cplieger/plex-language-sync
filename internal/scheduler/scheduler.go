@@ -116,6 +116,23 @@ type Scheduler struct {
 	userClient api.UserClientFunc
 	saveCache  CacheSaver
 	cfg        Config
+	// workers bounds in-flight per-item work during a deep-analysis
+	// pass; zero (the default) means deepAnalysisConcurrency. Exists as
+	// a test seam: a serial (workers=1) run lets the breaker's
+	// reset-on-success semantics be asserted deterministically, without
+	// depending on goroutine scheduling under -race.
+	workers int
+}
+
+// workerCount is the effective size of the per-item worker pool,
+// falling back to deepAnalysisConcurrency when unset (the production
+// path). Tests override Scheduler.workers to force a deterministic
+// serial run.
+func (s *Scheduler) workerCount() int {
+	if s.workers < 1 {
+		return deepAnalysisConcurrency
+	}
+	return s.workers
 }
 
 // New constructs a Scheduler with the given collaborators. saveCache
@@ -260,7 +277,7 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) {
 	var wg stdsync.WaitGroup
 	var consecutiveErrors atomic.Int32
 
-	for range deepAnalysisConcurrency {
+	for range s.workerCount() {
 		wg.Go(func() {
 			for item := range work {
 				if ctx.Err() != nil {
@@ -343,7 +360,7 @@ func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) {
 	work := make(chan streams.Episode)
 	var wg stdsync.WaitGroup
 
-	for range deepAnalysisConcurrency {
+	for range s.workerCount() {
 		wg.Go(func() {
 			for ep := range work {
 				if ctx.Err() != nil {
