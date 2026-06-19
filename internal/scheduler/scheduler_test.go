@@ -156,9 +156,19 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 
 func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	t.Parallel()
-	// A mix of successes and failures with success rate > 1/5 keeps the
-	// breaker from tripping: each success resets the counter before it
-	// reaches maxConsecutiveErrors.
+	// Strictly alternating success/failure items: every failure is
+	// immediately followed by a success that resets the consecutive-
+	// error counter, so the breaker must never trip and all items are
+	// processed.
+	//
+	// The pool is pinned to a single worker below so processing is
+	// serial and the assertion is exact. With the default 4-worker pool
+	// the shared atomic counter has no well-defined "consecutive" order:
+	// a burst of failures can transiently spike it to the threshold
+	// before an interleaved success resets it, tripping the breaker
+	// nondeterministically under -race. The concurrent trip path is
+	// covered by TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold;
+	// here we isolate and deterministically verify the reset semantics.
 	items := make([]plex.HistoryItem, 50)
 	episodeByKey := make(map[string]*streams.Episode, len(items))
 	for i := range items {
@@ -178,30 +188,18 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 		syncer,
 		nil,
 	)
+	sched.workers = 1 // serial run -> deterministic breaker-reset semantics
 
 	sched.processRecentHistory(context.Background(), time.Now().Unix())
 
-	// Assertion shape is intentionally loose to stay stable under `-race`
-	// goroutine scheduling. With deepAnalysisConcurrency=4 workers and a
-	// shared atomic error counter, a brief run of ≥ maxConsecutiveErrors
-	// failures landing before any success resets the counter can still
-	// trip the breaker early under heavy race scheduling, even though
-	// the long-run success rate (50%) is well above 1/5.
-	//
-	// The semantic we actually care about: successes DO reset the
-	// counter — at least some work completes AND the counter was reset
-	// enough times that the test exceeds the worst-case trip-at-5-fails
-	// bound we assert in TestProcessRecentHistory_TripsOnConsecutive
-	// Failures. That bound is maxConsecutiveErrors + 2 *
-	// deepAnalysisConcurrency, so assertions here check we cleared it.
-	calls := plx.Calls.Load()
-	resetFloor := int64(maxConsecutiveErrors + 2*deepAnalysisConcurrency)
-	if calls <= resetFloor {
-		t.Errorf("Episode called %d times; expected >%d (breaker should reset on successes, not trip like in TripsOnConsecutiveFailures)",
-			calls, resetFloor)
+	// plx.Calls counts every fake Plex method call: the single History
+	// fetch at the top of processRecentHistory plus one Episode fetch
+	// per item. All items must be fetched — the breaker never trips.
+	if got, want := plx.Calls.Load(), int64(len(items)+1); got != want {
+		t.Errorf("Plex called %d times; want %d (1 History + %d Episode fetches; breaker must not trip)", got, want, len(items))
 	}
-	if syncer.changeCalls.Load() == 0 {
-		t.Error("ChangeTracks never called; expected at least one success")
+	if got, want := syncer.changeCalls.Load(), int64(len(episodeByKey)); got != want {
+		t.Errorf("ChangeTracks called %d times; want %d (one per resolved episode)", got, want)
 	}
 }
 
