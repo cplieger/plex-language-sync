@@ -25,6 +25,16 @@ const wsTypeTimeline = "timeline"
 // WebSocket layer. Preserves the main.go behaviour (1 MB).
 const wsReadLimitBytes = 1 << 20
 
+// persistentReconnectThreshold is the number of consecutive non-stable
+// reconnect attempts after which Listen escalates from the per-cycle
+// Warn line to a single ERROR. By this depth the backoff has reached
+// MaxBackoff (default 30s) and the outage is clearly sustained (Plex
+// unreachable, token revoked, network partition) rather than a transient
+// blip. The file-marker health intentionally never reflects WebSocket
+// state, so this ERROR is the only alertable signal that the container is
+// healthy-but-processing-nothing.
+const persistentReconnectThreshold = 5
+
 // Handler receives decoded events from the Listener. Implementations
 // live in the composition root (main package) and typically fan out
 // per-event work to the sync subsystem.
@@ -120,6 +130,17 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 			"error", err,
 			"backoff", backoff.String(),
 			"stable", stable)
+
+		// A sustained outage leaves the file-marker health green while
+		// zero events are processed; escalate to ERROR once consecutive
+		// reconnects pile up past the threshold so an operator alert can
+		// fire. reconnects is reset to 0 above on a stable (re)connection.
+		if reconnects >= persistentReconnectThreshold {
+			slog.Error("websocket reconnecting persistently",
+				"attempt", reconnects,
+				"reason", reason,
+				"error", err)
+		}
 
 		delay := time.NewTimer(backoff)
 		select {
