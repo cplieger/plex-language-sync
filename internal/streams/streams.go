@@ -76,6 +76,8 @@ type Part struct {
 // unmarshal directly from JSON integers without a custom decoder.
 type StreamType int
 
+// StreamTypeVideo, StreamTypeAudio, and StreamTypeSubtitle enumerate the
+// stream-type integer values used in the Plex API wire format.
 const (
 	StreamTypeVideo    StreamType = 1
 	StreamTypeAudio    StreamType = 2
