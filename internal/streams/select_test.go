@@ -87,8 +87,6 @@ func TestSubtitleStreams(t *testing.T) {
 	}
 }
 
-// --- Tests: Episode methods ---
-
 func TestAudioStreamsEmpty(t *testing.T) {
 	ep := &Episode{}
 	got := Audio(ep)
@@ -121,8 +119,6 @@ func TestSubtitleStreamsEmptyParts(t *testing.T) {
 	}
 }
 
-// --- Tests: loadConfig with _FILE secrets ---
-
 func TestSelectedStreamsNoSelection(t *testing.T) {
 	ep := &Episode{
 		Media: []Media{{
@@ -142,8 +138,6 @@ func TestSelectedStreamsNoSelection(t *testing.T) {
 		t.Error("expected nil subtitle when nothing selected")
 	}
 }
-
-// --- Tests: BestByScore with single element ---
 
 func TestSelectedStreamsMultipleMedia(t *testing.T) {
 	// Selected only looks at first media, first part.

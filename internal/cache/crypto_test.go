@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -286,5 +287,70 @@ func TestSaveToWithoutKeyStoresPlaintext(t *testing.T) {
 	}
 	if ondisk.UserTokens["u1"] != "my-plain-token" {
 		t.Errorf("without key, on-disk token = %q, want my-plain-token", ondisk.UserTokens["u1"])
+	}
+}
+
+// --- DecryptToken ciphertext-length boundary ---
+
+// TestDecryptTokenCiphertextLengthBoundary pins the minimum-length guard in
+// DecryptToken. A decoded payload must be at least nonce-size + 1 byte (a
+// 12-byte nonce plus at least one byte of ciphertext) before DecryptToken
+// hands it to AES-GCM:
+//
+//   - 12 bytes is one short of the minimum, so DecryptToken rejects it with a
+//     "too short" error before touching the cipher.
+//   - 13 bytes clears the guard, so DecryptToken proceeds to AES-GCM, which
+//     fails authentication on the bogus input and reports a "decrypt" error.
+//
+// Each case asserts the exact error class, so widening or narrowing the guard
+// by one byte flips one case's error and fails the test.
+func TestDecryptTokenCiphertextLengthBoundary(t *testing.T) {
+	t.Parallel()
+	// DeriveKey yields a valid 32-byte AES-256 key so aes.NewCipher succeeds
+	// for the case that clears the length guard and reaches gcm.Open.
+	key, err := DeriveKey("test-token")
+	if err != nil {
+		t.Fatalf("DeriveKey() error = %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		wantMsg string
+		notMsg  string
+		rawLen  int
+	}{
+		{
+			name: "twelve bytes is too short", rawLen: 12,
+			wantMsg: "too short", notMsg: "decrypt",
+		},
+		{
+			name: "thirteen bytes reaches decrypt", rawLen: 13,
+			wantMsg: "decrypt", notMsg: "too short",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// encPrefix marks the value as ciphertext so DecryptToken does not
+			// take the plaintext pass-through path. RawURLEncoding round-trips
+			// byte counts, so the decoded length equals rawLen exactly.
+			value := encPrefix + base64.RawURLEncoding.EncodeToString(make([]byte, tc.rawLen))
+
+			_, err := DecryptToken(key, value)
+			if err == nil {
+				t.Fatalf("DecryptToken(rawLen=%d) error = nil, want error containing %q",
+					tc.rawLen, tc.wantMsg)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("DecryptToken(rawLen=%d) error = %q, want substring %q",
+					tc.rawLen, msg, tc.wantMsg)
+			}
+			if strings.Contains(msg, tc.notMsg) {
+				t.Errorf("DecryptToken(rawLen=%d) error = %q, must NOT contain %q",
+					tc.rawLen, msg, tc.notMsg)
+			}
+		})
 	}
 }

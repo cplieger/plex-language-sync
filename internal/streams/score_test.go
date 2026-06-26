@@ -101,8 +101,6 @@ func TestScoreSubtitleStream(t *testing.T) {
 	})
 }
 
-// --- Tests: SubtitleCriteria ---
-
 func TestTitleMatchScore(t *testing.T) {
 	t.Run("all titles match", func(t *testing.T) {
 		ref := &Stream{
@@ -207,8 +205,6 @@ func TestBestByScoreEmpty(t *testing.T) {
 	}
 }
 
-// --- Tests: FirstPartID ---
-
 func TestScoreAudioStreamChannelPreference(t *testing.T) {
 	t.Run("low channel ref prefers higher channels", func(t *testing.T) {
 		ref := &Stream{Channels: 2}
@@ -262,8 +258,6 @@ func TestScoreSubtitleStreamComprehensive(t *testing.T) {
 	})
 }
 
-// --- Tests: ContainsDescriptive additional terms ---
-
 func TestBestByScoreSingle(t *testing.T) {
 	streams := []*Stream{{ID: 1}}
 	got := BestByScore(streams, func(s *Stream) int { return 0 })
@@ -303,8 +297,6 @@ func TestTitleMatchScorePartial(t *testing.T) {
 		t.Errorf("only Title matches, expected 5, got %d", got)
 	}
 }
-
-// --- Tests: loadConfig debug mode ---
 
 func TestScoreAudioStreamNonNegative(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -548,10 +540,6 @@ func TestFindSubtitleByLanguageNeverPanics(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Tests for drainBody and other small functions (Round 2)
-// ---------------------------------------------------------------------------
-
 func TestFindSubtitleByLanguage_ReturnsHighestCodecScorePBT(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		codecs := []string{"srt", "ass", "ssa", "pgs", "vobsub", "webvtt", "mov_text", ""}
@@ -654,15 +642,13 @@ func TestSubtitleCodecScore_OrderInvariant(t *testing.T) {
 	}
 }
 
-// --- Tests: findEpisodeReference (ops-6 wrapper) ---
-
 // ---------------------------------------------------------------------------
-// Mutation-killing boundary tests (gremlins live mutants)
+// Comparator-boundary tests for the scoring rules
 // ---------------------------------------------------------------------------
 
 // TestScoreAudio_PreferMoreChannelsBoundaries pins the exact comparator
-// boundaries of the prefer_more_channels rule (score.go L34/L35). The rule
-// adds 2 only when 0 < ref.Channels < 3 and s.Channels > ref.Channels.
+// boundaries of the prefer_more_channels rule. The rule adds 2 only when
+// 0 < ref.Channels < 3 and s.Channels > ref.Channels.
 //
 // given a reference/candidate pair sitting exactly on a comparator boundary
 // when ScoreAudio is computed with no other matching fields
@@ -675,11 +661,9 @@ func TestScoreAudio_PreferMoreChannelsBoundaries(t *testing.T) {
 		sChannels   int
 		want        int
 	}{
-		// ref.Channels==0 must fail the `ref.Channels > 0` guard. A `>=`
-		// mutation would let it through and add 2.
+		// ref.Channels==0 fails the `ref.Channels > 0` guard, so no bonus.
 		{name: "ref channels at zero, candidate higher", refChannels: 0, sChannels: 2, want: 0},
-		// ref.Channels==3 must fail the `ref.Channels < 3` guard. A `<=`
-		// mutation would let it through and add 2.
+		// ref.Channels==3 fails the `ref.Channels < 3` guard, so no bonus.
 		{name: "ref channels at upper limit, candidate higher", refChannels: 3, sChannels: 4, want: 0},
 		// Sanity anchor: 2 channels ref with a richer candidate DOES earn
 		// the bonus, so the rule is genuinely exercised by the boundary
@@ -702,13 +686,11 @@ func TestScoreAudio_PreferMoreChannelsBoundaries(t *testing.T) {
 	}
 }
 
-// TestBestByScore_SelectsHighestAmongNegativeScores pins the bestScore
-// sentinel initialiser (score.go L196: `bestScore := -1`). When every
-// candidate scores below zero except one at exactly 0, the sentinel must
-// start strictly below the lowest possible score so the real maximum still
-// wins. An INVERT_NEGATIVES (`-1`→`1`) or ARITHMETIC_BASE mutation pushes the
-// sentinel to >= 0, so the score-0 stream at index 1 never overtakes the
-// default index 0.
+// TestBestByScore_SelectsHighestAmongNegativeScores pins the bestScore sentinel
+// initialiser. When every candidate scores below zero except one at exactly 0,
+// the sentinel must start strictly below the lowest possible score so the real
+// maximum still wins; a sentinel of 0 or above would leave the score-0 stream
+// at index 1 unable to overtake the default index 0.
 func TestBestByScore_SelectsHighestAmongNegativeScores(t *testing.T) {
 	t.Parallel()
 	streams := []*Stream{{ID: 1}, {ID: 2}}
@@ -726,10 +708,9 @@ func TestBestByScore_SelectsHighestAmongNegativeScores(t *testing.T) {
 	}
 }
 
-// TestBestByScore_TieGoesToEarliest pins the strict `>` comparator
-// (score.go L199). Documented contract: "Ties go to the earlier entry." A
-// `>`→`>=` mutation would let a later equal-scoring stream overwrite the
-// earlier one.
+// TestBestByScore_TieGoesToEarliest pins the strict `>` comparator. Documented
+// contract: "Ties go to the earlier entry." A `>=` comparator would instead let
+// a later equal-scoring stream overwrite the earlier one.
 func TestBestByScore_TieGoesToEarliest(t *testing.T) {
 	t.Parallel()
 	streams := []*Stream{{ID: 1}, {ID: 2}}
