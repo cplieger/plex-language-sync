@@ -114,33 +114,12 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 			reconnects = 0
 		}
 
-		// Classify the error for log-level selection: clean cancellation
-		// is not noteworthy; EOF/close from upstream is expected
-		// info-level; dial/read errors remain warnings.
+		// Clean cancellation is not noteworthy; every other disconnect is
+		// logged (and escalated when it persists).
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		level := slog.LevelWarn
-		reason := ClassifyError(err)
-		if reason == ReasonServerClose {
-			level = slog.LevelInfo
-		}
-		slog.Log(ctx, level, "websocket disconnected, reconnecting",
-			"reason", reason,
-			"error", err,
-			"backoff", backoff.String(),
-			"stable", stable)
-
-		// A sustained outage leaves the file-marker health green while
-		// zero events are processed; escalate to ERROR once consecutive
-		// reconnects pile up past the threshold so an operator alert can
-		// fire. reconnects is reset to 0 above on a stable (re)connection.
-		if reconnects >= persistentReconnectThreshold {
-			slog.Error("websocket reconnecting persistently",
-				"attempt", reconnects,
-				"reason", reason,
-				"error", err)
-		}
+		l.logDisconnect(ctx, err, backoff, stable, reconnects)
 
 		delay := time.NewTimer(backoff)
 		select {
@@ -150,6 +129,35 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 			return
 		}
 		reconnecting = true
+	}
+}
+
+// logDisconnect emits the per-cycle disconnect log at the level the
+// disconnect reason warrants and escalates to a single ERROR once
+// consecutive reconnects pile up past the threshold. Clean server-close
+// is expected info-level; dial/read errors stay warnings. A sustained
+// outage leaves the file-marker health green while zero events are
+// processed, so the escalation is the only alertable signal that the
+// container is healthy-but-processing-nothing. Split out of Listen to
+// keep the reconnect loop within the cognitive-complexity budget; the
+// log messages and keys are unchanged (inviolate item 5).
+func (l *Listener) logDisconnect(ctx context.Context, err error, backoff time.Duration, stable bool, reconnects int) {
+	level := slog.LevelWarn
+	reason := ClassifyError(err)
+	if reason == ReasonServerClose {
+		level = slog.LevelInfo
+	}
+	slog.Log(ctx, level, "websocket disconnected, reconnecting",
+		"reason", reason,
+		"error", err,
+		"backoff", backoff.String(),
+		"stable", stable)
+
+	if reconnects >= persistentReconnectThreshold {
+		slog.Error("websocket reconnecting persistently",
+			"attempt", reconnects,
+			"reason", reason,
+			"error", err)
 	}
 }
 

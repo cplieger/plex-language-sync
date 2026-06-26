@@ -31,10 +31,9 @@ func countCalls(calls []string, name string) int {
 }
 
 // TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive pins the
-// `if ctx.Err() != nil` guard (episode.go L51). With a live (non-cancelled)
-// context, the per-user loop body must run for every user. A
-// CONDITIONALS_NEGATION mutation (`!= nil`→`== nil`) flips the guard so the
-// loop returns before processing anyone, leaving zero per-user reloads.
+// per-user loop's live-context guard: with a non-cancelled context the loop
+// body must run for every user, so a guard that bailed out early would leave
+// zero per-user reloads.
 //
 // given a found reference and two known users on a live context
 // when ProcessNewOrUpdatedEpisodeAllUsers runs
@@ -67,15 +66,12 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testin
 	}
 }
 
-// TestFindReferenceEpisode_CapsSearchAtMaxDepth pins both the depth guard
-// (episode.go L189: `searched >= maxDepth`) and the search counter
-// (L192: `searched++`). With more episodes than the cap and none carrying a
-// selected audio, the search must stop after exactly maxDepth fetches.
-//
-//   - CONDITIONALS_BOUNDARY (`>=`→`>`) lets one extra episode through
-//     (searched would be maxDepth+1).
-//   - INCREMENT_DECREMENT (`++`→`--`) drives searched negative, never trips
-//     the cap, and scans every episode.
+// TestFindReferenceEpisode_CapsSearchAtMaxDepth pins both the depth cap and
+// the per-fetch search counter: with more episodes than the cap and none
+// carrying a selected audio, the search must stop after exactly maxDepth
+// fetches. An off-by-one in the cap would let one extra episode through, and
+// a counter that failed to advance would never trip the cap and would scan
+// every episode.
 func TestFindReferenceEpisode_CapsSearchAtMaxDepth(t *testing.T) {
 	t.Parallel()
 	const maxDepth = 3
