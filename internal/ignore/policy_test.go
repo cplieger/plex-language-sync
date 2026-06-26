@@ -151,6 +151,16 @@ func TestPolicyShouldSkipEpisode(t *testing.T) {
 			reader: nil, // never called
 			want:   false,
 		},
+		{
+			// A non-empty grandparent with a nil reader must still skip
+			// the metadata fetch and report "do not skip" — the nil-reader
+			// guard, not just the empty-grandparent guard, has to hold.
+			name:   "nil reader with grandparent returns false",
+			labels: []string{"SKIP"},
+			ref:    &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: "42"},
+			reader: nil, // ShouldSkipEpisode must not dereference it
+			want:   false,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -38,7 +38,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -433,15 +435,31 @@ func TestLoadConfigWithFileSecrets(t *testing.T) {
 }
 
 func TestLogConfig(t *testing.T) {
+	// logConfig must mask the Plex token: the security contract (README
+	// "token never logged") is that the real token value never reaches
+	// the logs — only the literal "configured".
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	cfg := &config{
 		plexURL:        "http://plex:32400",
-		plexToken:      "test-token",
+		plexToken:      "super-secret-token-value",
 		updateLevel:    "show",
 		updateStrategy: "all",
 		schedulerTime:  "02:00",
 		ignoreLabels:   []string{"SKIP"},
 	}
 	logConfig(cfg)
+
+	out := buf.String()
+	if strings.Contains(out, "super-secret-token-value") {
+		t.Errorf("logConfig leaked the Plex token into the logs: %q", out)
+	}
+	if !strings.Contains(out, "plex_token=configured") {
+		t.Errorf("logConfig should log plex_token=configured, got: %q", out)
+	}
 }
 
 // ---------------------------------------------------------------------------

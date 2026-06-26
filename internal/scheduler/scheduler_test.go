@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -172,7 +173,7 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	items := make([]plex.HistoryItem, 50)
 	episodeByKey := make(map[string]*streams.Episode, len(items))
 	for i := range items {
-		key := "ep" + itoa(i)
+		key := "ep" + strconv.Itoa(i)
 		items[i] = plex.HistoryItem{RatingKey: key, Type: "episode"}
 		if i%2 == 0 { // every other item resolves
 			episodeByKey[key] = &streams.Episode{RatingKey: key}
@@ -340,25 +341,4 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 	if syncer.processCalls.Load() != 1 {
 		t.Errorf("ProcessNewOrUpdated called %d times; want 1 (Kids section ignored)", syncer.processCalls.Load())
 	}
-}
-
-// itoa is a tiny inline formatter to avoid a strconv import in a test-
-// only file.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	sign := ""
-	if n < 0 {
-		sign = "-"
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return sign + string(buf[i:])
 }
