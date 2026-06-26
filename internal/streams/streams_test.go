@@ -6,16 +6,6 @@ import (
 	"pgregory.net/rapid"
 )
 
-func TestStreamDesc(t *testing.T) {
-	if got := Desc(nil); got != "none" {
-		t.Errorf("Desc(nil) = %q, want %q", got, "none")
-	}
-	s := &Stream{ID: 1, ExtendedDisplayTitle: "English (EAC3 5.1)"}
-	if got := Desc(s); got != "English (EAC3 5.1)" {
-		t.Errorf("Desc() = %q, want %q", got, "English (EAC3 5.1)")
-	}
-}
-
 func TestContainsDescriptive(t *testing.T) {
 	tests := []struct {
 		title string
@@ -67,8 +57,6 @@ func TestEpisodeMethodsZero(t *testing.T) {
 	}
 }
 
-// --- Tests: cache operations ---
-
 func TestStreamIsAudioIsSubtitle(t *testing.T) {
 	audio := Stream{StreamType: StreamTypeAudio}
 	sub := Stream{StreamType: StreamTypeSubtitle}
@@ -110,8 +98,6 @@ func TestTitleForMatch(t *testing.T) {
 	}
 }
 
-// --- Tests: shouldIgnoreLibrary ---
-
 func TestStreamDescAllBranches(t *testing.T) {
 	tests := []struct {
 		name string
@@ -134,8 +120,6 @@ func TestStreamDescAllBranches(t *testing.T) {
 		})
 	}
 }
-
-// --- Tests: userManager.allUsers ---
 
 func TestContainsDescriptiveAllTerms(t *testing.T) {
 	terms := []string{
@@ -186,8 +170,6 @@ func TestEpisodeShortNameFormatting(t *testing.T) {
 	}
 }
 
-// --- Tests: Audio / Subtitle nil guards ---
-
 func TestContainsDescriptiveNeverPanics(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		title := rapid.String().Draw(t, "title")
@@ -232,5 +214,3 @@ func TestStreamID(t *testing.T) {
 		t.Errorf("ID({ID:42}) = %d, want 42", got)
 	}
 }
-
-// --- Tests: findReferenceEpisode (q1) ---

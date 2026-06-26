@@ -219,8 +219,6 @@ func TestSubtitleMatchCriteria(t *testing.T) {
 	})
 }
 
-// --- Tests: TitleMatchScore ---
-
 func TestMatchSubtitleStreamNilRefReturnsNil(t *testing.T) {
 	refAudio := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "jpn"}
 	candidates := []*Stream{
@@ -270,8 +268,6 @@ func TestMatchSubtitleStreamHIOnly(t *testing.T) {
 		t.Errorf("expected HI subtitle, got ID=%d", got.ID)
 	}
 }
-
-// --- Tests: hasIgnoreLabel ---
 
 func TestShouldSkipSubtitleForCommentary(t *testing.T) {
 	t.Run("nil refAudio returns false", func(t *testing.T) {
@@ -332,8 +328,6 @@ func TestShouldSkipSubtitleForCommentary(t *testing.T) {
 		}
 	})
 }
-
-// --- Tests: Desc additional branches ---
 
 func TestMatchAudioStreamSingleCandidate(t *testing.T) {
 	ref := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac"}
@@ -399,9 +393,10 @@ func TestMatchAudioStreamVisualImpairedPreference(t *testing.T) {
 
 // --- Tests: MatchSubtitle with multiple forced subs ---
 
-// TestMatchSubtitleStreamMultipleForced documents the h-f3 C1 policy change.
-// Previously, nil ref + audio ref would search for forced subs in the audio
-// language. The user's explicit "no subtitle" choice now takes precedence.
+// TestMatchSubtitleStreamMultipleForced documents the "no subtitle means no
+// subtitle" policy: a nil subtitle ref combined with an audio ref must NOT
+// search for forced subs in the audio language. The user's explicit "no
+// subtitle" choice takes precedence.
 
 func TestMatchSubtitleStreamMultipleForced(t *testing.T) {
 	ref := (*Stream)(nil)
@@ -415,8 +410,6 @@ func TestMatchSubtitleStreamMultipleForced(t *testing.T) {
 		t.Errorf("nil ref: no subtitle means no subtitle, got ID=%d", got.ID)
 	}
 }
-
-// --- Tests: ScoreAudio channel preference ---
 
 func TestMatchAudioStreamNeverPanics(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -602,5 +595,3 @@ func TestMatchAudioStream_SelfIsAlwaysAMatch(t *testing.T) {
 		}
 	})
 }
-
-// --- Tests: subtitle / filter ordering invariants (u1c1-009) ---
