@@ -278,24 +278,37 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) {
 	var consecutiveErrors atomic.Int32
 
 	for range s.workerCount() {
-		wg.Go(func() {
-			for item := range work {
-				if ctx.Err() != nil {
-					return
-				}
-				if consecutiveErrors.Load() >= maxConsecutiveErrors {
-					// Continue draining the channel so the feeder
-					// goroutine below can exit; do no further work.
-					continue
-				}
-				s.processHistoryItem(ctx, item, &consecutiveErrors)
-			}
-		})
+		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors) })
 	}
+	s.feedHistory(ctx, work, history, &consecutiveErrors)
+	close(work)
+	wg.Wait()
+}
 
-	// Feeder: push items until the channel is full or the breaker
-	// trips. Pre-filters items that have no work attached so workers
-	// are never woken for a no-op.
+// historyWorker drains work until it closes, replaying each history
+// item via processHistoryItem. It does no further work once the context
+// is cancelled (returning) or the shared circuit breaker has tripped
+// (continuing to drain so the feeder can finish and close the channel).
+func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors *atomic.Int32) {
+	for item := range work {
+		if ctx.Err() != nil {
+			return
+		}
+		if consecutiveErrors.Load() >= maxConsecutiveErrors {
+			// Continue draining the channel so the feeder goroutine can
+			// exit; do no further work.
+			continue
+		}
+		s.processHistoryItem(ctx, item, consecutiveErrors)
+	}
+}
+
+// feedHistory pushes episode history items into work, applying the same
+// pre-filters the sequential implementation used (skip non-episode types
+// and ignored libraries so workers are never woken for a no-op) and the
+// same circuit breaker: once maxConsecutiveErrors accumulates without an
+// intervening success it logs the abort WARN and stops feeding.
+func (s *Scheduler) feedHistory(ctx context.Context, work chan<- plex.HistoryItem, history []plex.HistoryItem, consecutiveErrors *atomic.Int32) {
 	for _, item := range history {
 		if ctx.Err() != nil {
 			break
@@ -316,8 +329,6 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) {
 		case <-ctx.Done():
 		}
 	}
-	close(work)
-	wg.Wait()
 }
 
 // processHistoryItem runs a single history replay: fetch the per-user
@@ -353,25 +364,40 @@ func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) {
 	slog.Debug("scheduler: scanning recently added episodes",
 		"sections", len(sections))
 
-	// Fan episodes across the worker pool. The feeder below iterates
-	// sections sequentially (one HTTP call per section to RecentlyAdded)
-	// but pushes individual episodes into the work channel so per-episode
+	// Fan episodes across the worker pool. The feeder iterates sections
+	// sequentially (one HTTP call per section to RecentlyAdded) but
+	// pushes individual episodes into the work channel so per-episode
 	// processing runs concurrently.
 	work := make(chan streams.Episode)
 	var wg stdsync.WaitGroup
 
 	for range s.workerCount() {
-		wg.Go(func() {
-			for ep := range work {
-				if ctx.Err() != nil {
-					return
-				}
-				epCopy := ep
-				s.processRecentlyAddedEpisode(ctx, &epCopy)
-			}
-		})
+		wg.Go(func() { s.recentlyAddedWorker(ctx, work) })
 	}
+	s.feedRecentlyAdded(ctx, work, sections, sinceUnix)
+	close(work)
+	wg.Wait()
+}
 
+// recentlyAddedWorker drains work until it closes, handling each
+// recently-added episode for all users. Returns promptly once the
+// context is cancelled.
+func (s *Scheduler) recentlyAddedWorker(ctx context.Context, work <-chan streams.Episode) {
+	for ep := range work {
+		if ctx.Err() != nil {
+			return
+		}
+		epCopy := ep
+		s.processRecentlyAddedEpisode(ctx, &epCopy)
+	}
+}
+
+// feedRecentlyAdded iterates sections sequentially (one RecentlyAdded
+// fetch per non-ignored section) and pushes each returned episode into
+// work for the pool. Preserves the pre-extraction skip rules (ignored
+// libraries, per-section fetch-failure skip) and the section/episode
+// ordering.
+func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.Episode, sections []plex.Section, sinceUnix int64) {
 	for _, section := range sections {
 		if ctx.Err() != nil {
 			break
@@ -392,8 +418,6 @@ func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) {
 			}
 		}
 	}
-	close(work)
-	wg.Wait()
 }
 
 // processRecentlyAddedEpisode handles a single recently-added episode
