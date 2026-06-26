@@ -487,10 +487,9 @@ func TestFindEpisodeReference(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected pins the
-// `cur != nil` guard in applyAudioStream (tracks.go L200). When the target
-// has no currently-selected audio, the matched reference audio must be
-// applied. A CONDITIONALS_NEGATION mutation (`cur != nil`→`cur == nil`) makes
-// the guard dereference the nil cur and panic on this exact path.
+// nil-current-audio guard in applyAudioStream: when the target has no
+// currently-selected audio, the matched reference audio must still be applied
+// (and the guard must not dereference the nil current stream).
 //
 // given a target whose only audio stream is NOT selected (cur == nil)
 // when UpdateEpisodeStreams applies a matching reference audio
@@ -518,11 +517,9 @@ func TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected(t *testing.T) {
 }
 
 // TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect pins the
-// `curSub != nil` guard in applySubtitleStream (tracks.go L248). When the
+// already-correct-subtitle guard in applySubtitleStream: when the
 // currently-selected subtitle already equals the matched reference subtitle,
-// no write should happen. A CONDITIONALS_NEGATION mutation
-// (`curSub != nil`→`curSub == nil`) flips the guard so the redundant write
-// fires and the update wrongly reports changed.
+// no write should happen and the update must not report a change.
 //
 // given a target whose selected subtitle already matches the reference
 // when UpdateEpisodeStreams runs with that reference
@@ -554,10 +551,8 @@ func TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect(t *testing.T) {
 }
 
 // TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess pins the
-// post-write error check in applySubtitleStream (tracks.go L251:
-// `err != nil`). On a successful SetSubtitleStream the method must return
-// true. A CONDITIONALS_NEGATION mutation (`err != nil`→`err == nil`) inverts
-// the check so a successful write is treated as a failure and reports false.
+// post-write success path in applySubtitleStream: on a successful
+// SetSubtitleStream the method must report changed=true.
 //
 // Audio is left unchanged so the returned `changed` flag depends solely on
 // the subtitle write outcome (the existing "applies audio and subtitle" test
@@ -594,16 +589,13 @@ func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T)
 }
 
 // TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile pins the
-// `curSub.ID == bestSub.ID` guard in applyProfileSubtitle (profile.go L101).
-// When the currently-selected subtitle already matches the best subtitle for
-// the learned profile, no write should happen. A CONDITIONALS_NEGATION
-// mutation (`==`→`!=`) flips the guard so a redundant write fires and the
-// method wrongly reports changed.
+// already-correct-subtitle guard in applyProfileSubtitle: when the
+// currently-selected subtitle already matches the best subtitle for the
+// learned profile, no write should happen and the method must not report a
+// change.
 //
 // given a profile jpn→eng and a target whose selected eng subtitle is the
-//
-//	best eng candidate
-//
+// best eng candidate
 // when ApplyLanguageProfile runs
 // then no SetSubtitleStream call is made and the result is false.
 func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.T) {
@@ -628,4 +620,183 @@ func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 		t.Errorf("SetSubtitle called %d times, want 0 (no redundant write)", got)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ChangeTracksForEpisode — show/season level, strategy, and skip branches
+// ---------------------------------------------------------------------------
+
+// refWithSelectedAudio builds the active reference episode: one part with a
+// single selected audio stream in the given language and no subtitle.
+func refWithSelectedAudio(lang, show, parent string, season, index int) *streams.Episode {
+	return &streams.Episode{
+		RatingKey:            "1",
+		GrandparentRatingKey: show,
+		ParentRatingKey:      parent,
+		GrandparentTitle:     "Show",
+		ParentIndex:          streams.FlexInt(season),
+		Index:                streams.FlexInt(index),
+		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: lang, Selected: true},
+		}}}}},
+	}
+}
+
+// targetNeedingAudioSwitch builds an episode whose selected audio is eng with
+// a jpn alternative available, so a jpn reference triggers exactly one
+// SetAudioStream write when the episode is reloaded.
+func targetNeedingAudioSwitch(key string) *streams.Episode {
+	return &streams.Episode{
+		RatingKey: key,
+		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+			{ID: 10, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", Selected: true},
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
+		}}}}},
+	}
+}
+
+func TestChangeTracksForEpisode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("show level updates every episode via ShowEpisodes", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			ShowEpisodesByShow: map[string][]streams.Episode{
+				"42": {{RatingKey: "2"}, {RatingKey: "3"}},
+			},
+			EpisodeByKey: map[string]*streams.Episode{
+				"2": targetNeedingAudioSwitch("2"),
+				"3": targetNeedingAudioSwitch("3"),
+			},
+		}
+		s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 1 {
+			t.Errorf("ShowEpisodes:42 called %d times, want 1", got)
+		}
+		if got := countCalls(plx.CallNames(), "SetAudio"); got != 2 {
+			t.Errorf("SetAudio called %d times, want 2 (one per show episode); calls=%v", got, plx.CallNames())
+		}
+	})
+
+	t.Run("season level updates via SeasonEpisodes", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			SeasonEpisodesByKey: map[string][]streams.Episode{
+				"7": {{RatingKey: "2"}},
+			},
+			EpisodeByKey: map[string]*streams.Episode{
+				"2": targetNeedingAudioSwitch("2"),
+			},
+		}
+		s := newSyncer(Config{UpdateLevel: LevelSeason, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+		if got := countCalls(plx.CallNames(), "SeasonEpisodes:7"); got != 1 {
+			t.Errorf("SeasonEpisodes:7 called %d times, want 1", got)
+		}
+		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
+			t.Errorf("ShowEpisodes must not be called at season level; calls=%v", plx.CallNames())
+		}
+		if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
+			t.Errorf("SetAudio called %d times, want 1", got)
+		}
+	})
+
+	t.Run("next strategy skips episodes at or before the reference", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			ShowEpisodesByShow: map[string][]streams.Episode{
+				"42": {
+					{RatingKey: "1", ParentIndex: 1, Index: 1},
+					{RatingKey: "2", ParentIndex: 1, Index: 2}, // the reference itself
+					{RatingKey: "3", ParentIndex: 1, Index: 3},
+				},
+			},
+			EpisodeByKey: map[string]*streams.Episode{
+				"3": targetNeedingAudioSwitch("3"),
+			},
+		}
+		s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyNext}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		ref := refWithSelectedAudio("jpn", "42", "7", 1, 2) // S1E2
+
+		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+		// Only S1E3 (key "3") is strictly after the reference; earlier
+		// episodes must never be reloaded.
+		if got := countCalls(plx.CallNames(), "Episode:1"); got != 0 {
+			t.Errorf("Episode:1 reloaded %d times, want 0 (before reference)", got)
+		}
+		if got := countCalls(plx.CallNames(), "Episode:2"); got != 0 {
+			t.Errorf("Episode:2 reloaded %d times, want 0 (the reference itself)", got)
+		}
+		if got := countCalls(plx.CallNames(), "Episode:3"); got != 1 {
+			t.Errorf("Episode:3 reloaded %d times, want 1 (after reference)", got)
+		}
+		if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
+			t.Errorf("SetAudio called %d times, want 1", got)
+		}
+	})
+
+	t.Run("reference without selected audio is skipped before any fetch", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		}
+		s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		// Audio present but not selected → streams.Selected returns nil audio.
+		ref := &streams.Episode{
+			RatingKey:            "1",
+			GrandparentRatingKey: "42",
+			Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
+			}}}}},
+		}
+
+		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+		if calls := plx.CallNames(); len(calls) != 0 {
+			t.Errorf("no Plex calls expected when the reference has no selected audio, got %v", calls)
+		}
+	})
+
+	t.Run("empty grandparent rating key is skipped before any fetch", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{}
+		s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		ref := refWithSelectedAudio("jpn", "", "7", 1, 1) // no show rating key
+
+		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+		if calls := plx.CallNames(); len(calls) != 0 {
+			t.Errorf("no Plex calls expected when the show rating key is empty, got %v", calls)
+		}
+	})
+
+	t.Run("ignored show is skipped before fetching episodes", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			ShowMetadataByKey: map[string]*plex.Show{
+				"42": {RatingKey: "42", Label: []streams.Label{{Tag: "SKIP"}}},
+			},
+			ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		}
+		policy := ignore.NewPolicy(nil, []string{"SKIP"})
+		s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
+			t.Errorf("ShowEpisodes must not be called when the show is ignored; calls=%v", plx.CallNames())
+		}
+		if got := countCalls(plx.CallNames(), "SetAudio"); got != 0 {
+			t.Errorf("SetAudio called %d times, want 0 (show ignored)", got)
+		}
+	})
 }

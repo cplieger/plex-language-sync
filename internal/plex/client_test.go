@@ -1,6 +1,7 @@
 package plex
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,8 +11,8 @@ import (
 	"encoding/pem"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,20 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 type errReader struct{ err error }
 
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// captureSlog redirects the default slog logger to a buffer for the duration
+// of fn and returns everything logged. It restores the previous default
+// logger on cleanup. Tests using it must NOT be parallel (they mutate the
+// process-global default logger).
+func captureSlog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	fn()
+	return buf.String()
+}
 
 // --- Tests: NewClient ---
 
@@ -196,6 +211,20 @@ func TestNewHTTPClient_invalid_pem_errors(t *testing.T) {
 	}
 }
 
+// TestNewHTTPClient_DefaultTimeout pins the 30s request timeout: a zeroed
+// timeout would silently drop the bound on every Plex call, a reliability
+// regression that no other test would catch.
+func TestNewHTTPClient_DefaultTimeout(t *testing.T) {
+	t.Parallel()
+	c, err := newHTTPClient("")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+	if c.Timeout != 30*time.Second {
+		t.Errorf("newHTTPClient timeout = %v, want 30s", c.Timeout)
+	}
+}
+
 // --- Tests: newHTTPClient refuses redirects (PLEX-LS-SEC-01) ---
 
 func TestNewHTTPClient_RefusesRedirects(t *testing.T) {
@@ -239,62 +268,74 @@ func TestNewHTTPClient_RefusesRedirects(t *testing.T) {
 
 // --- Tests: WarnIfPlaintextURL (PLEX-LS-SEC-02) ---
 
-func TestWarnIfPlaintextURL_QuietOnLoopback(t *testing.T) {
-	t.Parallel()
-	// Should not panic, should not emit. We can't easily assert "no log"
-	// without intercepting slog; this is a smoke test that every safe shape
-	// completes without panic.
-	for _, raw := range []string{
-		"http://127.0.0.1:32400",
-		"http://localhost:32400",
-		"http://plex:32400",   // Docker DNS short name
-		"https://example.com", // https is fine
-		"https://203.0.113.5", // RFC 5737 TEST-NET-3 (docs), https short-circuits
-	} {
-		u, _ := url.Parse(raw)
-		WarnIfPlaintextURL(u)
+// TestWarnIfPlaintextURL asserts the plaintext-token warning fires for
+// http:// to a remote (dotted) host and stays silent for every safe shape:
+// loopback, localhost, Docker-DNS short names (no dots), and any https URL.
+// captureSlog inspects the emitted log instead of only checking the call
+// does not panic, so each branch's observable behaviour is pinned.
+func TestWarnIfPlaintextURL(t *testing.T) {
+	const warning = "transit unencrypted"
+	tests := []struct {
+		name     string
+		rawURL   string
+		wantWarn bool
+	}{
+		{"http to remote FQDN warns", "http://plex.example.com:32400", true},
+		{"http to remote IP warns", "http://203.0.113.100:32400", true},
+		{"http to multi-label host warns", "http://my.plex.server:32400", true},
+		{"http to loopback IP is quiet", "http://127.0.0.1:32400", false},
+		{"http to localhost is quiet", "http://localhost:32400", false},
+		{"http to Docker DNS short name is quiet", "http://plex:32400", false},
+		{"https to FQDN is quiet", "https://plex.example.com", false},
+		{"https to IP is quiet", "https://203.0.113.5", false},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := url.Parse(tt.rawURL)
+			if err != nil {
+				t.Fatalf("url.Parse(%q): %v", tt.rawURL, err)
+			}
+			out := captureSlog(t, func() { WarnIfPlaintextURL(u) })
+			if gotWarn := strings.Contains(out, warning); gotWarn != tt.wantWarn {
+				t.Errorf("WarnIfPlaintextURL(%q) warned=%v, want %v (log: %q)",
+					tt.rawURL, gotWarn, tt.wantWarn, out)
+			}
+		})
+	}
 
-func TestWarnIfPlaintextURL_WarnsOnFQDN(t *testing.T) {
-	t.Parallel()
-	// http:// to a host with dots (FQDN) should trigger the warning path.
-	for _, raw := range []string{
-		"http://plex.example.com:32400",
-		"http://203.0.113.100:32400",
-		"http://my.plex.server:32400",
-	} {
-		u, _ := url.Parse(raw)
-		WarnIfPlaintextURL(u) // must not panic; exercises the warning branch
+	// A nil URL must be a no-op: no panic, no warning.
+	if out := captureSlog(t, func() { WarnIfPlaintextURL(nil) }); strings.Contains(out, warning) {
+		t.Errorf("WarnIfPlaintextURL(nil) warned, want silence (log: %q)", out)
 	}
 }
 
 // --- Tests: drainBody ---
 
+// TestDrainBody pins drainBody's logging contract: successful drains (small,
+// empty, and over-4KB bodies, where io.CopyN stops at the 4KB cap or hits a
+// suppressed io.EOF) emit nothing, while a genuine non-EOF read error is
+// surfaced at debug. captureSlog asserts on the emitted log instead of only
+// checking the call does not panic.
 func TestDrainBody(t *testing.T) {
-	t.Parallel()
-	t.Run("drains small body", func(t *testing.T) {
-		t.Parallel()
-		body := io.NopCloser(strings.NewReader("hello world"))
-		drainBody(body) // should not panic
-	})
-	t.Run("drains empty body", func(t *testing.T) {
-		t.Parallel()
-		body := io.NopCloser(strings.NewReader(""))
-		drainBody(body) // should not panic
-	})
-	t.Run("drains large body up to 4KB", func(t *testing.T) {
-		t.Parallel()
-		data := strings.Repeat("x", 8192)
-		body := io.NopCloser(strings.NewReader(data))
-		drainBody(body) // reads up to 4KB, discards rest
-	})
-}
-
-func TestDrainBodyErrorReader(t *testing.T) {
-	t.Parallel()
-	body := io.NopCloser(&errReader{err: fmt.Errorf("read error")})
-	drainBody(body) // should log debug, not panic
+	const debugLine = "failed to drain response body"
+	tests := []struct {
+		name    string
+		body    io.ReadCloser
+		wantLog bool
+	}{
+		{"small body drains without logging", io.NopCloser(strings.NewReader("hello world")), false},
+		{"empty body drains without logging", io.NopCloser(strings.NewReader("")), false},
+		{"over-4KB body drains without logging", io.NopCloser(strings.NewReader(strings.Repeat("x", 8192))), false},
+		{"non-EOF read error is logged at debug", io.NopCloser(&errReader{err: errors.New("connection reset")}), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := captureSlog(t, func() { drainBody(tt.body) })
+			if gotLog := strings.Contains(out, debugLine); gotLog != tt.wantLog {
+				t.Errorf("drainBody logged=%v, want %v (log: %q)", gotLog, tt.wantLog, out)
+			}
+		})
+	}
 }
 
 // --- Tests: doJSON / get / put ---

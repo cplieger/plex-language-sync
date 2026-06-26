@@ -508,12 +508,10 @@ func TestPeriodicRefreshInterval(t *testing.T) {
 	}
 }
 
-// TestManager_ClientForUserCachesInstance pins the cache-hit guard in
-// ClientForUser (manager.go L133: `cached.Token() == info.Token`). When a
-// user's token is unchanged between calls, the same cached *plex.Client must
-// be returned rather than constructing a fresh one. A CONDITIONALS_NEGATION
-// mutation (`==`→`!=`) inverts the freshness check so every call rebuilds the
-// client (new HTTP connection pool), defeating the cache.
+// TestManager_ClientForUserCachesInstance pins the cache-hit freshness check
+// in ClientForUser: when a user's token is unchanged between calls, the same
+// cached *plex.Client must be returned rather than rebuilding a fresh client
+// (and a new HTTP connection pool) on every call.
 //
 // given a known shared user with a stable token
 // when ClientForUser is called twice
