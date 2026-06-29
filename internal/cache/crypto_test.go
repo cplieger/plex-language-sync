@@ -354,3 +354,43 @@ func TestDecryptTokenCiphertextLengthBoundary(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadFromDropsUndecryptableToken pins the key-rotation / tampered-token
+// path in LoadFrom: a user token that fails to decrypt (here, written under
+// one derived key and loaded under another) must be DROPPED from the map and
+// a warning logged, so a stale ciphertext is never surfaced to callers as if
+// it were a valid token. The next plex.tv refresh repopulates it.
+func TestLoadFromDropsUndecryptableToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	keyA, err := DeriveKey("token-A")
+	if err != nil {
+		t.Fatalf("DeriveKey(A) error = %v", err)
+	}
+	orig := New()
+	orig.SetEncryptionKey(keyA)
+	orig.SetUserTokens(map[string]string{"u1": "secret-1"})
+	if err := orig.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() error = %v", err)
+	}
+
+	keyB, err := DeriveKey("token-B")
+	if err != nil {
+		t.Fatalf("DeriveKey(B) error = %v", err)
+	}
+	loaded := New()
+	loaded.SetEncryptionKey(keyB)
+	out := captureSlog(t, func() {
+		if err := loaded.LoadFrom(path); err != nil {
+			t.Fatalf("LoadFrom() error = %v", err)
+		}
+	})
+
+	if _, ok := loaded.UserTokens()["u1"]; ok {
+		t.Errorf("LoadFrom kept an undecryptable token; want it dropped, got %v", loaded.UserTokens())
+	}
+	if !strings.Contains(out, "failed to decrypt user token") {
+		t.Errorf("LoadFrom on a wrong-key token logged %q, want a decrypt-failure warning", out)
+	}
+}

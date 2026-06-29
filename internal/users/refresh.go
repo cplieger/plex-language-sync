@@ -47,11 +47,11 @@ func PeriodicRefreshInterval() time.Duration { return periodicRefreshInterval }
 // failure short-circuits above the state rebuild; existing state is
 // left untouched. LanguageProfiles are kept untouched — a re-shared
 // user recovers their learned audio→subtitle mappings on return.
-func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, machineID string) {
+func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, machineID string) error {
 	servers, err := adminClient.SharedUserTokens(ctx, machineID)
 	if err != nil {
 		slog.Warn("failed to refresh shared user tokens", "error", err)
-		return
+		return err
 	}
 
 	m.mu.Lock()
@@ -75,6 +75,7 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 		}
 	}
 	m.shared = newShared
+	appliedCount := len(newShared)
 
 	tokensCopy := make(map[string]string, len(newShared))
 	for uid, info := range newShared {
@@ -87,14 +88,18 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 	// restarts.
 	m.cache.SetUserTokens(tokensCopy)
 
-	slog.Info("shared user tokens refreshed", "users", len(servers))
+	slog.Info("shared user tokens refreshed", "users", appliedCount)
+	return nil
 }
 
 // InitialRefreshWithRetry runs the initial plex.tv shared-user-token
 // refresh with bounded exponential backoff. It exits early on any of:
 //
-//   - the refresh populated at least one shared user (cached tokens
-//     count),
+//   - plex.tv answered successfully, even with zero shared users: a
+//     server with no shared users legitimately returns an empty list,
+//     and retrying cannot conjure users that do not exist,
+//   - at least one shared user is already known (e.g. cached tokens
+//     from a prior run, loaded via LoadFromCache),
 //   - the context is cancelled (e.g., shutdown during startup),
 //   - the attempt budget is exhausted.
 //
@@ -116,12 +121,14 @@ func (m *Manager) InitialRefreshWithRetry(ctx context.Context, adminClient *plex
 			return
 		}
 
-		m.RefreshTokens(ctx, adminClient, machineID)
+		err := m.RefreshTokens(ctx, adminClient, machineID)
 
-		// Success criterion: at least one shared user known, either
-		// from this attempt's plex.tv response or from cached tokens
-		// populated by LoadFromCache earlier in the composition root.
-		if m.SharedCount() > 0 {
+		// Exit as soon as plex.tv answers successfully: a server with
+		// zero shared users legitimately returns an empty list, and
+		// retrying cannot conjure users that do not exist. Only a real
+		// plex.tv failure (err != nil) is worth retrying. Cached tokens
+		// from a prior run also satisfy the exit via SharedCount > 0.
+		if err == nil || m.SharedCount() > 0 {
 			return
 		}
 
@@ -166,7 +173,7 @@ func (m *Manager) RefreshLoop(ctx context.Context, adminClient *plex.Client, mac
 	for {
 		select {
 		case <-ticker.C:
-			m.RefreshTokens(ctx, adminClient, machineID)
+			_ = m.RefreshTokens(ctx, adminClient, machineID)
 		case <-ctx.Done():
 			return
 		}

@@ -595,3 +595,60 @@ func TestMatchAudioStream_SelfIsAlwaysAMatch(t *testing.T) {
 		}
 	})
 }
+
+func TestMatchSubtitle_ForcedOnly(t *testing.T) {
+	tests := []struct {
+		name       string
+		ref        *Stream
+		candidates []*Stream
+		wantID     int
+	}{
+		{
+			name: "forced ref excludes non-forced candidate",
+			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			candidates: []*Stream{
+				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
+				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			},
+			wantID: 2,
+		},
+		{
+			name: "forced ref with no forced candidate returns nil",
+			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			candidates: []*Stream{
+				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
+				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
+			},
+			wantID: 0,
+		},
+		{
+			name: "forced ref tie-breaks among forced candidates by codec",
+			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "ass"},
+			candidates: []*Stream{
+				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "srt"},
+				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "ass"},
+			},
+			wantID: 2,
+		},
+		{
+			name: "forced ref ignores forced candidate in wrong language",
+			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			candidates: []*Stream{
+				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true},
+			},
+			wantID: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MatchSubtitle(tt.ref, nil, tt.candidates)
+			gotID := 0
+			if got != nil {
+				gotID = got.ID
+			}
+			if gotID != tt.wantID {
+				t.Errorf("MatchSubtitle() got ID=%d, want ID=%d", gotID, tt.wantID)
+			}
+		})
+	}
+}

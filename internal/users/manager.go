@@ -114,41 +114,79 @@ func (m *Manager) LoadFromCache() {
 
 // ClientForUser returns a *plex.Client using the given user's token.
 // Caches clients to avoid creating new HTTP connection pools on every
-// call. Falls back to the admin client when the userID matches admin or
-// is unknown (e.g., a historical session from a user who no longer
-// shares the server).
+// call. Returns the admin client when the userID matches admin or is
+// unknown (e.g., a historical session from a user who no longer shares
+// the server — admin is the right fallback there because there is no
+// per-user identity to honour). Returns nil when a per-user client
+// CANNOT be constructed (the CA-cert file changed/corrupted mid-run):
+// in that case the caller must skip the operation rather than write
+// under the admin token, which would corrupt the admin's per-user
+// stream selection and not apply the intended user's.
 //
 // userID is accepted as a plain string so *Manager satisfies
 // api.UserLookup; convert to ID internally for map keys.
 func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.Client {
 	uid := ID(userID)
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
+	m.mu.Lock()
 	if uid == m.admin.ID {
+		m.mu.Unlock()
 		return adminClient
 	}
 	// Return cached client if token hasn't changed.
 	if cached, ok := m.clients[uid]; ok {
 		if info, exists := m.shared[uid]; exists && cached.Token() == info.Token {
+			m.mu.Unlock()
 			return cached
 		}
 	}
-	if info, ok := m.shared[uid]; ok && info.Token != "" {
-		c, err := plex.NewClientForUser(m.baseURL, info.Token, m.caCertPath)
-		if err != nil {
-			// caCertPath was validated at startup, so an error here means
-			// something on disk changed mid-run (file removed/corrupted).
-			// Fall back to admin rather than crash.
-			slog.Warn("per-user plex client construction failed; using admin client",
-				"user_id", uid, "error", err)
-			return adminClient
-		}
-		m.clients[uid] = c
+	info, ok := m.shared[uid]
+	if !ok || info.Token == "" {
+		// Unknown user — fall back to admin.
+		m.mu.Unlock()
+		return adminClient
+	}
+	// Capture immutable inputs and release the lock before constructing the
+	// client: NewClientForUser reads and parses the CA-cert file from disk when
+	// caCertPath is set, and m.mu must never be held across disk I/O (a slow or
+	// hung read — e.g. NFS-mounted /config — would stall every manager
+	// operation: all client lookups, name lookups, and token refreshes).
+	baseURL, token, caCertPath := m.baseURL, info.Token, m.caCertPath
+	m.mu.Unlock()
+
+	c, err := plex.NewClientForUser(baseURL, token, caCertPath)
+	if err != nil {
+		// caCertPath was validated at startup, so an error here means
+		// something on disk changed mid-run (file removed/corrupted).
+		// Fail closed rather than fall back to the admin client: a
+		// shared user's stream-selection PUT executed under the admin
+		// token would corrupt the ADMIN's per-user stream selection
+		// (selection state is per-user-scoped, verified against a live
+		// server) and still not apply the intended user's preference.
+		// Returning nil signals "no client available"; every caller
+		// nil-checks and skips the operation.
+		slog.Warn("per-user plex client construction failed; skipping operation to avoid writing under the wrong identity",
+			"user_id", uid, "error", err)
+		return nil
+	}
+
+	// Re-acquire to publish the client, re-checking state that may have changed
+	// while the lock was released.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.shared[uid]
+	if !ok || cur.Token != token {
+		// User pruned or token rotated while we built the client; do not cache
+		// a client for a stale token. Return it best-effort for this call —
+		// the next call rebuilds with the current token.
 		return c
 	}
-	// Unknown user — fall back to admin.
-	return adminClient
+	if cached, ok := m.clients[uid]; ok && cached.Token() == token {
+		// Another goroutine already published an equivalent client.
+		return cached
+	}
+	m.clients[uid] = c
+	return c
 }
 
 // SharedCount returns the number of shared (non-admin) users currently
@@ -163,11 +201,12 @@ func (m *Manager) SharedCount() int {
 }
 
 // All returns the admin plus all shared users as api.UserInfo values.
-// The returned admin entry has an empty Token field; callers that need
-// an HTTP client for the admin user should use ClientForUser (which
-// falls back to the admin client for the admin ID) rather than
-// threading the admin token through this slice. Keeping the admin
-// token out narrows the in-memory surface that holds it.
+// Every returned entry (admin and shared alike) has an empty Token
+// field; All() never threads tokens through this slice. Callers that
+// need an HTTP client for any user must use ClientForUser (which falls
+// back to the admin client for the admin ID and looks up a shared
+// user's token internally) rather than reading UserInfo.Token. Keeping
+// tokens out narrows the in-memory surface that holds them.
 //
 // The return type is api.UserInfo (not internal Info) so *Manager
 // satisfies api.UserLookup and consumers (sync, scheduler) can depend
@@ -183,9 +222,8 @@ func (m *Manager) All() []api.UserInfo {
 	})
 	for _, u := range m.shared {
 		out = append(out, api.UserInfo{
-			ID:    u.ID.String(),
-			Name:  u.Name,
-			Token: u.Token,
+			ID:   u.ID.String(),
+			Name: u.Name,
 		})
 	}
 	return out

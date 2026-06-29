@@ -110,6 +110,7 @@ func (f *Plex) ShowSections(_ context.Context) ([]plex.Section, error) {
 
 // UserFromSession returns the userID, username, and error configured in UserFromSessionResult.
 func (f *Plex) UserFromSession(_ context.Context, _ string) (userID, username string, err error) {
+	f.record("UserFromSession")
 	return f.UserFromSessionResult.UserID, f.UserFromSessionResult.Username, f.UserFromSessionResult.Err
 }
 

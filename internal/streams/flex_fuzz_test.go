@@ -23,6 +23,8 @@ func FuzzFlexIntUnmarshal(f *testing.F) {
 	f.Add([]byte("false"))
 	f.Add([]byte("1.0"))
 	f.Add([]byte(`"not-a-number"`))
+	f.Add([]byte(`"abc`))
+	f.Add([]byte(`"\q"`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var got FlexInt

@@ -105,6 +105,15 @@ func (s *Syncer) ChangeTracksForEpisode(
 		return
 	}
 
+	// Check ignore rules first (admin client — labels/libraries are
+	// server-level). An ignored show is treated as if it does not exist:
+	// we return before learning a language profile from it AND before
+	// propagating to other episodes. Learning must come after this gate
+	// so an ignored show never contributes to the user's global profile.
+	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, reference) {
+		return
+	}
+
 	// Learn language profile from the user's active choice.
 	s.learnProfileFromReference(userID, refAudio, refSub)
 
@@ -112,11 +121,6 @@ func (s *Syncer) ChangeTracksForEpisode(
 	if showRatingKey == "" {
 		slog.Debug("no show rating key, skipping",
 			"episode", reference.ShortName(), "user", username)
-		return
-	}
-
-	// Check ignore rules (admin client — labels/libraries are server-level).
-	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, reference) {
 		return
 	}
 
@@ -171,7 +175,7 @@ func (s *Syncer) UpdateEpisodeStreams(
 ) bool {
 	full, err := userClient.Episode(ctx, plex.RatingKey(ratingKey))
 	if err != nil {
-		slog.Debug("failed to reload episode", "key", ratingKey, "user", username, "error", err)
+		slog.Warn("failed to reload episode", "key", ratingKey, "user", username, "error", err)
 		return false
 	}
 

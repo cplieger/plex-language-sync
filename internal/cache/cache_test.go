@@ -395,3 +395,24 @@ func TestCacheSaveToWithKeyAndNoTokensWritesNull(t *testing.T) {
 			"(allocating an empty map would serialize to {} and break the schema)", got)
 	}
 }
+
+func TestCacheSaveToEncryptFailure(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c := New()
+	c.SetEncryptionKey([]byte("too-short"))
+	c.SetUserTokens(map[string]string{"u1": "tok"})
+
+	err := c.SaveTo(path)
+	if err == nil {
+		t.Fatal("SaveTo() with an invalid encryption key = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "encrypt token for user") {
+		t.Errorf("SaveTo() error = %q, want substring %q", err.Error(), "encrypt token for user")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("SaveTo() wrote a file despite encrypt failure (stat err = %v), want no file", statErr)
+	}
+}

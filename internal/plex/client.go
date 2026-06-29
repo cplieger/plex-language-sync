@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -102,13 +103,20 @@ func WarnIfPlaintextURL(u *url.URL) {
 		return
 	}
 	host := u.Hostname()
-	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	if host == "" || host == "localhost" {
 		return
 	}
-	// Docker DNS names (short hostnames, no dots) are routed on the trusted
-	// proxy bridge — the local homelab deployment hits plex:32400 and must
-	// stay quiet. Remote hosts (FQDNs, IPs) get the warning.
-	if !strings.Contains(host, ".") {
+	if ip := net.ParseIP(host); ip != nil {
+		// Bare IP literal (v4 or v6). Loopback is safe; anything
+		// else (including remote IPv6, which the dot heuristic
+		// below would silently treat as a trusted docker name)
+		// transits the token in cleartext.
+		if ip.IsLoopback() {
+			return
+		}
+	} else if !strings.Contains(host, ".") {
+		// Non-IP hostname with no dot: a docker short-name on the
+		// trusted proxy bridge. Stay quiet.
 		return
 	}
 	slog.Warn("PLEX_URL is http:// to a non-local host; X-Plex-Token will "+
@@ -144,12 +152,16 @@ func newHTTPClient(caCertPath string) (*http.Client, error) {
 		if !pool.AppendCertsFromPEM(pemBytes) {
 			return nil, fmt.Errorf("PLEX_CA_CERT_PATH=%q: no PEM-encoded certificates found", caCertPath)
 		}
-		c.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs:    pool,
-				MinVersion: tls.VersionTLS12,
-			},
+		tr, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil, errors.New("unexpected default transport type")
 		}
+		transport := tr.Clone()
+		transport.TLSClientConfig = &tls.Config{
+			RootCAs:    pool,
+			MinVersion: tls.VersionTLS12,
+		}
+		c.Transport = transport
 	}
 	return c, nil
 }
@@ -208,9 +220,14 @@ func (c *Client) doJSON(ctx context.Context, method, path string, result any) er
 		drainBody(resp.Body)
 		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if err != nil {
 		return err
+	}
+	if int64(len(body)) > maxResponseBody {
+		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
+			"method", method, "path", path, "cap_bytes", maxResponseBody)
+		return fmt.Errorf("plex API %s %s: response exceeded %d-byte read cap", method, path, maxResponseBody)
 	}
 	if len(body) == 0 {
 		return nil

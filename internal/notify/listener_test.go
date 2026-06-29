@@ -1,11 +1,17 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -283,6 +289,86 @@ func containsASCII(haystack, needle string) bool {
 	return false
 }
 
+// TestConnectAndListen_SlowDialNotStable is the regression guard for the
+// stability-timing fix: connection stability must be measured from
+// handshake SUCCESS, not from before the dial. A slow-but-successful
+// dial followed by a short real uptime previously inflated the elapsed
+// time with dial latency and was falsely classified "stable", which
+// resets the backoff and zeros the persistent-reconnect counter that
+// drives the sole health ERROR.
+//
+// The server delays the websocket Accept (slow handshake), then closes
+// immediately so the client's read returns almost at once (near-zero
+// real uptime). StableThreshold sits between the dial delay and the
+// uptime: time-from-handshake is BELOW it (correctly not stable), while
+// time-from-dial-start would be ABOVE it (the old bug). Asserting the
+// connection is NOT stable under the production formula pins the fix and
+// fails against the pre-fix `time.Since(connectStart)` code.
+func TestConnectAndListen_SlowDialNotStable(t *testing.T) {
+	t.Parallel()
+
+	const dialDelay = 150 * time.Millisecond
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate a slow handshake: stall before completing the upgrade.
+		time.Sleep(dialDelay)
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("server accept: %v", err)
+			return
+		}
+		// Short real uptime: close cleanly right after the handshake so
+		// the client's first Read returns promptly.
+		c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	base, _ := url.Parse(srv.URL)
+	cfg := DefaultConfig()
+	// Threshold between the dial delay and the (near-zero) post-handshake
+	// uptime: the fixed code measures from handshake and stays under it;
+	// the buggy code measured from dial start and would exceed it.
+	cfg.StableThreshold = dialDelay / 2
+	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
+
+	if !connected {
+		t.Fatalf("connected = false, want true (handshake should succeed)")
+	}
+	if handshakeAt.IsZero() {
+		t.Fatalf("handshakeAt is zero, want the post-handshake instant")
+	}
+	if err == nil {
+		t.Errorf("expected a disconnect error from the server close, got nil")
+	}
+
+	// Reproduce the production stability decision exactly (listener.go
+	// Listen): stable iff connected AND the time held open since the
+	// handshake exceeds StableThreshold. A slow dial must NOT make this
+	// true.
+	stable := connected && time.Since(handshakeAt) > cfg.StableThreshold
+	if stable {
+		t.Errorf("connection classified stable after a slow dial + short uptime; "+
+			"stability must be measured from handshake success, not dial start "+
+			"(time-since-handshake=%v, StableThreshold=%v)",
+			time.Since(handshakeAt), cfg.StableThreshold)
+	}
+
+	// Belt-and-suspenders: the handshake instant must be recent (it was
+	// stamped after the slow Accept), not back at the dial start. Allow
+	// generous slack for the immediate close + CI scheduling, but it must
+	// be well under the dial delay that the old code would have counted.
+	if sinceHandshake := time.Since(handshakeAt); sinceHandshake >= dialDelay {
+		t.Errorf("time since handshake = %v, want < dialDelay %v "+
+			"(handshakeAt appears stamped before the dial completed)",
+			sinceHandshake, dialDelay)
+	}
+}
+
 // TestConnectAndListen_ReadIdleTimeoutFires verifies that a websocket
 // server which accepts the upgrade but never sends a message causes
 // the listener's read to return an error (via the configurable
@@ -316,11 +402,14 @@ func TestConnectAndListen_ReadIdleTimeoutFires(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	connected, err := l.connectAndListen(ctx, &fakeHandler{})
+	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
 	elapsed := time.Since(start)
 
 	if !connected {
 		t.Errorf("connected = false, want true (handshake should succeed)")
+	}
+	if handshakeAt.IsZero() {
+		t.Errorf("handshakeAt is zero, want the post-handshake instant")
 	}
 	if err == nil {
 		t.Errorf("expected read-idle error, got nil")
@@ -329,5 +418,93 @@ func TestConnectAndListen_ReadIdleTimeoutFires(t *testing.T) {
 	// context's 5-second cap. Allow generous slack for CI scheduling.
 	if elapsed > 2*time.Second {
 		t.Errorf("read-idle backstop took %v, expected ~100ms", elapsed)
+	}
+}
+
+// TestWrapReadError pins the producer side of the disconnect-classification
+// contract. classify_test.go verifies ClassifyError given already-wrapped
+// sentinels; this verifies wrapReadError PRODUCES the right sentinel from a
+// raw conn.Read error, end-to-end through ClassifyError. Without it, a
+// regression that wrapped the wrong sentinel would leave classify_test.go
+// green while silently corrupting the frozen Loki reason codes (contract
+// item 5). Each case also confirms the original cause survives in the error
+// chain (the documented double-%w wrap).
+func TestWrapReadError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		raw        error
+		wantSent   error
+		name       string
+		wantReason string
+	}{
+		{websocket.ErrMessageTooBig, ErrReadLimit, "message too big", ReasonReadLimit},
+		{websocket.CloseError{Code: websocket.StatusNormalClosure}, ErrServerClose, "normal closure", ReasonServerClose},
+		{websocket.CloseError{Code: websocket.StatusGoingAway}, ErrServerClose, "going away", ReasonServerClose},
+		{websocket.CloseError{Code: websocket.StatusAbnormalClosure}, ErrServerClose, "abnormal closure", ReasonServerClose},
+		{websocket.CloseError{Code: websocket.StatusProtocolError}, ErrReadError, "non-server-close code", ReasonReadError},
+		{io.EOF, ErrServerClose, "plain EOF", ReasonServerClose},
+		{errors.New("connection reset"), ErrReadError, "generic transport error", ReasonReadError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := wrapReadError(tc.raw)
+			if !errors.Is(got, tc.wantSent) {
+				t.Errorf("wrapReadError(%v): errors.Is(_, %v) = false, want true", tc.raw, tc.wantSent)
+			}
+			if !errors.Is(got, tc.raw) {
+				t.Errorf("wrapReadError(%v) dropped the original cause from the error chain", tc.raw)
+			}
+			if r := ClassifyError(got); r != tc.wantReason {
+				t.Errorf("ClassifyError(wrapReadError(%v)) = %q, want %q", tc.raw, r, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestLogDisconnect_LevelAndEscalation pins the two frozen Loki-alerting
+// behaviors in logDisconnect (inviolate contract item 5): server_close
+// disconnects log at INFO while every other reason logs at WARN, and a
+// single ERROR ("websocket reconnecting persistently") escalates once
+// consecutive reconnects reach persistentReconnectThreshold. The
+// file-marker health never reflects WebSocket state, so this ERROR is the
+// only alertable signal that the container is healthy-but-processing-
+// nothing; a regression flipping the level branch or the threshold
+// comparison would otherwise leave the suite green. Serial (no t.Parallel):
+// logDisconnect logs through the process-global slog.Default().
+func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	l := NewListener(&fakePlexClient{}, DefaultConfig())
+	ctx := context.Background()
+
+	// server_close is INFO; no escalation below the threshold.
+	buf.Reset()
+	l.logDisconnect(ctx, fmt.Errorf("%w: EOF", ErrServerClose), time.Second, false, 1)
+	if got := buf.String(); !strings.Contains(got, "level=INFO") {
+		t.Errorf("server_close disconnect: want level=INFO, got %q", got)
+	}
+	if strings.Contains(buf.String(), "reconnecting persistently") {
+		t.Errorf("escalated below threshold: %q", buf.String())
+	}
+
+	// dial_failed is WARN.
+	buf.Reset()
+	l.logDisconnect(ctx, fmt.Errorf("%w: refused", ErrDialFailed), time.Second, false, 1)
+	if got := buf.String(); !strings.Contains(got, "level=WARN") {
+		t.Errorf("dial_failed disconnect: want level=WARN, got %q", got)
+	}
+
+	// At the threshold, a single ERROR escalation fires.
+	buf.Reset()
+	l.logDisconnect(ctx, fmt.Errorf("%w: refused", ErrDialFailed), 30*time.Second, false, persistentReconnectThreshold)
+	if n := strings.Count(buf.String(), "reconnecting persistently"); n != 1 {
+		t.Errorf("escalation at threshold fired %d times, want 1: %q", n, buf.String())
+	}
+	if got := buf.String(); !strings.Contains(got, "level=ERROR") {
+		t.Errorf("escalation: want level=ERROR, got %q", got)
 	}
 }

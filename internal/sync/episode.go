@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 
@@ -52,6 +53,10 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 			return
 		}
 		userClient := s.userClient(u.ID)
+		if userClient == nil {
+			slog.Warn("sync: no per-user client, skipping user", "user_id", u.ID)
+			continue
+		}
 		s.applyEpisodeForUser(ctx, userClient, u.ID, episode, ref, trigger)
 	}
 }
@@ -68,11 +73,12 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 // processed for the same episode, so this runs ONCE per episode
 // regardless of user count.
 //
-// Each no-reference branch emits a DEBUG line with a stable `reason`
-// label so Loki can distinguish "no grandparent key" vs "search yielded
-// nothing" vs "candidate found but has no selected audio" when
-// investigating why an episode fell through to the language-profile
-// path.
+// When no reference is found, the branch emits a log line with a stable
+// `reason` label so Loki can pinpoint why an episode fell through to the
+// language-profile path. DEBUG reasons are benign ("no_grandparent_key",
+// "no_candidate", "no_selected_audio"); WARN reasons signal a degraded
+// fetch ("get_show_episodes_error", "candidate_fetch_errors") that may
+// have masked an otherwise-usable reference.
 func (s *Syncer) FindEpisodeReference(
 	ctx context.Context,
 	episode *streams.Episode,
@@ -94,13 +100,22 @@ func (s *Syncer) FindEpisodeReference(
 		return nil
 	}
 
-	ref, searched := findReferenceEpisode(
+	ref, searched, fetchErrors := findReferenceEpisode(
 		ctx, s.plex, episodes, episode.RatingKey, maxRefSearchDepth)
 
 	if ref == nil {
+		if fetchErrors > 0 && ctx.Err() == nil {
+			slog.Warn("reference search failed: candidate fetches errored",
+				"show", episode.GrandparentTitle,
+				"searched", searched,
+				"fetch_errors", fetchErrors,
+				"reason", "candidate_fetch_errors")
+			return nil
+		}
 		slog.Debug("reference search yielded no candidate",
 			"show", episode.GrandparentTitle,
 			"searched", searched,
+			"fetch_errors", fetchErrors,
 			"reason", "no_candidate")
 		return nil
 	}
@@ -184,10 +199,13 @@ func findReferenceEpisode(
 	episodes []streams.Episode,
 	excludeKey string,
 	maxDepth int,
-) (reference *streams.Episode, searched int) {
+) (reference *streams.Episode, searched, fetchErrors int) {
 	for i := range slices.Backward(episodes) {
+		if ctx.Err() != nil {
+			return nil, searched, fetchErrors
+		}
 		if searched >= maxDepth {
-			return nil, searched
+			return nil, searched, fetchErrors
 		}
 		searched++
 		ep := &episodes[i]
@@ -196,11 +214,17 @@ func findReferenceEpisode(
 		}
 		full, err := reader.Episode(ctx, plex.RatingKey(ep.RatingKey))
 		if err != nil {
+			// ErrNotFound = benign (candidate has no metadata); a context
+			// error is shutdown, not degradation. Only real transport/server
+			// errors signal a degraded Plex.
+			if !errors.Is(err, plex.ErrNotFound) && ctx.Err() == nil {
+				fetchErrors++
+			}
 			continue
 		}
 		if audio, _ := streams.Selected(full); audio != nil {
-			return full, searched
+			return full, searched, fetchErrors
 		}
 	}
-	return nil, searched
+	return nil, searched, fetchErrors
 }

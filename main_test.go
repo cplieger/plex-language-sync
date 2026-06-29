@@ -45,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,7 +193,6 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "SKIP,NOPE")
 	t.Setenv("IGNORE_LIBRARIES", "Music,Photos")
 	t.Setenv("DEBUG", "false")
-	t.Setenv("SKIP_TLS_VERIFICATION", "false")
 
 	cfg := loadConfig()
 
@@ -238,7 +238,6 @@ func TestLoadConfigDefaults(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 
@@ -272,7 +271,6 @@ func TestLoadConfigInvalidUpdateLevel(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 
 	cfg := loadConfig()
 
@@ -298,7 +296,6 @@ func TestLoadConfigInvalidUpdateStrategy(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 
 	cfg := loadConfig()
 	if cfg.updateStrategy != "all" {
@@ -317,7 +314,6 @@ func TestLoadConfigValidNextStrategy(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 
 	cfg := loadConfig()
 	if cfg.updateStrategy != "next" {
@@ -346,7 +342,6 @@ func TestLoadConfigSchedulerTimeOutOfRange(t *testing.T) {
 			t.Setenv("IGNORE_LABELS", "")
 			t.Setenv("IGNORE_LIBRARIES", "")
 			t.Setenv("DEBUG", "")
-			t.Setenv("SKIP_TLS_VERIFICATION", "")
 			cfg := loadConfig()
 			if cfg.schedulerTime != "02:00" {
 				t.Errorf("%s: schedulerTime = %q, want 02:00", tt.val, cfg.schedulerTime)
@@ -366,7 +361,6 @@ func TestLoadConfigSchedulerTimeNoColon(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 
 	cfg := loadConfig()
 	if cfg.schedulerTime != "02:00" {
@@ -387,7 +381,6 @@ func TestLoadConfigDebugMode(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "true")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 
@@ -422,7 +415,6 @@ func TestLoadConfigWithFileSecrets(t *testing.T) {
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
-	t.Setenv("SKIP_TLS_VERIFICATION", "")
 
 	cfg := loadConfig()
 
@@ -559,6 +551,66 @@ func TestReadSecretFilePathTraversal(t *testing.T) {
 	}
 }
 
+func TestReadSecretFileEmpty(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	secretFile := filepath.Join(dir, "empty.txt")
+	if err := os.WriteFile(secretFile, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSecretFile(secretFile)
+	if err != nil {
+		t.Fatalf("readSecretFile on empty file: unexpected error %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("readSecretFile on empty file = %q (len %d), want empty", got, len(got))
+	}
+}
+
+// TestRequireEnvSecretFileEmptyDetection characterizes the empty-secret
+// detection that requireEnv's _FILE branch performs after reading. The
+// fail-fast itself (slog.Error + os.Exit(1)) cannot be exercised
+// in-process and the repo intentionally has no subprocess/injected-exit
+// harness, so this test pins the read-layer + trim contract requireEnv
+// keys off: an empty OR whitespace-only secret file trims to "", which
+// is what triggers the "secret file is empty" exit. If this contract
+// regresses (e.g. readSecretFile starts erroring or trimming changes),
+// the guard would silently stop firing. Mirrors the direct-env empty
+// check (loadConfig requires PLEX_URL / PLEX_TOKEN non-empty); both the
+// _FILE and direct branches must reject an effectively-empty value.
+func TestRequireEnvSecretFileEmptyDetection(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"empty file", ""},
+		{"whitespace only spaces", "   "},
+		{"whitespace only newline", "\n"},
+		{"whitespace tabs and newlines", "\t\n  \t\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			secretFile := filepath.Join(dir, "secret.txt")
+			if err := os.WriteFile(secretFile, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			data, err := readSecretFile(secretFile)
+			if err != nil {
+				t.Fatalf("readSecretFile(%q): unexpected error %v", tt.content, err)
+			}
+			// requireEnv's _FILE branch trims the bytes and fails fast
+			// when the result is empty; assert the trim yields "" so the
+			// guard fires for PLEX_TOKEN_FILE / PLEX_URL_FILE.
+			if got := strings.TrimSpace(string(data)); got != "" {
+				t.Errorf("TrimSpace(secret %q) = %q, want empty (would skip the empty-secret fail-fast)", tt.content, got)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // notifyAdapter trigger gates
 //
@@ -616,9 +668,50 @@ func TestNotifyAdapterTimelineEnabledEmptyEntries(t *testing.T) {
 	adapter.OnTimeline(ctx, nil)
 }
 
+func TestResolvePlayEventUser_noClientIdentifier_returnsAdmin(t *testing.T) {
+	adapter := newTestAdapter(t, true, false)
+	ev := notify.PlayEvent{State: "playing", RatingKey: "100"}
+
+	uid, uname := adapter.resolvePlayEventUser(context.Background(), ev)
+
+	if uid != "1" {
+		t.Errorf("resolvePlayEventUser userID = %q, want %q (admin fallback)", uid, "1")
+	}
+	if uname != "admin" {
+		t.Errorf("resolvePlayEventUser username = %q, want %q (admin fallback)", uname, "admin")
+	}
+}
+
 // NOTE: deep-dispatch tests for notifyAdapter.handlePlayEvent and
 // handleTimeline (fetching episodes, dedup, ignored libraries, ignored
 // shows, session resolution) live in internal/sync and internal/notify
 // now — the per-feature logic moved out of the main package in
 // cycle-1 steps 5 and 7. What remains here is the trigger-gate
 // behaviour, which is a composition-root concern.
+
+func TestWaitForBackgroundLoops_bothLoopsDone_returnsBeforeBudget(t *testing.T) {
+	t.Parallel()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	refreshDone := make(chan struct{})
+	schedDone := make(chan struct{})
+
+	// Both background loops have already finished before the join begins:
+	// drive the WaitGroup to zero and close both done channels.
+	wg.Done()
+	close(refreshDone)
+	wg.Done()
+	close(schedDone)
+
+	returned := make(chan struct{})
+	go func() {
+		waitForBackgroundLoops(&wg, refreshDone, schedDone)
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitForBackgroundLoops did not return after both background loops completed")
+	}
+}

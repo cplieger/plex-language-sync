@@ -101,9 +101,11 @@ type Syncer interface {
 // concurrent Run calls, but the intended shape is a single Run
 // goroutine per process.
 //
-// runtime-concurrency-p1: overlapping deep-analysis triggers (e.g. the
-// initial catch-up firing close to the first scheduled HH:MM tick)
-// collapse onto a single in-flight run via singleflight.Group. The
+// runtime-concurrency-p1: concurrent Run invocations collapse their
+// overlapping deep-analysis triggers onto a single in-flight run via
+// singleflight.Group. Within one Run goroutine the initial catch-up
+// and scheduled ticks are already sequential, so the dedup only
+// matters when Run is driven from more than one goroutine. The
 // runner goroutine that loses the dedup race still logs a WARN with
 // the "scheduler: deep analysis already in progress, skipping" key so
 // Loki alerts keyed on that string continue to fire (inviolate item 5).
@@ -182,12 +184,22 @@ func (s *Scheduler) Run(ctx context.Context) {
 		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-timer.C:
-			// Guard against double-runs (e.g. clock rewound via NTP).
+			// Guard against double-runs for the SAME scheduled slot (e.g.
+			// clock rewound via NTP re-fires this slot's timer). The timer
+			// fired AT next, so a normal daily cadence has a last-run from
+			// ~24h ago (strictly before next) and runs; only a last-run at
+			// or after next — a same-slot double-fire — is skipped. A flat
+			// "too recent" window would instead falsely skip the day after
+			// an off-schedule initial pass, leaving no scheduled safety net.
 			lr := s.cache.LastSchedulerRun()
-			if time.Since(lr) > 23*time.Hour {
+			if shouldRunScheduledSlot(lr, next) {
 				slog.Info("scheduled deep analysis starting",
 					"scheduled_for", next.Format(time.RFC3339))
 				s.deepAnalysis(ctx)
+			} else {
+				slog.Debug("scheduler: skipping scheduled run, last run already covered this scheduled slot",
+					"scheduled_for", next.Format(time.RFC3339),
+					"last_run", lr.Format(time.RFC3339))
 			}
 		case <-ctx.Done():
 			timer.Stop()
@@ -210,24 +222,54 @@ func nextScheduledRun(now time.Time, hour, minute int) time.Time {
 	return target
 }
 
+// shouldRunScheduledSlot reports whether the scheduled deep-analysis
+// pass for slot `next` should run given the last recorded run at
+// `lastRun`. The intent is "do not run twice for the SAME scheduled
+// slot", not "do not run within some fixed window".
+//
+// The timer that triggers this decision fires AT next, so:
+//   - normal daily cadence: lastRun is from ~24h ago, strictly before
+//     next → run.
+//   - same-slot double-fire (e.g. NTP rewinds the clock back before
+//     next and the timer re-fires for the same slot): lastRun is at or
+//     after next → skip.
+//
+// A zero lastRun (never run) is before next, so the slot runs — the
+// initial-pass block in Run handles the never-run case first, but a
+// zero value here is still correctly treated as "run".
+//
+// Using the slot instant rather than a flat ~23h window removes the
+// false skip that occurred when the initial catch-up pass ran at an
+// off-schedule time (e.g. a container restart at 03:30) less than the
+// window before the next HH:MM boundary.
+func shouldRunScheduledSlot(lastRun, next time.Time) bool {
+	return lastRun.Before(next)
+}
+
 // deepAnalysis runs the 24h replay of history + recently-added sweep,
 // deduplicating concurrent invocations via singleflight so overlapping
 // ticks (e.g. initial + scheduled firing close together) collapse to
 // a single run. Callers that lose the race receive no error and
 // observe a WARN log from this method — they do NOT re-run.
 func (s *Scheduler) deepAnalysis(ctx context.Context) {
-	// Do returns shared=true when this caller piggybacked on an
-	// already-in-flight call. We always return (nil, nil) from the
-	// callback so value/err are uninteresting; the only signal we
-	// consume is `shared`, which drives the "skipping" log. Preserve
-	// the operational-alert key ("scheduler: deep analysis already in
-	// progress, skipping") from the pre-singleflight implementation.
-	_, err, shared := s.dedup.Do("deep_analysis", func() (any, error) {
+	// singleflight.Do returns shared=true to EVERY caller that received
+	// this result once a duplicate joined — including the goroutine
+	// that actually executed the callback (Do returns c.dups>0 to the
+	// winner, not only to the losers). Guarding the "skipping" alert on
+	// `shared` alone therefore makes the winner that DID the work also
+	// log the skip under concurrent Run. Track execution with a local
+	// flag set inside the callback: only the winner runs the callback,
+	// so `executed` stays false on every loser. Preserve the
+	// operational-alert key ("scheduler: deep analysis already in
+	// progress, skipping") from the pre-singleflight implementation
+	// (inviolate item 5).
+	executed := false
+	_, _, shared := s.dedup.Do("deep_analysis", func() (any, error) {
+		executed = true
 		s.deepAnalysisCore(ctx)
 		return nil, nil
 	})
-	_ = err // callback always returns nil
-	if shared {
+	if shared && !executed {
 		slog.Warn("scheduler: deep analysis already in progress, skipping")
 	}
 }
@@ -313,9 +355,9 @@ func (s *Scheduler) feedHistory(ctx context.Context, work chan<- plex.HistoryIte
 		if ctx.Err() != nil {
 			break
 		}
-		if consecutiveErrors.Load() >= maxConsecutiveErrors {
+		if n := consecutiveErrors.Load(); n >= maxConsecutiveErrors {
 			slog.Warn("scheduler: aborting history processing after consecutive failures",
-				"consecutive_errors", consecutiveErrors.Load())
+				"consecutive_errors", n)
 			break
 		}
 		if item.Type != plex.TypeEpisode {
@@ -341,6 +383,11 @@ func (s *Scheduler) processHistoryItem(
 ) {
 	userID := strconv.Itoa(int(item.AccountID))
 	userClient := s.userClient(userID)
+	if userClient == nil {
+		slog.Warn("scheduler: no per-user client, skipping history item",
+			"key", item.RatingKey, "user", userID)
+		return
+	}
 	ep, fetchErr := userClient.Episode(ctx, plex.RatingKey(item.RatingKey))
 	if fetchErr != nil {
 		consecutiveErrors.Add(1)
@@ -387,8 +434,7 @@ func (s *Scheduler) recentlyAddedWorker(ctx context.Context, work <-chan streams
 		if ctx.Err() != nil {
 			return
 		}
-		epCopy := ep
-		s.processRecentlyAddedEpisode(ctx, &epCopy)
+		s.processRecentlyAddedEpisode(ctx, &ep)
 	}
 }
 
@@ -398,6 +444,7 @@ func (s *Scheduler) recentlyAddedWorker(ctx context.Context, work <-chan streams
 // libraries, per-section fetch-failure skip) and the section/episode
 // ordering.
 func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.Episode, sections []plex.Section, sinceUnix int64) {
+	var total, failed int
 	for _, section := range sections {
 		if ctx.Err() != nil {
 			break
@@ -405,8 +452,10 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 		if s.cfg.Ignore != nil && s.cfg.Ignore.IgnoreLibrary(section.Title) {
 			continue
 		}
+		total++
 		episodes, err := s.plex.RecentlyAdded(ctx, plex.RatingKey(section.Key), sinceUnix)
 		if err != nil {
+			failed++
 			slog.Debug("scheduler: failed to fetch recently added",
 				"section", section.Title, "error", err)
 			continue
@@ -417,6 +466,10 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 			case <-ctx.Done():
 			}
 		}
+	}
+	if failed > 0 {
+		slog.Warn("scheduler: recently-added sweep incomplete, some sections failed to fetch",
+			"failed_sections", failed, "total_sections", total)
 	}
 }
 
@@ -430,10 +483,9 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 // read side is token-independent and writes use the per-user client.
 func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams.Episode) {
 	cacheKey := cache.KeyPrefixScheduler + ep.RatingKey
-	if s.cache.WasRecentlyProcessed(cacheKey) {
+	if !s.cache.CheckAndMark(cacheKey) {
 		return
 	}
-	s.cache.MarkProcessed(cacheKey)
 
 	slog.Info("scheduler: processing recently added episode",
 		"episode", ep.ShortName())

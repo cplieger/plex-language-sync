@@ -65,3 +65,10 @@ func TimelineAction(entry *TimelineEntry) string {
 func BuildStreamCacheKey(userID, ratingKey string, audioID, subID int) string {
 	return fmt.Sprintf("%s%s:%s:%d:%d", cache.KeyPrefixStreams, userID, ratingKey, audioID, subID)
 }
+
+// BuildTimelineCacheKey builds the per-episode timeline (library-scan)
+// dedup key. The "timeline:" prefix is part of the on-disk cache.json
+// schema (inviolate contract item 7).
+func BuildTimelineCacheKey(itemID string) string {
+	return cache.KeyPrefixTimeline + itemID
+}

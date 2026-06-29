@@ -78,3 +78,57 @@ func TestFlexInt_ErrorPrefix(t *testing.T) {
 func containsPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
+
+func TestFlexInt_UnmarshalJSON_EmptyInput(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"nil slice", nil},
+		{"empty slice", []byte{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := FlexInt(7)
+			if err := f.UnmarshalJSON(tt.data); err != nil {
+				t.Fatalf("UnmarshalJSON(%q) err = %v, want nil", tt.data, err)
+			}
+			if f != 0 {
+				t.Errorf("UnmarshalJSON(%q) = %d, want 0", tt.data, f)
+			}
+		})
+	}
+}
+
+// TestFlexInt_UnmarshalJSON_MalformedQuotedString covers the quoted-string
+// decode-failure branch: input that begins with a quote but is not a valid
+// JSON string (unterminated, or an invalid escape) must surface a
+// "flexint:"-prefixed error and never panic. This is distinct from a valid
+// JSON string that merely isn't numeric ("abc"), which fails later at the
+// strconv.Atoi step.
+func TestFlexInt_UnmarshalJSON_MalformedQuotedString(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"unterminated string", `"abc`},
+		{"invalid escape", `"\q"`},
+		{"lone escaped quote", `"\"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var f FlexInt
+			err := f.UnmarshalJSON([]byte(tt.data))
+			if err == nil {
+				t.Fatalf("UnmarshalJSON(%q) err = nil, want error", tt.data)
+			}
+			if !containsPrefix(err.Error(), "flexint:") {
+				t.Errorf("UnmarshalJSON(%q) err = %q, want 'flexint:' prefix", tt.data, err.Error())
+			}
+		})
+	}
+}

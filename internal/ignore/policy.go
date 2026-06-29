@@ -98,6 +98,8 @@ func (p *Policy) ShouldSkipEpisode(ctx context.Context, reader api.PlexReader, r
 	}
 	show, err := reader.ShowMetadata(ctx, plex.RatingKey(ref.GrandparentRatingKey))
 	if err != nil {
+		slog.Debug("ignore: show metadata fetch failed, not skipping",
+			"show", ref.GrandparentTitle, "error", err)
 		return false
 	}
 	if p.IgnoreShowLabels(show.Label) {

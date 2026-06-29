@@ -27,8 +27,13 @@ import (
 // from either admin or user client upstream. The data we read from it
 // here — selected streams and the first Part ID — is metadata-level
 // and consistent across clients. When applyProfileSubtitle mutates
-// state, it does so via `userClient`, so per-user writes still go
-// through the correct token.
+// state, it does so via `userClient`: per-user writes go through the
+// user's own client when one is available. When the per-user client
+// cannot be constructed, callers pass nothing through to here — the
+// operation is SKIPPED upstream rather than written under the admin
+// token, preserving per-user isolation (writing a shared user's
+// selection under the admin token would corrupt the admin's per-user
+// state and not apply the intended user's).
 func (s *Syncer) ApplyLanguageProfile(
 	ctx context.Context,
 	userClient api.PlexWriter,

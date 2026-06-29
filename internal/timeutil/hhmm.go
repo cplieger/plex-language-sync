@@ -17,12 +17,12 @@ import (
 // Single source of truth for HH:MM parsing across the app. Consumers:
 // validateScheduleTime (config load) and scheduler.Run (daily tick).
 func ParseHHMM(raw string) (hour, minute int, ok bool) {
-	parts := strings.SplitN(raw, ":", 2)
-	if len(parts) != 2 {
+	hh, mm, found := strings.Cut(raw, ":")
+	if !found {
 		return 0, 0, false
 	}
-	h, hErr := strconv.Atoi(parts[0])
-	m, mErr := strconv.Atoi(parts[1])
+	h, hErr := strconv.Atoi(hh)
+	m, mErr := strconv.Atoi(mm)
 	if hErr != nil || mErr != nil || h < 0 || h > 23 || m < 0 || m > 59 {
 		return 0, 0, false
 	}

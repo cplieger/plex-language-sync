@@ -108,9 +108,18 @@ touching `internal/plex`:
   either — Plex ignores encoded ones too.
 - Some endpoints return an empty body instead of `{"MediaContainer":{}}`.
   Guard with `len(body) == 0` before unmarshalling.
-- `/library/metadata/<key>` is not user-scoped: admin and user tokens
-  return identical `Stream.selected` values, so re-fetching with a user
-  token to "see their view" adds latency with no information gain.
+- `/library/metadata/<key>` **reads** are not user-scoped: a GET with an
+  admin token and a GET with a user token return identical `Stream.selected`
+  values, so re-fetching with a user token to "see their view" adds latency
+  with no information gain. **Writes, however, ARE per-user-scoped** — a
+  `PUT /library/parts/<id>?...&allParts=1` records the selection against the
+  requesting token's user, not server-wide (verified 2026-06-29 against a live
+  server: an admin-token PUT was invisible to a shared user's read-back). So a
+  per-user stream change must go out under that user's token; falling back to
+  the admin token writes to the admin's view and silently drops the user's
+  preference. This is why `ClientForUser` fails closed (returns nil, caller
+  skips) when a per-user client can't be built, rather than falling back to
+  admin.
 
 ## Commits and pull requests
 

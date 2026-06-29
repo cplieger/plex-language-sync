@@ -44,7 +44,7 @@ const (
 //
 // Classification order (first match wins):
 //  1. nil → ReasonUnknown
-//  2. context.DeadlineExceeded → ReasonReadError (keepalive fired)
+//  2. context.DeadlineExceeded → ReasonReadError (read-idle backstop fired)
 //  3. typed sentinel wraps via errors.Is (ErrReadLimit, ErrServerClose,
 //     ErrDialFailed, ErrReadError)
 //  4. *websocket.CloseError via errors.As for codes 1000 / 1001 / 1006
@@ -68,13 +68,23 @@ func ClassifyError(err error) string {
 		return ReasonReadError
 	}
 	var ce websocket.CloseError
-	if errors.As(err, &ce) {
-		switch ce.Code {
-		case websocket.StatusNormalClosure,
-			websocket.StatusGoingAway,
-			websocket.StatusAbnormalClosure:
-			return ReasonServerClose
-		}
+	if errors.As(err, &ce) && isServerCloseCode(ce.Code) {
+		return ReasonServerClose
 	}
 	return ReasonUnknown
+}
+
+// isServerCloseCode reports whether a WebSocket close code represents an
+// expected server-side close (normal closure, going away, or abnormal
+// closure). Centralizes the close-code set shared by ClassifyError and
+// the listener's wrapReadError so the two cannot drift apart.
+func isServerCloseCode(code websocket.StatusCode) bool {
+	switch code {
+	case websocket.StatusNormalClosure,
+		websocket.StatusGoingAway,
+		websocket.StatusAbnormalClosure:
+		return true
+	default:
+		return false
+	}
 }

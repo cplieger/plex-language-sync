@@ -588,6 +588,68 @@ func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T)
 	}
 }
 
+// TestUpdateEpisodeStreams_subtitleReferencePolicy pins two untested
+// branches in applySubtitleStream, reached via UpdateEpisodeStreams with the
+// reference audio equal to the target's already-selected audio so no audio
+// write occurs and `changed` reflects only the subtitle decision:
+//
+//   - reference has NO subtitle selected (refSub == nil) while the target
+//     does: the "no subtitle means no subtitle" policy disables it;
+//   - reference subtitle language has no candidate on the target
+//     (MatchSubtitle == nil): the target's current selection is left alone.
+//
+// A mutant that dropped the disable branch fails case 1; a mutant that let
+// the matched == nil path fall through to a write fails case 2.
+func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
+	t.Parallel()
+	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	mkTarget := func(subs ...streams.Stream) *streams.Episode {
+		streamList := append([]streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+		}, subs...)
+		return &streams.Episode{
+			RatingKey: "123",
+			Media:     []streams.Media{{Part: []streams.Part{{ID: 100, Stream: streamList}}}},
+		}
+	}
+
+	t.Run("reference without subtitle disables the target's selected subtitle", func(t *testing.T) {
+		t.Parallel()
+		ep := mkTarget(streams.Stream{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true})
+		plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+
+		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, nil)
+
+		if !changed {
+			t.Error("UpdateEpisodeStreams = false, want true (no-subtitle policy must disable the target's subtitle)")
+		}
+		if got := countCalls(plx.CallNames(), "DisableSubtitle"); got != 1 {
+			t.Errorf("DisableSubtitle called %d times, want 1", got)
+		}
+	})
+
+	t.Run("reference subtitle with no target match leaves the selection alone", func(t *testing.T) {
+		t.Parallel()
+		ep := mkTarget(streams.Stream{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true})
+		plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+		refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "fre"}
+
+		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+
+		if changed {
+			t.Error("UpdateEpisodeStreams = true, want false (no matching subtitle on target — leave selection alone)")
+		}
+		if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+			t.Errorf("SetSubtitle called %d times, want 0", got)
+		}
+		if got := countCalls(plx.CallNames(), "DisableSubtitle"); got != 0 {
+			t.Errorf("DisableSubtitle called %d times, want 0 (must not disable on no-match)", got)
+		}
+	})
+}
+
 // TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile pins the
 // already-correct-subtitle guard in applyProfileSubtitle: when the
 // currently-selected subtitle already matches the best subtitle for the
@@ -619,6 +681,58 @@ func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.
 	}
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 		t.Errorf("SetSubtitle called %d times, want 0 (no redundant write)", got)
+	}
+}
+
+// TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable pins the two no-op
+// guards in applyProfileSubtitle that the existing happy/disable/already-
+// matches tests don't reach: (1) the profile says "no subtitles" and the
+// target already has none selected — nothing to disable; (2) the profile
+// names a subtitle language the target episode doesn't carry — nothing to
+// set. In both cases ApplyLanguageProfile must report no change and issue
+// no PUT (a dropped curSub==nil guard would emit a spurious DisableSubtitles;
+// a dropped bestSub==nil guard would nil-deref on SetSubtitleStream).
+func TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable(t *testing.T) {
+	t.Parallel()
+	audioJpnSelected := streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"}
+	tests := []struct {
+		name       string
+		profileSub string          // learned subtitle lang for jpn audio
+		subStream  *streams.Stream // optional non-matching subtitle on the target
+	}{
+		{name: "profile says none and target has no subtitle", profileSub: "", subStream: nil},
+		{
+			name:       "profile wants eng but target has no eng subtitle",
+			profileSub: "eng",
+			subStream:  &streams.Stream{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "fre", Codec: "srt"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			streamList := []streams.Stream{audioJpnSelected}
+			if tc.subStream != nil {
+				streamList = append(streamList, *tc.subStream)
+			}
+			ep := &streams.Episode{
+				RatingKey: "100",
+				Media:     []streams.Media{{Part: []streams.Part{{ID: 7, Stream: streamList}}}},
+			}
+			plx := &fakeapi.Plex{}
+			c := fakeapi.NewCache()
+			c.LearnLanguageProfile("1", "jpn", tc.profileSub)
+			s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeapi.Users{})
+
+			if s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+				t.Error("ApplyLanguageProfile = true, want false (no applicable subtitle change)")
+			}
+			if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+				t.Errorf("SetSubtitle called %d times, want 0", got)
+			}
+			if got := countCalls(plx.CallNames(), "DisableSubtitle"); got != 0 {
+				t.Errorf("DisableSubtitle called %d times, want 0", got)
+			}
+		})
 	}
 }
 
@@ -799,4 +913,80 @@ func TestChangeTracksForEpisode(t *testing.T) {
 			t.Errorf("SetAudio called %d times, want 0 (show ignored)", got)
 		}
 	})
+}
+
+// TestChangeTracksForEpisode_IgnoredShowDoesNotLearnProfile pins the
+// learn-after-ignore ordering: an ignored show must be treated as if it
+// does not exist, so playing one of its episodes records NOTHING into the
+// user's language profile AND propagates to no other episode. This guards
+// the user decision that "ignore" suppresses profile learning, not just
+// propagation. A regression that moved learnProfileFromReference back ahead
+// of the ignore gate would learn jpn→"" here and fail the SubtitleLangForAudio
+// assertion.
+//
+// given an ignored show (SKIP label) and LANGUAGE_PROFILES enabled
+// when ChangeTracksForEpisode runs on a jpn-audio reference of that show
+// then the user's profile has no learned entry for jpn and no episodes are
+// fetched or written.
+func TestChangeTracksForEpisode_IgnoredShowDoesNotLearnProfile(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{
+		ShowMetadataByKey: map[string]*plex.Show{
+			"42": {RatingKey: "42", Label: []streams.Label{{Tag: "SKIP"}}},
+		},
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		EpisodeByKey:       map[string]*streams.Episode{"2": targetNeedingAudioSwitch("2")},
+	}
+	c := fakeapi.NewCache()
+	policy := ignore.NewPolicy(nil, []string{"SKIP"})
+	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
+	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+	// No profile was learned from the ignored show.
+	if got, ok := c.SubtitleLangForAudio("1", "jpn"); ok {
+		t.Errorf("learned profile jpn→%q for an ignored show; want no entry (ignore must suppress learning)", got)
+	}
+	// No propagation either: the show was never fetched and no streams written.
+	if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
+		t.Errorf("ShowEpisodes called %d times for an ignored show; want 0; calls=%v", got, plx.CallNames())
+	}
+	if got := countCalls(plx.CallNames(), "SetAudio"); got != 0 {
+		t.Errorf("SetAudio called %d times for an ignored show; want 0", got)
+	}
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+		t.Errorf("SetSubtitle called %d times for an ignored show; want 0", got)
+	}
+}
+
+// TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile is the
+// companion to the ignore-suppression test: it pins that a NON-ignored show
+// still learns its profile (proving the reorder did not accidentally drop the
+// learn call). A mutant that always returned early before learnProfileFrom
+// Reference would pass the ignore test but fail this one.
+//
+// given a non-ignored show and LANGUAGE_PROFILES enabled
+// when ChangeTracksForEpisode runs on a jpn-audio reference
+// then the user's profile records jpn (subtitle empty, no sub on the ref).
+func TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		EpisodeByKey:       map[string]*streams.Episode{"2": targetNeedingAudioSwitch("2")},
+	}
+	c := fakeapi.NewCache()
+	policy := ignore.NewPolicy(nil, []string{"SKIP"}) // policy present but show carries no SKIP label
+	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
+	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+	got, ok := c.SubtitleLangForAudio("1", "jpn")
+	if !ok {
+		t.Fatal("non-ignored show did not learn a profile; want jpn entry recorded")
+	}
+	if got != "" {
+		t.Errorf("learned subtitle lang = %q, want \"\" (reference has no selected subtitle)", got)
+	}
 }
