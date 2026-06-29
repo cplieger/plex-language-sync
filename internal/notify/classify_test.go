@@ -146,6 +146,61 @@ func TestBuildStreamCacheKey(t *testing.T) {
 	}
 }
 
+// TestBuildStreamCacheKeyDistinguishesSelection characterizes the property
+// handlePlayEvent's selection-aware dedup relies on: a changed audio or
+// subtitle selection on the same (user, episode) must produce a DISTINCT
+// stream cache key, while an unchanged selection must produce an IDENTICAL
+// key. This is what lets the CheckAndMark gate detect a mid-playback
+// correction (different key => not yet processed) without re-propagating an
+// unchanged selection (same key => already processed). Without this, the
+// removed session pre-filter would have to guard duplicate work.
+func TestBuildStreamCacheKeyDistinguishesSelection(t *testing.T) {
+	t.Parallel()
+	const (
+		userID    = "42"
+		ratingKey = "1234"
+		audioA    = 100
+		audioB    = 101
+		subA      = 200
+		subB      = 201
+	)
+	base := BuildStreamCacheKey(userID, ratingKey, audioA, subA)
+
+	if changedAudio := BuildStreamCacheKey(userID, ratingKey, audioB, subA); changedAudio == base {
+		t.Errorf("changed audio selection must yield a distinct key: both = %q", base)
+	}
+	if changedSub := BuildStreamCacheKey(userID, ratingKey, audioA, subB); changedSub == base {
+		t.Errorf("changed subtitle selection must yield a distinct key: both = %q", base)
+	}
+	if changedBoth := BuildStreamCacheKey(userID, ratingKey, audioB, subB); changedBoth == base {
+		t.Errorf("changed audio+subtitle selection must yield a distinct key: both = %q", base)
+	}
+	if same := BuildStreamCacheKey(userID, ratingKey, audioA, subA); same != base {
+		t.Errorf("identical selection must yield an identical key: %q != %q", same, base)
+	}
+}
+
+func TestBuildTimelineCacheKey(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		itemID string
+		want   string
+	}{
+		{name: "typical", itemID: "1234", want: "timeline:1234"},
+		{name: "empty", itemID: "", want: "timeline:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := BuildTimelineCacheKey(tt.itemID)
+			if got != tt.want {
+				t.Errorf("BuildTimelineCacheKey(%q) = %q, want %q", tt.itemID, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsRelevantTimelineEntry(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -143,7 +143,12 @@ func requireEnv(key string) string {
 			slog.Error("cannot read secret file", "key", key+"_FILE", "path", filePath, "error", err)
 			os.Exit(1)
 		}
-		return strings.TrimSpace(string(data))
+		v := strings.TrimSpace(string(data))
+		if v == "" {
+			slog.Error("secret file is empty", "key", key+"_FILE", "path", filePath)
+			os.Exit(1)
+		}
+		return v
 	}
 	v := os.Getenv(key)
 	if v == "" {

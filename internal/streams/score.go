@@ -208,17 +208,7 @@ func BestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
 // given language code, preferring higher-quality codecs (see
 // SubtitleCodecScore). Returns nil if none match.
 func FindSubtitleByLanguage(streams []*Stream, langCode string) *Stream {
-	var best *Stream
-	bestScore := -1
-	for _, s := range streams {
-		if s.LanguageCode != langCode {
-			continue
-		}
-		sc := SubtitleCodecScore(s.Codec)
-		if sc > bestScore {
-			best = s
-			bestScore = sc
-		}
-	}
-	return best
+	return BestByScore(FilterByLanguage(streams, langCode), func(s *Stream) int {
+		return SubtitleCodecScore(s.Codec)
+	})
 }

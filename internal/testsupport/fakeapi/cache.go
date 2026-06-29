@@ -4,10 +4,6 @@
 // callers across internal/{sync,scheduler,notify,users} tests
 // previously declared three near-identical fakeCache types; this
 // package consolidates them into one honest implementation.
-//
-// Scaffolded in cycle-2 step 1 (arch-fakeapi-p1). Step 3 replaces the
-// three in-package fakeCache copies with fakeapi.NewCache() and deletes
-// the per-test duplicates.
 package fakeapi
 
 import (
@@ -23,9 +19,8 @@ import (
 // Every accessor takes a short-held lock; consumers can share one Cache
 // across goroutines without additional synchronization.
 //
-// Beyond api.Cache, Cache exposes Processed / Tokens / SetTokens helper
-// readers (NOT part of api.Cache) that tests use to inspect the fake's
-// state after a run.
+// Beyond api.Cache, Cache exposes the Processed helper reader (NOT part
+// of api.Cache) that tests use to inspect the fake's state after a run.
 type Cache struct {
 	processed    map[string]time.Time
 	profiles     map[string]map[string]string
@@ -47,8 +42,8 @@ func NewCache() *Cache {
 	}
 }
 
-// Compile-time interface assertion. Step 3 relies on Cache satisfying
-// api.Cache so tests can assign *Cache to an api.Cache-typed field.
+// Compile-time interface assertion: *Cache satisfies api.Cache so tests
+// can assign it to an api.Cache-typed field.
 var _ api.Cache = (*Cache)(nil)
 
 // WasRecentlyProcessed reports whether the key was MarkProcessed'd
@@ -68,6 +63,22 @@ func (c *Cache) MarkProcessed(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.processed[key] = time.Now()
+}
+
+// CheckAndMark atomically tests and sets the recent-processed window for key,
+// mirroring internal/cache.Cache.CheckAndMark: it returns true and records the
+// current time when key is outside the recent window, or false (leaving the
+// existing timestamp intact) when it is inside. The check and the mark happen
+// under a single lock acquisition so two concurrent callers cannot both observe
+// "not processed" for the same key.
+func (c *Cache) CheckAndMark(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ts, ok := c.processed[key]; ok && time.Since(ts) < c.recentWindow {
+		return false
+	}
+	c.processed[key] = time.Now()
+	return true
 }
 
 // LearnLanguageProfile stores a user's audio→subtitle preference.
@@ -147,18 +158,4 @@ func (c *Cache) Processed() []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// Tokens returns a defensive copy of the internal token map. Identical
-// to UserTokens but named to match the existing per-test helpers that
-// step 3 replaces.
-func (c *Cache) Tokens() map[string]string {
-	return c.UserTokens()
-}
-
-// SetTokens is a shim for SetUserTokens to keep step-3 call-site
-// migration mechanical (the pre-consolidation fakeCache variants use
-// both names).
-func (c *Cache) SetTokens(tokens map[string]string) {
-	c.SetUserTokens(tokens)
 }

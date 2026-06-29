@@ -137,18 +137,6 @@ func TestNewClientForUser(t *testing.T) {
 	}
 }
 
-func TestNewClientForUserSkipTLS(t *testing.T) {
-	parsed, _ := url.Parse("https://plex:32400")
-	caPath := writeSelfSignedPEM(t)
-	c, err := NewClientForUser(parsed, "test-token", caPath)
-	if err != nil {
-		t.Fatalf("NewClientForUser: %v", err)
-	}
-	if c.httpClient.Transport == nil {
-		t.Fatal("expected custom transport when caCertPath is set")
-	}
-}
-
 // --- Tests: newHTTPClient ---
 
 func TestNewClientForUserCACert(t *testing.T) {
@@ -282,8 +270,10 @@ func TestWarnIfPlaintextURL(t *testing.T) {
 	}{
 		{"http to remote FQDN warns", "http://plex.example.com:32400", true},
 		{"http to remote IP warns", "http://203.0.113.100:32400", true},
+		{"http to remote IPv6 literal warns", "http://[2001:db8::1]:32400", true},
 		{"http to multi-label host warns", "http://my.plex.server:32400", true},
 		{"http to loopback IP is quiet", "http://127.0.0.1:32400", false},
+		{"http to IPv6 loopback is quiet", "http://[::1]:32400", false},
 		{"http to localhost is quiet", "http://localhost:32400", false},
 		{"http to Docker DNS short name is quiet", "http://plex:32400", false},
 		{"https to FQDN is quiet", "https://plex.example.com", false},
@@ -406,6 +396,27 @@ func TestDoJSON_NilResultSkipsUnmarshal(t *testing.T) {
 	})
 	if err := c.put(context.Background(), "/do-something"); err != nil {
 		t.Errorf("put() should ignore body when result is nil, got err = %v", err)
+	}
+}
+
+func TestDoJSON_ResponseExceedingCapErrors(t *testing.T) {
+	oversized := bytes.Repeat([]byte("a"), maxResponseBody+1)
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(oversized)
+	})
+	var out map[string]any
+	var err error
+	log := captureSlog(t, func() {
+		err = c.get(context.Background(), "/library/metadata/1", &out)
+	})
+	if err == nil {
+		t.Fatal("get() on an over-cap response must return an error, not silently truncate")
+	}
+	if !strings.Contains(err.Error(), "read cap") {
+		t.Errorf("get() error = %v, want it to mention the read cap", err)
+	}
+	if !strings.Contains(log, "plex API response exceeded read cap") {
+		t.Errorf("missing operator-facing WARN on cap hit; log: %q", log)
 	}
 }
 
@@ -548,6 +559,29 @@ func TestRecentlyAdded_InvalidSectionKey(t *testing.T) {
 	_, err := c.RecentlyAdded(context.Background(), RatingKey("abc"), 0)
 	if err == nil {
 		t.Fatal("RecentlyAdded() with non-numeric key should return error")
+	}
+}
+
+// TestRecentlyAdded_FilterUsesSingleGTEOperator pins the addedAt>= filter to a
+// single literal > operator. Plex silently ignores a doubled >> and returns the
+// full unfiltered library, which overflowed the 10 MB read cap and caused a
+// 14-day daily-failure outage on the sibling viewedAt>= path. The happy-path
+// test only checks Contains(q, "addedAt"), which a >>= regression still passes.
+func TestRecentlyAdded_FilterUsesSingleGTEOperator(t *testing.T) {
+	t.Parallel()
+	var gotQuery string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
+	})
+	if _, err := c.RecentlyAdded(context.Background(), RatingKey("5"), 1700000000); err != nil {
+		t.Fatalf("RecentlyAdded() error = %v", err)
+	}
+	if !strings.Contains(gotQuery, "addedAt>=1700000000") {
+		t.Errorf("query %q must contain single-operator addedAt>=1700000000", gotQuery)
+	}
+	if strings.Contains(gotQuery, "addedAt>>") {
+		t.Errorf("query %q contains doubled >> operator; Plex silently ignores it and returns the full library", gotQuery)
 	}
 }
 
@@ -804,6 +838,28 @@ func TestSetAudioStream_PUTPath(t *testing.T) {
 	}
 }
 
+// TestSetSubtitleStream_PUTPath mirrors TestSetAudioStream_PUTPath for the
+// subtitle setter, which had no direct test (0% coverage). It pins the PUT
+// method and the subtitleStreamID + allParts=1 query contract.
+func TestSetSubtitleStream_PUTPath(t *testing.T) {
+	t.Parallel()
+	var gotPath, gotMethod string
+	c := newTestClient(t, func(_ http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		gotMethod = r.Method
+	})
+	if err := c.SetSubtitleStream(context.Background(), 100, 200); err != nil {
+		t.Fatalf("SetSubtitleStream() error = %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	want := "/library/parts/100?subtitleStreamID=200&allParts=1"
+	if gotPath != want {
+		t.Errorf("path = %q, want %q", gotPath, want)
+	}
+}
+
 func TestDisableSubtitles_UsesStreamID0(t *testing.T) {
 	t.Parallel()
 	var gotPath string
@@ -856,5 +912,125 @@ func TestParseSharedServersXMLEmpty(t *testing.T) {
 	}
 	if len(result.SharedServer) != 0 {
 		t.Errorf("expected 0 shared servers, got %d", len(result.SharedServer))
+	}
+}
+
+// plexTVRewriteTransport redirects the hardcoded https://plex.tv/... request in
+// SharedUserTokens to a local httptest server, the documented purpose of
+// SwapTVClient. It rewrites scheme+host on every request.
+type plexTVRewriteTransport struct {
+	base http.RoundTripper
+	host string
+}
+
+func (rt plexTVRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.URL.Scheme = "http"
+	req.URL.Host = rt.host
+	return rt.base.RoundTrip(req)
+}
+
+// TestSharedUserTokens exercises the plex.tv shared_servers call via SwapTVClient:
+// a host-rewriting transport points the hardcoded plex.tv URL at a local server.
+// It must not be parallel (SwapTVClient mutates the process-global tvClient).
+func TestSharedUserTokens(t *testing.T) {
+	newTVClient := func(t *testing.T, h http.HandlerFunc) *Client {
+		t.Helper()
+		srv := httptest.NewServer(h)
+		t.Cleanup(srv.Close)
+		u, err := url.Parse(srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+		return &Client{token: "admin-token"}
+	}
+
+	t.Run("happy path parses servers and sends auth", func(t *testing.T) {
+		var gotToken, gotAccept, gotReqURI string
+		c := newTVClient(t, func(w http.ResponseWriter, r *http.Request) {
+			gotToken = r.Header.Get("X-Plex-Token")
+			gotAccept = r.Header.Get("Accept")
+			gotReqURI = r.RequestURI
+			_, _ = w.Write([]byte(`<MediaContainer>` +
+				`<SharedServer userID="1" username="alice" accessToken="tok-a"/>` +
+				`<SharedServer userID="2" username="bob" accessToken="tok-b"/>` +
+				`</MediaContainer>`))
+		})
+		servers, err := c.SharedUserTokens(context.Background(), "machine/../id")
+		if err != nil {
+			t.Fatalf("SharedUserTokens() error = %v", err)
+		}
+		if len(servers) != 2 || servers[0].AccessToken != "tok-a" || servers[1].UserID != "2" {
+			t.Errorf("servers = %+v, want 2 parsed entries", servers)
+		}
+		if gotToken != "admin-token" {
+			t.Errorf("X-Plex-Token = %q, want admin-token", gotToken)
+		}
+		if gotAccept != "application/xml" {
+			t.Errorf("Accept = %q, want application/xml", gotAccept)
+		}
+		if !strings.Contains(gotReqURI, "machine%2F..%2Fid") {
+			t.Errorf("RequestURI %q must contain PathEscaped machineIdentifier machine%%2F..%%2Fid", gotReqURI)
+		}
+	})
+
+	t.Run("non-200 status returns error", func(t *testing.T) {
+		c := newTVClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+		})
+		if _, err := c.SharedUserTokens(context.Background(), "abc"); err == nil {
+			t.Error("SharedUserTokens() on 502 should return error")
+		}
+	})
+
+	t.Run("malformed XML returns error", func(t *testing.T) {
+		c := newTVClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`<MediaContainer><SharedServer`))
+		})
+		if _, err := c.SharedUserTokens(context.Background(), "abc"); err == nil {
+			t.Error("SharedUserTokens() on malformed XML should return error")
+		}
+	})
+}
+
+func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("a"), maxResponseBody+1))
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+	c := &Client{token: "admin-token"}
+
+	_, stErr := c.SharedUserTokens(context.Background(), "machine-id")
+	if stErr == nil {
+		t.Fatal("SharedUserTokens() on an over-cap response must return an error")
+	}
+	if !strings.Contains(stErr.Error(), "read cap") {
+		t.Errorf("SharedUserTokens() error = %v, want it to mention the read cap", stErr)
+	}
+}
+
+func TestSharedUserTokens_EmptyBodyReturnsNoServers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+	c := &Client{token: "admin-token"}
+
+	servers, stErr := c.SharedUserTokens(context.Background(), "machine-id")
+	if stErr != nil {
+		t.Fatalf("SharedUserTokens() on an empty body must not error, got %v", stErr)
+	}
+	if servers != nil {
+		t.Errorf("SharedUserTokens() on an empty body = %+v, want nil (zero shared servers)", servers)
 	}
 }

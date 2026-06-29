@@ -75,7 +75,7 @@ func run() int {
 
 	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.caCertPath)
 	if err != nil {
-		slog.Error("invalid PLEX_URL", "error", err)
+		slog.Error("cannot initialize plex client", "error", err)
 		return 1
 	}
 	plex.WarnIfPlaintextURL(client.BaseURL())
@@ -115,9 +115,9 @@ func run() int {
 	}
 	// Reap any temp orphaned by an interrupted SaveTo so they don't accumulate
 	// on the persistent /config volume. Best-effort: a cleanup failure is
-	// non-fatal at startup, so log at Debug and continue.
+	// non-fatal at startup, so log at Warn and continue.
 	if _, err := atomicfile.CleanupStaleTemps(filepath.Dir(cachePath), time.Hour); err != nil {
-		slog.Debug("stale temp cleanup failed", "error", err)
+		slog.Warn("stale temp cleanup failed", "path", filepath.Dir(cachePath), "error", err)
 	}
 
 	// User manager — admin identity + cached shared-user tokens.
@@ -148,7 +148,17 @@ func run() int {
 	// internal/* packages, passing api.* interfaces so the subsystems
 	// stay testable.
 	userClientFn := func(userID string) api.PlexReadWriter {
-		return um.ClientForUser(userID, client)
+		// ClientForUser returns a typed nil (*plex.Client)(nil) when no
+		// per-user client can be built. Returning that directly would
+		// produce a non-nil api.PlexReadWriter interface wrapping a nil
+		// pointer (the classic Go nil-interface trap), defeating the
+		// consumers' `== nil` checks. Convert to a genuine nil interface
+		// so sync/scheduler skip the user instead of dereferencing.
+		c := um.ClientForUser(userID, client)
+		if c == nil {
+			return nil
+		}
+		return c
 	}
 	ignorePolicy := ignore.NewPolicy(cfg.ignoreLibraries, cfg.ignoreLabels)
 	syncer := syncpkg.NewSyncer(
@@ -183,27 +193,23 @@ func run() int {
 	// writes its final snapshot.
 	var wg sync.WaitGroup
 	wg.Add(2)
+	refreshDone := make(chan struct{})
+	schedDone := make(chan struct{})
 	go func() {
 		defer wg.Done()
+		defer close(refreshDone)
 		um.RefreshLoop(ctx, client, identity.MachineIdentifier)
 	}()
 	go func() {
 		defer wg.Done()
+		defer close(schedDone)
 		sched.Run(ctx)
 	}()
 	// Bounded wait: once Listen returns we give the background loops
 	// up to shutdownWaitBudget to drain. Past that we save the cache
-	// anyway (stale-by-budget beats unsaved).
-	defer func() {
-		done := make(chan struct{})
-		go func() { wg.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(shutdownWaitBudget):
-			slog.Warn("shutdown wait budget exceeded, saving cache anyway",
-				"budget", shutdownWaitBudget)
-		}
-	}()
+	// anyway (stale-by-budget beats unsaved). On timeout we report which
+	// loops are still running so a stuck shutdown points at the laggard.
+	defer waitForBackgroundLoops(&wg, refreshDone, schedDone)
 
 	// WebSocket listener (blocks until context cancelled).
 	notify.NewListener(client, notify.DefaultConfig()).Listen(ctx, notifyAdapter{
@@ -218,6 +224,32 @@ func run() int {
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
 	return 0
+}
+
+// waitForBackgroundLoops blocks until the user-token-refresh and scheduler
+// loops join, or until shutdownWaitBudget elapses, whichever comes first. On
+// timeout it logs which loops are still running so a stuck shutdown points at
+// the laggard before the deferred cache save runs.
+func waitForBackgroundLoops(wg *sync.WaitGroup, refreshDone, schedDone <-chan struct{}) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(shutdownWaitBudget):
+		var stuck []string
+		select {
+		case <-refreshDone:
+		default:
+			stuck = append(stuck, "user-token-refresh")
+		}
+		select {
+		case <-schedDone:
+		default:
+			stuck = append(stuck, "scheduler")
+		}
+		slog.Warn("shutdown wait budget exceeded, saving cache anyway",
+			"budget", shutdownWaitBudget, "still_running", stuck)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -265,12 +297,12 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 
 	userID, username := n.resolvePlayEventUser(ctx, ev)
 
-	sessionCacheKey := cache.KeyPrefixSession + userID + ":" + ev.SessionKey
-	if n.cache.WasRecentlyProcessed(sessionCacheKey) {
+	userClient := n.users.ClientForUser(userID, n.client)
+	if userClient == nil {
+		slog.Warn("play event: no per-user client available, skipping",
+			"user", username, "key", ev.RatingKey)
 		return
 	}
-
-	userClient := n.users.ClientForUser(userID, n.client)
 	episode, err := userClient.Episode(ctx, plex.RatingKey(ev.RatingKey))
 	if err != nil {
 		if !errors.Is(err, plex.ErrNotFound) {
@@ -285,11 +317,9 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 
 	curAudio, curSub := streams.Selected(episode)
 	streamKey := notify.BuildStreamCacheKey(userID, ev.RatingKey, streams.ID(curAudio), streams.ID(curSub))
-	if n.cache.WasRecentlyProcessed(streamKey) {
+	if !n.cache.CheckAndMark(streamKey) {
 		return
 	}
-	n.cache.MarkProcessed(streamKey)
-	n.cache.MarkProcessed(sessionCacheKey)
 
 	slog.Info("play event detected",
 		"episode", episode.ShortName(),
@@ -320,7 +350,16 @@ func (n notifyAdapter) handleTimeline(ctx context.Context, entries []notify.Time
 			continue
 		}
 
-		cacheKey := cache.KeyPrefixTimeline + entry.ItemID
+		cacheKey := notify.BuildTimelineCacheKey(entry.ItemID)
+		// Uses the WasRecentlyProcessed/MarkProcessed pair rather than the
+		// atomic CheckAndMark on purpose: the key is marked (below) only after
+		// the entry is confirmed a real, non-ignored episode, so an irrelevant
+		// or ignored entry never suppresses a later genuine event for the same
+		// ItemID (mark-on-success). CheckAndMark would mark-on-check and lose
+		// that. Safe without atomicity here because timeline entries are
+		// processed serially by the single listener goroutine; the atomic
+		// CheckAndMark is reserved for the concurrent (scheduler pool) and
+		// must-be-one-step (play streamKey) gates.
 		if n.cache.WasRecentlyProcessed(cacheKey) {
 			continue
 		}

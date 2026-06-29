@@ -12,6 +12,7 @@ import "time"
 type Cache interface {
 	WasRecentlyProcessed(key string) bool
 	MarkProcessed(key string)
+	CheckAndMark(key string) bool
 	LearnLanguageProfile(userID, audioLang, subtitleLang string)
 	SubtitleLangForAudio(userID, audioLang string) (string, bool)
 	UserTokens() map[string]string

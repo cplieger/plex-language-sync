@@ -148,11 +148,27 @@ func TestManager_NameUnknownReturnsPlaceholder(t *testing.T) {
 	}
 }
 
-func TestManager_ConcurrentClientForUserAndTokenUpdate(t *testing.T) {
+// TestManager_ConcurrentClientForUser_TokenRotation drives a
+// RefreshTokens-style token rotation (mutating m.shared under m.mu)
+// concurrently with ClientForUser for the same uid, crossing the
+// lock-drop-then-recheck window in ClientForUser repeatedly. Under -race
+// (run locally; CI omits -race: CGO) this exercises concurrent access to
+// m.shared and pins one observable invariant: a returned per-user client
+// always carries a token that was live during the run, never an empty or
+// stale-zero token. NOTE: it does NOT pin the pruned/rotated re-check (a
+// mutant that drops `cur.Token != token` survives because a cached
+// once-live client still has a non-empty token and the next call's
+// fast-path rebuilds on a rotated token); that branch is a cache-hygiene
+// optimisation, not a branch this invariant can distinguish.
+//
+// given a shared user whose token is rotated under the manager lock
+// when ClientForUser races the rotation
+// then it returns either the admin fallback or a client with a live token.
+func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 	t.Parallel()
 	parsed, _ := url.Parse("http://plex:32400")
 	fc := fakeapi.NewCache()
-	fc.SetUserTokens(map[string]string{"2": "t-v1"})
+	fc.SetUserTokens(map[string]string{"2": "tok-0"})
 
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
@@ -160,24 +176,35 @@ func TestManager_ConcurrentClientForUserAndTokenUpdate(t *testing.T) {
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
 
-	const N = 100
+	const rounds = 200
 	var wg sync.WaitGroup
-	wg.Add(N * 2)
-	for range N {
-		go func() {
-			defer wg.Done()
-			// Simulate a concurrent cache-token rotation; the
-			// production path runs via RefreshTokens, but writing
-			// directly exercises the same lock discipline.
-			fc.SetUserTokens(map[string]string{"2": "t-rotating"})
-		}()
-		go func() {
-			defer wg.Done()
-			_ = m.ClientForUser("2", adminClient)
-			_ = m.Name("2")
-			_ = m.All()
-		}()
-	}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for r := range rounds {
+			tok := "tok-" + string(rune('A'+r%26))
+			m.mu.Lock()
+			m.shared["2"] = Info{ID: "2", Name: "u2", Token: tok}
+			m.mu.Unlock()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range rounds {
+			c := m.ClientForUser("2", adminClient)
+			if c == nil {
+				t.Error("ClientForUser returned nil during rotation")
+				return
+			}
+			if c == adminClient {
+				continue // uid momentarily empty -> admin fallback is valid
+			}
+			if c.Token() == "" {
+				t.Error("rotated client has an empty token; want a live per-user token")
+				return
+			}
+		}
+	}()
 	wg.Wait()
 }
 
@@ -532,5 +559,105 @@ func TestManager_ClientForUserCachesInstance(t *testing.T) {
 
 	if first != second {
 		t.Error("ClientForUser returned a new instance on the second call; want the cached client when the token is unchanged")
+	}
+}
+
+// TestManager_ClientForUser_FailsClosedOnConstructionError pins the
+// per-user client construction-failure contract in ClientForUser: when the
+// pinned CA certificate can no longer be loaded (file removed or corrupted
+// mid-run), the manager must log a warning and return nil rather than
+// falling back to the admin client. caCertPath is validated at startup, so
+// this models on-disk drift after startup.
+//
+// Returning nil (not the admin client) is the security-critical behaviour:
+// per-episode stream selection is per-user-scoped on the Plex server, so a
+// shared user's selection PUT executed under the admin token would corrupt
+// the admin's own per-user selection and never apply the intended user's.
+// Callers nil-check the result and skip the operation.
+//
+// given a known shared user and a caCertPath pointing at a missing file
+// when ClientForUser is called
+// then it returns nil (fail closed, no admin fallback, no panic).
+func TestManager_ClientForUser_FailsClosedOnConstructionError(t *testing.T) {
+	parsed, _ := url.Parse("https://plex:32400")
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"2": "friend-token"})
+
+	m := NewManager(fc)
+	// A non-existent CA path makes plex.NewClientForUser -> newHTTPClient ->
+	// atomicfile.ReadBounded fail, exercising the err != nil branch.
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "/nonexistent/plex-ca-absent.pem")
+	m.LoadFromCache()
+
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
+
+	got := m.ClientForUser("2", adminClient)
+	if got != nil {
+		t.Errorf("ClientForUser should fail closed (return nil) when per-user client construction fails; got %v", got)
+	}
+	if got == adminClient {
+		t.Error("ClientForUser must NOT fall back to the admin client on construction failure: a per-user write under the admin token corrupts the admin's per-user stream selection")
+	}
+}
+
+// TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance is a
+// -race data-race probe over the concurrent publish path in ClientForUser:
+// many goroutines request the same user's client under a stable token, the
+// lock is dropped while each builds a *plex.Client, and the re-acquire
+// re-checks state before publishing. Under -race (run locally; CI omits
+// -race: CGO) this exercises concurrent access to m.clients / m.shared and
+// asserts every caller ends on a non-nil per-user client with the live
+// token. NOTE: this is NOT a deterministic guard for the
+// "another goroutine already published" re-check -- without -race the
+// top-of-function cache-hit lets the first publisher win and later callers
+// read it before reaching their own lock-drop window, so a mutant that
+// drops that re-check survives in the no-race gate. Convergence on a single
+// cached instance is the happy-path expectation; divergence is only
+// observable (and only a data race) under -race.
+//
+// given a stable-token shared user and N concurrent ClientForUser calls
+// when they race through the lock-drop client-build window
+// then every caller observes a non-nil per-user *plex.Client for that uid.
+func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing.T) {
+	t.Parallel()
+	parsed, _ := url.Parse("http://plex:32400")
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"2": "stable-token"})
+
+	m := NewManager(fc)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.LoadFromCache()
+
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
+
+	const n = 64
+	got := make([]*plex.Client, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func() {
+			defer wg.Done()
+			<-start
+			got[i] = m.ClientForUser("2", adminClient)
+		}()
+	}
+	close(start) // release all goroutines together to overlap the build window
+	wg.Wait()
+
+	final := m.ClientForUser("2", adminClient)
+	if final == nil || final == adminClient {
+		t.Fatalf("final ClientForUser returned %v, want a cached per-user client", final)
+	}
+	for i := range n {
+		if got[i] == nil {
+			t.Fatalf("call %d returned nil client", i)
+		}
+		if got[i].Token() != "stable-token" {
+			t.Errorf("call %d token = %q, want stable-token", i, got[i].Token())
+		}
+		if got[i] != final {
+			t.Errorf("call %d returned a different *plex.Client than the final cached instance; want all callers to converge on one cached client for a stable token", i)
+		}
 	}
 }

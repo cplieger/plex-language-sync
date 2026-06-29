@@ -99,16 +99,19 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 				"attempt", reconnects,
 				"backoff", backoff.String())
 		}
-		connectStart := time.Now()
-		connected, err := l.connectAndListen(ctx, h)
+		connected, handshakeAt, err := l.connectAndListen(ctx, h)
 		if ctx.Err() != nil {
 			return
 		}
 		// Only reset backoff if the connection was held open long enough
-		// to consider it stable. Avoids the "accept handshake then
-		// immediately close" flap hammering Plex at MinBackoff
-		// indefinitely.
-		stable := connected && time.Since(connectStart) > l.cfg.StableThreshold
+		// to consider it stable. Measured from handshake success, not
+		// from before the dial, so a slow-but-successful dial followed by
+		// a short real uptime is not falsely classified stable (which
+		// would reset backoff and zero the persistent-reconnect counter
+		// that drives the sole health ERROR). Avoids the "accept
+		// handshake then immediately close" flap hammering Plex at
+		// MinBackoff indefinitely.
+		stable := connected && time.Since(handshakeAt) > l.cfg.StableThreshold
 		backoff = nextBackoff(backoff, l.cfg.MinBackoff, l.cfg.MaxBackoff, stable)
 		if stable {
 			reconnects = 0
@@ -162,10 +165,12 @@ func (l *Listener) logDisconnect(ctx context.Context, err error, backoff time.Du
 }
 
 // connectAndListen performs a single dial + read-loop cycle. Returns
-// (connected, err). `connected` is true iff the WebSocket handshake
-// succeeded — the outer loop uses it to decide whether to treat the
-// elapsed time as a stability signal.
-func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, error) {
+// (connected, handshakeAt, err). `connected` is true iff the WebSocket
+// handshake succeeded; `handshakeAt` is the instant the handshake
+// completed (zero when connected is false). The outer loop measures
+// connection stability from handshakeAt — NOT from before the dial — so
+// a slow-but-successful dial is not mistaken for held-open uptime.
+func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.Time, error) {
 	base := l.client.BaseURL()
 	scheme := "ws"
 	if base.Scheme == "https" {
@@ -188,8 +193,11 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, error
 		resp.Body.Close()
 	}
 	if err != nil {
-		return false, fmt.Errorf("%w: %w", ErrDialFailed, err)
+		return false, time.Time{}, fmt.Errorf("%w: %w", ErrDialFailed, err)
 	}
+	// Stamp stability from handshake success, not dial start: a slow dial
+	// followed by a short real uptime must not be counted as "stable".
+	handshakeAt := time.Now()
 	defer func() {
 		if err := conn.CloseNow(); err != nil {
 			slog.Debug("websocket close error", "error", err)
@@ -220,7 +228,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, error
 		_, message, readErr := conn.Read(readCtx)
 		cancelRead()
 		if readErr != nil {
-			return true, wrapReadError(readErr)
+			return true, handshakeAt, wrapReadError(readErr)
 		}
 		var notif Notification
 		if jsonErr := json.Unmarshal(message, &notif); jsonErr != nil {
@@ -280,15 +288,12 @@ func wrapReadError(readErr error) error {
 		return fmt.Errorf("%w: %w", ErrReadLimit, readErr)
 	}
 	// Clean server-close signals: close frames (normal/going-away/
-	// abnormal) via typed CloseError, or plain io.EOF.
+	// abnormal) via typed CloseError, or plain io.EOF. The close-code
+	// set is shared with ClassifyError via isServerCloseCode so the
+	// two cannot drift apart.
 	var ce websocket.CloseError
-	if errors.As(readErr, &ce) {
-		switch ce.Code {
-		case websocket.StatusNormalClosure,
-			websocket.StatusGoingAway,
-			websocket.StatusAbnormalClosure:
-			return fmt.Errorf("%w: %w", ErrServerClose, readErr)
-		}
+	if errors.As(readErr, &ce) && isServerCloseCode(ce.Code) {
+		return fmt.Errorf("%w: %w", ErrServerClose, readErr)
 	}
 	if errors.Is(readErr, io.EOF) {
 		return fmt.Errorf("%w: %w", ErrServerClose, readErr)

@@ -66,20 +66,11 @@ func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream) *Stream {
 		return streams[0]
 	}
 
-	// When ref is nil (forced-only path from nil subtitle + audio ref),
-	// build a synthetic ref so ScoreSubtitle can still compare codec
-	// and title fields instead of returning 0 for every candidate.
-	scoreRef := ref
-	if scoreRef == nil {
-		scoreRef = &Stream{
-			LanguageCode:    langCode,
-			Forced:          matchForcedOnly,
-			HearingImpaired: matchHIOnly,
-		}
-	}
-
+	// Reaching here implies langCode != "", and SubtitleCriteria only
+	// returns a non-empty langCode for a non-nil ref, so ref is
+	// guaranteed non-nil here (ScoreSubtitle still nil-guards defensively).
 	return BestByScore(streams, func(s *Stream) int {
-		return ScoreSubtitle(scoreRef, s)
+		return ScoreSubtitle(ref, s)
 	})
 }
 

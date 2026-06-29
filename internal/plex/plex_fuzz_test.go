@@ -45,14 +45,20 @@ func FuzzRatingKeyValidate(f *testing.F) {
 	f.Add("")
 	f.Add("abc")
 	f.Add("-1")
+	f.Add("007")
+	f.Add("+5")
+	f.Add(" 12")
+	f.Add("99999999999999999999999")
 
 	f.Fuzz(func(t *testing.T, s string) {
-		rk := RatingKey(s)
-		err := rk.Validate()
-		if err == nil {
-			if _, atoiErr := strconv.Atoi(s); atoiErr != nil {
-				t.Fatalf("Validate returned nil but Atoi fails for %q", s)
-			}
+		_, atoiErr := strconv.Atoi(s)
+		validateErr := RatingKey(s).Validate()
+		// Validate must agree with strconv.Atoi in BOTH directions. The prior
+		// one-directional property (err==nil implies Atoi ok) was vacuously
+		// satisfied by an implementation that always returned an error, so it
+		// could not catch an always-reject or inverted-comparator mutant.
+		if (validateErr == nil) != (atoiErr == nil) {
+			t.Fatalf("Validate(%q)=%v but strconv.Atoi err=%v; the two must agree", s, validateErr, atoiErr)
 		}
 	})
 }

@@ -12,8 +12,10 @@
 //     PlayEvent / TimelineEntry) — contract item 9.
 //   - WARN/ERROR slog keys and the ReasonXxx string values — contract
 //     item 5 (Loki alerting).
-//   - /:/websockets/notifications URL path, 1 MB read limit, 5-minute
-//     read deadline, X-Plex-Token header — contract item 9 (Plex API).
+//   - /:/websockets/notifications URL path, 1 MB read limit, the
+//     X-Plex-Token header — contract item 9 (Plex API). The read-idle
+//     backstop is Config-driven (ReadIdleTimeout, default 1 hour), not a
+//     fixed 5-minute deadline.
 package notify
 
 // Notification is the top-level envelope Plex sends over the WebSocket.

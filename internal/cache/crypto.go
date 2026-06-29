@@ -3,14 +3,13 @@ package cache
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
-
-	"golang.org/x/crypto/hkdf"
 )
 
 // Encryption constants for HKDF key derivation. These are fixed by the
@@ -38,10 +37,9 @@ func DeriveKey(plexToken string) ([]byte, error) {
 	if plexToken == "" {
 		return nil, errors.New("cache/crypto: empty plex token")
 	}
-	hkdfReader := hkdf.New(sha256.New, []byte(plexToken), hkdfSalt, hkdfInfo)
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(hkdfReader, key); err != nil {
-		return nil, fmt.Errorf("cache/crypto: HKDF expand: %w", err)
+	key, err := hkdf.Key(sha256.New, []byte(plexToken), hkdfSalt, string(hkdfInfo), 32)
+	if err != nil {
+		return nil, fmt.Errorf("cache/crypto: HKDF derive: %w", err)
 	}
 	return key, nil
 }

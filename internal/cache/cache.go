@@ -86,6 +86,7 @@ func (c *Cache) LoadFrom(path string) error {
 	c.data.ProcessedEpisodes = make(map[string]int64)
 	c.data.LanguageProfiles = make(map[string]map[string]string)
 	c.data.UserTokens = make(map[string]string)
+	c.data.LastSchedulerRun = 0
 
 	info, statErr := os.Stat(path)
 	if statErr != nil {
@@ -136,34 +137,23 @@ func (c *Cache) LoadFrom(path string) error {
 // file is removed on any failure path so partial writes don't clutter the
 // dir. User tokens are encrypted at the disk boundary if an encryption key
 // is configured; the in-memory Data.UserTokens map stays plaintext.
+//
+// The marshal runs under c.mu (via encodeForSave) for a consistent snapshot;
+// the disk write runs lock-free so a concurrent MarkProcessed /
+// WasRecentlyProcessed (the listener goroutine) never blocks on the scheduler
+// goroutine's fsync.
 func (c *Cache) SaveTo(path string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.pruneOldEntriesLocked()
-
-	// Encrypt user tokens for the on-disk copy without mutating in-memory state.
-	saveData := c.data
-	if c.encKey != nil && len(c.data.UserTokens) > 0 {
-		encrypted := make(map[string]string, len(c.data.UserTokens))
-		for uid, plain := range c.data.UserTokens {
-			ct, encErr := EncryptToken(c.encKey, plain)
-			if encErr != nil {
-				return fmt.Errorf("encrypt token for user %s: %w", uid, encErr)
-			}
-			encrypted[uid] = ct
-		}
-		saveData.UserTokens = encrypted
-	}
-
-	data, err := json.MarshalIndent(&saveData, "", "  ")
+	data, err := c.encodeForSave()
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return err
 	}
 
 	// The token cache is user-only (0o600). SaveBytes used to auto-create the
 	// parent dir at a perm derived from the file perm (0o700 when the file perm
 	// has no group/other bits, else 0o755); preserve that via WithMkdirMode.
 	// Our file perm is 0o600 (0o600&0o077 == 0), so the derived dir perm is 0o700.
+	// WriteFile performs disk I/O (write + fsync + rename + dir-fsync) and runs
+	// outside c.mu so cache mutations on other goroutines don't serialize on it.
 	res, err := atomicfile.WriteFile(context.Background(), path, data,
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
 	if err != nil {
@@ -182,4 +172,34 @@ func (c *Cache) SaveTo(path string) error {
 	}
 	slog.Debug("cache saved", "path", path, "bytes", len(data))
 	return nil
+}
+
+// encodeForSave prunes stale entries, encrypts user tokens for the on-disk
+// copy (without mutating in-memory state), and marshals the cache to JSON.
+// All map access happens under c.mu; the returned bytes are independent of
+// live cache state so the caller can write them without holding the lock.
+func (c *Cache) encodeForSave() ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pruneOldEntriesLocked()
+
+	// Encrypt user tokens for the on-disk copy without mutating in-memory state.
+	saveData := c.data
+	if c.encKey != nil && len(c.data.UserTokens) > 0 {
+		encrypted := make(map[string]string, len(c.data.UserTokens))
+		for uid, plain := range c.data.UserTokens {
+			ct, encErr := EncryptToken(c.encKey, plain)
+			if encErr != nil {
+				return nil, fmt.Errorf("encrypt token for user %s: %w", uid, encErr)
+			}
+			encrypted[uid] = ct
+		}
+		saveData.UserTokens = encrypted
+	}
+
+	data, err := json.MarshalIndent(&saveData, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	return data, nil
 }

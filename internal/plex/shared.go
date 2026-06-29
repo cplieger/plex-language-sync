@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 )
@@ -35,9 +36,23 @@ func (c *Client) SharedUserTokens(ctx context.Context, machineIdentifier string)
 		return nil, fmt.Errorf("plex.tv shared_servers: %s", resp.Status)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(body)) > maxResponseBody {
+		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
+			"endpoint", "plex.tv shared_servers", "cap_bytes", maxResponseBody)
+		return nil, fmt.Errorf("plex.tv shared_servers: response exceeded %d-byte read cap", maxResponseBody)
+	}
+
+	// Some plex.tv responses use an empty body instead of an empty
+	// <MediaContainer/>; xml.Unmarshal of a zero-length body returns
+	// io.EOF, which would be misreported as a parse failure. Treat an
+	// empty body as zero shared servers (mirrors the JSON read path's
+	// len(body)==0 guard in client.go).
+	if len(body) == 0 {
+		return nil, nil
 	}
 
 	var result SharedServersXML

@@ -2,6 +2,8 @@ package cache
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -161,5 +163,92 @@ func TestCachePruneOldEntriesBoundary(t *testing.T) {
 	}
 	if _, ok := c.data.ProcessedEpisodes["now"]; !ok {
 		t.Error("entry at now should NOT be pruned")
+	}
+}
+
+func TestCacheCheckAndMark(t *testing.T) {
+	t.Run("fresh key returns true and marks", func(t *testing.T) {
+		c := New()
+		if !c.CheckAndMark("ep1") {
+			t.Fatal("CheckAndMark(fresh) = false, want true")
+		}
+		if !c.WasRecentlyProcessed("ep1") {
+			t.Error("after CheckAndMark returned true, WasRecentlyProcessed = false, want true")
+		}
+	})
+	t.Run("second call within window returns false", func(t *testing.T) {
+		c := New()
+		c.CheckAndMark("ep1")
+		if c.CheckAndMark("ep1") {
+			t.Error("CheckAndMark(recent) = true, want false")
+		}
+	})
+	t.Run("nil map path returns true", func(t *testing.T) {
+		var c Cache
+		if !c.CheckAndMark("ep1") {
+			t.Error("CheckAndMark on zero-value Cache = false, want true")
+		}
+		if !c.WasRecentlyProcessed("ep1") {
+			t.Error("zero-value Cache did not record the key")
+		}
+	})
+	t.Run("entry older than 5m returns true and re-marks", func(t *testing.T) {
+		c := New()
+		c.data.ProcessedEpisodes["ep1"] = time.Now().Add(-6 * time.Minute).Unix()
+		if !c.CheckAndMark("ep1") {
+			t.Error("CheckAndMark(6m-old) = false, want true")
+		}
+	})
+	t.Run("false return leaves the existing timestamp intact", func(t *testing.T) {
+		c := New()
+		ts := time.Now().Add(-1 * time.Minute).Unix()
+		c.data.ProcessedEpisodes["ep1"] = ts
+		if c.CheckAndMark("ep1") {
+			t.Fatal("CheckAndMark(1m-old) = true, want false")
+		}
+		if got := c.data.ProcessedEpisodes["ep1"]; got != ts {
+			t.Errorf("timestamp changed on false return: got %d, want %d (unchanged)", got, ts)
+		}
+	})
+}
+
+func TestCacheCheckAndMarkAtomic(t *testing.T) {
+	c := New()
+	const goroutines = 200
+	var winners atomic.Int64
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			if c.CheckAndMark("contended-key") {
+				winners.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := winners.Load(); got != 1 {
+		t.Errorf("concurrent CheckAndMark winners = %d, want exactly 1 "+
+			"(atomic test-and-set must let only one caller observe the key as unprocessed)", got)
+	}
+}
+
+func TestCacheCheckAndMarkAutoprune(t *testing.T) {
+	c := New()
+	// Fill with >10000 old entries so the post-mark length check trips the
+	// inline prune branch (the > maxProcessedEntries guard in CheckAndMark,
+	// the twin of MarkProcessed's).
+	old := time.Now().Add(-48 * time.Hour).Unix()
+	for i := range 10001 {
+		c.data.ProcessedEpisodes[fmt.Sprintf("ep%d", i)] = old
+	}
+	if !c.CheckAndMark("fresh") {
+		t.Fatal("CheckAndMark(fresh) = false, want true")
+	}
+	// After prune, only recent entries ("fresh") survive; the 10001 old
+	// entries are gone. A regression that dropped the prune call would leave
+	// 10002 entries here.
+	if len(c.data.ProcessedEpisodes) > 2 {
+		t.Errorf("CheckAndMark did not inline-prune past the cap, got %d entries", len(c.data.ProcessedEpisodes))
 	}
 }
