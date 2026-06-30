@@ -1034,3 +1034,69 @@ func TestSharedUserTokens_EmptyBodyReturnsNoServers(t *testing.T) {
 		t.Errorf("SharedUserTokens() on an empty body = %+v, want nil (zero shared servers)", servers)
 	}
 }
+
+// TestDoJSON_AcceptsResponseExactlyAtCap is the boundary companion to
+// TestDoJSON_ResponseExceedingCapErrors. The read cap is a strict >
+// comparison, so a body of exactly maxResponseBody bytes is the largest
+// response that must still be accepted and decoded — a >= regression would
+// reject a legitimate at-cap 10 MB response (e.g. a large but valid
+// allLeaves listing). The body is valid JSON padded to the exact cap size.
+func TestDoJSON_AcceptsResponseExactlyAtCap(t *testing.T) {
+	const wrapper = `{"x":""}` // structural overhead around the padding
+	body := make([]byte, 0, maxResponseBody)
+	body = append(body, `{"x":"`...)
+	body = append(body, bytes.Repeat([]byte("a"), maxResponseBody-len(wrapper))...)
+	body = append(body, `"}`...)
+	if len(body) != maxResponseBody {
+		t.Fatalf("test setup: body len = %d, want exactly %d", len(body), maxResponseBody)
+	}
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	})
+	var out struct {
+		X string `json:"x"`
+	}
+	if err := c.get(context.Background(), "/library/metadata/1", &out); err != nil {
+		t.Fatalf("get() on a body exactly at the cap = %v, want nil (exact-cap must be accepted)", err)
+	}
+	if len(out.X) != maxResponseBody-len(wrapper) {
+		t.Errorf("decoded field len = %d, want %d (at-cap body must be fully read and decoded)",
+			len(out.X), maxResponseBody-len(wrapper))
+	}
+}
+
+// TestSharedUserTokens_AcceptsResponseExactlyAtCap is the boundary companion to
+// TestSharedUserTokens_ResponseExceedingCapErrors. Like the JSON read path, the
+// plex.tv read cap is a strict > comparison, so a body of exactly
+// maxResponseBody bytes must be parsed, not rejected. The body is valid XML (a
+// MediaContainer wrapping a comment) padded to the exact cap size.
+func TestSharedUserTokens_AcceptsResponseExactlyAtCap(t *testing.T) {
+	const prefix = `<MediaContainer><!--`
+	const suffix = `--></MediaContainer>`
+	body := make([]byte, 0, maxResponseBody)
+	body = append(body, prefix...)
+	body = append(body, bytes.Repeat([]byte("a"), maxResponseBody-len(prefix)-len(suffix))...)
+	body = append(body, suffix...)
+	if len(body) != maxResponseBody {
+		t.Fatalf("test setup: body len = %d, want exactly %d", len(body), maxResponseBody)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+	c := &Client{token: "admin-token"}
+
+	servers, stErr := c.SharedUserTokens(context.Background(), "machine-id")
+	if stErr != nil {
+		t.Fatalf("SharedUserTokens() on a body exactly at the cap = %v, want nil (exact-cap must be accepted)", stErr)
+	}
+	if len(servers) != 0 {
+		t.Errorf("SharedUserTokens() = %d servers, want 0 (comment-only MediaContainer)", len(servers))
+	}
+}

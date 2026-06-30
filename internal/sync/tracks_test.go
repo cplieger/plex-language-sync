@@ -1,8 +1,11 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/api"
@@ -988,5 +991,86 @@ func TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile(t *testing.T) {
 	}
 	if got != "" {
 		t.Errorf("learned subtitle lang = %q, want \"\" (reference has no selected subtitle)", got)
+	}
+}
+
+// TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount pins the
+// episodes_updated tally and the completion-summary gate. ChangeTracksForEpisode
+// increments a counter for each episode it changes and logs the inviolate
+// "language update complete" summary only when that count is positive; the
+// count is surfaced nowhere else, so the structured log is its sole
+// observable. With two episodes that each need an audio switch the summary
+// must report episodes_updated=2 — a counter that decremented instead of
+// incremented (yielding a non-positive total) would suppress the summary, and
+// a completion gate that rejected a positive count likewise.
+//
+// Not parallel: it swaps the process-global default slog logger.
+func TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount(t *testing.T) {
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{
+			"42": {{RatingKey: "2"}, {RatingKey: "3"}},
+		},
+		EpisodeByKey: map[string]*streams.Episode{
+			"2": targetNeedingAudioSwitch("2"),
+			"3": targetNeedingAudioSwitch("3"),
+		},
+	}
+	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+	out := buf.String()
+	if !strings.Contains(out, "language update complete") {
+		t.Errorf("missing 'language update complete' summary after 2 successful updates; log = %q", out)
+	}
+	if !strings.Contains(out, "episodes_updated=2") {
+		t.Errorf("summary must report episodes_updated=2 (exact change tally); log = %q", out)
+	}
+}
+
+// TestChangeTracksForEpisode_SilentWhenNothingChanged pins the lower bound of
+// the completion-summary gate: when no episode needs a change the tally stays
+// zero and the "language update complete" summary must NOT be logged (a
+// zero-update summary would be misleading noise). Every show episode here
+// already has the reference's jpn audio selected, so UpdateEpisodeStreams
+// reports no change and the counter never leaves zero.
+//
+// Not parallel: it swaps the process-global default slog logger.
+func TestChangeTracksForEpisode_SilentWhenNothingChanged(t *testing.T) {
+	alreadyJpn := func(key string) *streams.Episode {
+		return &streams.Episode{
+			RatingKey: key,
+			Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			}}}}},
+		}
+	}
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{
+			"42": {{RatingKey: "2"}, {RatingKey: "3"}},
+		},
+		EpisodeByKey: map[string]*streams.Episode{
+			"2": alreadyJpn("2"),
+			"3": alreadyJpn("3"),
+		},
+	}
+	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+	if out := buf.String(); strings.Contains(out, "language update complete") {
+		t.Errorf("'language update complete' must not be logged when no episode changed; log = %q", out)
 	}
 }

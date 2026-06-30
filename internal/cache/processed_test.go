@@ -252,3 +252,26 @@ func TestCacheCheckAndMarkAutoprune(t *testing.T) {
 		t.Errorf("CheckAndMark did not inline-prune past the cap, got %d entries", len(c.data.ProcessedEpisodes))
 	}
 }
+
+// TestCacheCheckAndMarkBoundary10000 mirrors TestCacheMarkProcessedBoundary10000
+// for the CheckAndMark inline-prune guard. The soft cap is a strict >
+// comparison, so landing on exactly maxProcessedEntries (10000) entries must
+// NOT trigger the prune. Filling 9999 prunable (>24h) entries and then marking
+// one fresh key brings the map to exactly 10000; a prune at the cap would drop
+// the 9999 old entries, so the surviving count pins the boundary (a >=
+// regression would prune here and leave only the fresh key).
+func TestCacheCheckAndMarkBoundary10000(t *testing.T) {
+	c := New()
+	old := time.Now().Add(-48 * time.Hour).Unix()
+	for i := range 9999 {
+		c.data.ProcessedEpisodes[fmt.Sprintf("ep%d", i)] = old
+	}
+	if !c.CheckAndMark("fresh") {
+		t.Fatal("CheckAndMark(fresh) = false, want true")
+	}
+	// 9999 old + 1 fresh = 10000 entries. 10000 > 10000 is false → no prune.
+	if len(c.data.ProcessedEpisodes) != 10000 {
+		t.Errorf("CheckAndMark at exactly 10000 entries should NOT prune, got %d entries",
+			len(c.data.ProcessedEpisodes))
+	}
+}
