@@ -1,3 +1,4 @@
+# Example compose for plex-language-sync. See the README for all configuration options and hardening.
 services:
   plex-language-sync:
     image: ghcr.io/cplieger/plex-language-sync:latest
@@ -11,11 +12,6 @@ services:
       PLEX_TOKEN: "your-plex-token"  # admin token from Plex Web settings
       UPDATE_LEVEL: "show"  # show = entire show, season = current season only
       UPDATE_STRATEGY: "all"  # all = every episode, next = future episodes only
-      TRIGGER_ON_PLAY: "true"
-      TRIGGER_ON_SCAN: "true"
-      LANGUAGE_PROFILES: "true"  # learn and apply audio→subtitle pairs for new shows
-      SCHEDULER_ENABLE: "true"
-      SCHEDULER_SCHEDULE_TIME: "02:00"
 
     volumes:
-      - /opt/appdata/plex-language-sync:/config
+      - "/opt/appdata/plex-language-sync:/config"
