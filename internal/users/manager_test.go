@@ -661,3 +661,46 @@ func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing
 		}
 	}
 }
+
+// TestManager_ClientForUserRebuildsAfterTokenRotation pins the cache-freshness
+// check in ClientForUser: a cached per-user client whose token no longer
+// matches the shared user's current token must be rebuilt on the rotated
+// token, never returned stale. This is the security-relevant path — a stale
+// client would send per-user PUTs under the old (possibly revoked) token.
+//
+// The token is rotated in m.shared WITHOUT evicting the cached client (the
+// window before RefreshTokens' eviction runs), so the cached client is present
+// but stale. Both freshness checks must reject it: the cache-hit fast path
+// (token unchanged?) and the post-build re-publish recheck. A check inverted
+// to accept the stale client would return a client carrying the old token.
+func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
+	parsed, _ := url.Parse("http://plex:32400")
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"2": "tok-old"})
+
+	m := NewManager(fc)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.LoadFromCache()
+
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
+
+	// Prime the per-user client cache under the old token.
+	if first := m.ClientForUser("2", adminClient); first == nil || first.Token() != "tok-old" {
+		t.Fatalf("setup: ClientForUser(2) = %v, want a client carrying tok-old", first)
+	}
+
+	// Rotate the shared user's token in place, leaving the now-stale client
+	// cached (models the pre-eviction window).
+	m.mu.Lock()
+	m.shared["2"] = Info{ID: "2", Name: "user-2", Token: "tok-new"}
+	m.mu.Unlock()
+
+	got := m.ClientForUser("2", adminClient)
+	if got == nil {
+		t.Fatal("ClientForUser(2) after rotation = nil, want a client on the rotated token")
+	}
+	if got.Token() != "tok-new" {
+		t.Errorf("ClientForUser(2) after token rotation = %q, want tok-new "+
+			"(must rebuild on the rotated token, never return the stale cached client)", got.Token())
+	}
+}
