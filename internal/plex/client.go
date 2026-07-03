@@ -132,7 +132,7 @@ func WarnIfPlaintextURL(u *url.URL) {
 //
 // When caCertPath is non-empty, the PEM file at that path is loaded into a
 // custom TLS RootCAs pool — verification stays ON, pinned to that CA. This
-// supports self-signed homelab Plex certs without disabling cert checking.
+// supports self-signed Plex certs without disabling cert checking.
 // Empty caCertPath means: use the OS trust store (default Transport, nil).
 // For http:// URLs the TLS config is unused either way.
 func newHTTPClient(caCertPath string) (*http.Client, error) {
