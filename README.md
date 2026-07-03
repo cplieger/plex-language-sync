@@ -3,7 +3,6 @@
 [![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/plex-language-sync/badges/size.json)](https://github.com/cplieger/plex-language-sync/pkgs/container/plex-language-sync)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
 ![base: Distroless](https://img.shields.io/badge/base-Distroless_nonroot-4285F4?logo=google)
-[![Go Report Card](https://goreportcard.com/badge/github.com/cplieger/plex-language-sync)](https://goreportcard.com/report/github.com/cplieger/plex-language-sync)
 [![Test coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/plex-language-sync/badges/coverage.json)](https://github.com/cplieger/plex-language-sync/actions/workflows/coverage.yml)
 [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/plex-language-sync/badges/mutation.json)](https://github.com/cplieger/plex-language-sync/issues?q=label%3Agremlins-tracker)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13217/badge)](https://www.bestpractices.dev/projects/13217)
@@ -45,8 +44,6 @@ It also learns your habits. If you always watch anime in Japanese with English s
 
 - **Single binary, one dependency.** Written in Go with only one external library (`coder/websocket`). No Python runtime, no YAML config files, no notification frameworks — just a distroless container that does one job well.
 - **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65534) on `gcr.io/distroless/static` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
-- **Learns, not just copies.** Language profiles close the gap that upstream tools leave open: new shows get correct subtitles from day one, without requiring you to watch an episode first.
-- **Resilient by default.** WebSocket reconnects with exponential backoff, a daily scheduler catches missed events, and a persistent cache survives restarts — so your preferences are never lost.
 
 ## Quick start
 
@@ -73,7 +70,7 @@ services:
       SCHEDULER_SCHEDULE_TIME: "02:00"
 
     volumes:
-      - /opt/appdata/plex-language-sync:/config
+      - /path/to/plex-language-sync/config:/config
 ```
 
 ## Configuration reference
@@ -191,7 +188,7 @@ larger changes so the approach can be discussed before implementation.
 
 ## Disclaimer
 
-These images are built with care and follow security best practices, but they are intended for **homelab use**. No guarantees of fitness for production environments. Use at your own risk.
+This project is built with care and follows security best practices, but it is intended for personal / self-hosted use. No guarantees of fitness for production environments. Use at your own risk.
 
 This project was built with AI-assisted tooling using [Claude Opus](https://www.anthropic.com/claude) and [Kiro](https://kiro.dev). The human maintainer defines architecture, supervises implementation, and makes all final decisions.
 

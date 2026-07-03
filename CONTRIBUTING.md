@@ -113,8 +113,7 @@ touching `internal/plex`:
   values, so re-fetching with a user token to "see their view" adds latency
   with no information gain. **Writes, however, ARE per-user-scoped** — a
   `PUT /library/parts/<id>?...&allParts=1` records the selection against the
-  requesting token's user, not server-wide (verified 2026-06-29 against a live
-  server: an admin-token PUT was invisible to a shared user's read-back). So a
+  requesting token's user, not server-wide. So a
   per-user stream change must go out under that user's token; falling back to
   the admin token writes to the admin's view and silently drops the user's
   preference. This is why `ClientForUser` fails closed (returns nil, caller
