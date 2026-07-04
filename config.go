@@ -10,6 +10,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"log/slog"
@@ -182,10 +183,7 @@ func readSecretFile(filePath string) ([]byte, error) {
 }
 
 func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+	return cmp.Or(os.Getenv(key), fallback)
 }
 
 func envBool(key string, fallback bool) bool {
@@ -194,9 +192,9 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	switch strings.ToLower(v) {
-	case "true", "1", "yes":
+	case "true", "1", "yes", "on":
 		return true
-	case "false", "0", "no":
+	case "false", "0", "no", "off":
 		return false
 	default:
 		slog.Warn("unrecognized boolean value, using default",

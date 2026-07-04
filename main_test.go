@@ -68,9 +68,11 @@ func TestEnvBool(t *testing.T) {
 		{"true", false, true},
 		{"1", false, true},
 		{"yes", false, true},
+		{"on", false, true},
 		{"false", true, false},
 		{"0", true, false},
 		{"no", true, false},
+		{"off", true, false},
 		{"", true, true},
 		{"invalid", true, true},
 	}
@@ -95,6 +97,10 @@ func TestEnvBoolCaseInsensitive(t *testing.T) {
 		{"Yes", true},
 		{"NO", false},
 		{"No", false},
+		{"ON", true},
+		{"On", true},
+		{"OFF", false},
+		{"Off", false},
 	}
 	for _, tt := range tests {
 		t.Setenv("TEST_ENV_BOOL_CI", tt.val)
