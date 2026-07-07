@@ -125,10 +125,14 @@ func run() int {
 	um.Init(admin, client.BaseURL(), cfg.caCertPath)
 	um.LoadFromCache()
 
-	// Synchronous initial refresh with bounded exponential backoff. See
-	// internal/users/refresh.go for the retry semantics and rationale.
-	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
-
+	// Core Plex connection is verified, admin resolved, and the cache + user
+	// manager initialized with any cached tokens: the app can serve. Mark
+	// healthy BEFORE the plex.tv shared-user refresh so container liveness is
+	// not gated on that secondary dependency. Per the README, health =
+	// "initial Plex connection succeeds and admin user verified"; gating on the
+	// refresh would delay healthy up to ~75s (DefaultRefreshConfig) on a plex.tv
+	// outage and risk a Docker unhealthy/restart that cannot fix plex.tv. The
+	// periodic RefreshLoop keeps retrying.
 	marker.Set(true)
 	// Shutdown sequence: flag unhealthy first so Docker stops routing health
 	// probes as passing while the (slow) cache save runs, then persist the
@@ -143,6 +147,11 @@ func run() int {
 				"path", cachePath, "error", err)
 		}
 	}()
+
+	// Synchronous initial refresh with bounded exponential backoff. See
+	// internal/users/refresh.go for the retry semantics and rationale. Runs
+	// after the health marker is set so a plex.tv outage never gates liveness.
+	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
 	// Compose the sync and scheduler subsystems from the concrete
 	// internal/* packages, passing api.* interfaces so the subsystems

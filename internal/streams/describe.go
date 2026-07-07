@@ -2,6 +2,7 @@ package streams
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -56,10 +57,7 @@ var descriptiveTerms = []string{
 // mentions any "commentary" / "descriptive" keyword. Used to filter
 // atypical audio tracks out of the default matching path.
 func ContainsDescriptive(title string) bool {
-	for _, term := range descriptiveTerms {
-		if strings.Contains(title, term) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(descriptiveTerms, func(term string) bool {
+		return strings.Contains(title, term)
+	})
 }

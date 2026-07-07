@@ -721,3 +721,16 @@ func TestBestByScore_TieGoesToEarliest(t *testing.T) {
 		t.Errorf("BestByScore with tied scores = %v, want stream ID=1 (earliest on tie)", got)
 	}
 }
+
+// TestScoreAudioNilRef pins the defensive nil-ref contract symmetric to
+// ScoreSubtitle's (TestScoreSubtitleStream/"nil ref returns 0"). ScoreAudio
+// guards `if ref == nil { return 0 }` and it is the one branch left uncovered
+// in the package (go tool cover reports ScoreAudio at 66.7%). A mutant dropping
+// the guard would dereference a nil ref inside the audioScoreRules predicates
+// and panic.
+func TestScoreAudioNilRef(t *testing.T) {
+	t.Parallel()
+	if got := ScoreAudio(nil, &Stream{Codec: "eac3", Channels: 6}); got != 0 {
+		t.Errorf("ScoreAudio(nil, s) = %d, want 0", got)
+	}
+}

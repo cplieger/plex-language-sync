@@ -4,7 +4,6 @@ package cache
 // on-disk cache.json schema (inviolate contract item 7) — do NOT change
 // them without a migration.
 const (
-	KeyPrefixSession   = "session:"
 	KeyPrefixTimeline  = "timeline:"
 	KeyPrefixScheduler = "scheduler:"
 	KeyPrefixStreams   = "streams:"

@@ -1,10 +1,13 @@
 package users
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -112,9 +115,11 @@ func TestManager_ClientForUser(t *testing.T) {
 	if got := m.ClientForUser("2", adminClient); got.Token() != "friend-token" {
 		t.Errorf("expected friend-token, got %q", got.Token())
 	}
-	// Unknown user falls back to admin.
-	if got := m.ClientForUser("999", adminClient); got != adminClient {
-		t.Error("expected admin client for unknown userID")
+	// Unknown user fails closed (nil) so the caller skips the write
+	// rather than writing under the admin token (which is per-user-scoped
+	// and would corrupt the admin's own selection).
+	if got := m.ClientForUser("999", adminClient); got != nil {
+		t.Error("expected nil for unknown userID (fail closed), got a client")
 	}
 }
 
@@ -305,9 +310,12 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 	if got := m.ClientForUser("100", adminClient); got.Token() != "new-token-100" {
 		t.Errorf("ClientForUser(100) token = %q, want new-token-100", got.Token())
 	}
-	// User 200 should fall back to admin (no longer shared).
-	if got := m.ClientForUser("200", adminClient); got != adminClient {
-		t.Error("ClientForUser(200) should fall back to admin after revocation")
+	// User 200 was revoked: no per-user identity remains, so ClientForUser
+	// fails closed (nil) and the caller skips rather than writing under the
+	// admin token (per-user-scoped; would corrupt the admin's own
+	// selection). Previously this fell back to admin (l-f22).
+	if got := m.ClientForUser("200", adminClient); got != nil {
+		t.Error("ClientForUser(200) should fail closed (nil) after revocation")
 	}
 
 	tokens := fc.UserTokens()
@@ -702,5 +710,128 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 	if got.Token() != "tok-new" {
 		t.Errorf("ClientForUser(2) after token rotation = %q, want tok-new "+
 			"(must rebuild on the rotated token, never return the stale cached client)", got.Token())
+	}
+}
+
+// TestRefreshTokens_SkipsAdminIDInSharedList pins the admin-skip guard in
+// RefreshTokens (refresh.go): if plex.tv echoes the admin's own userID in the
+// shared-server list it must be excluded from m.shared, from All(), and from
+// the persisted cache tokens. Without the guard the admin lands in m.shared,
+// All() lists it twice (double-processing the admin episode), and the admin
+// token is written to cache.json. This is the RefreshTokens counterpart of the
+// existing TestManager_LoadFromCacheSkipsAdmin, which only pins the cache-load
+// path.
+//
+// Not parallel: swapPlexTVClient mutates a package-level var in internal/plex.
+func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<MediaContainer>` +
+			`<SharedServer id="1" username="admin-echo" userID="1" accessToken="admin-echoed-token"/>` +
+			`<SharedServer id="2" username="friend" userID="200" accessToken="token-200"/>` +
+			`</MediaContainer>`))
+	}))
+	t.Cleanup(srv.Close)
+	swapPlexTVClient(t, srv)
+
+	parsed, _ := url.Parse("http://plex:32400")
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
+
+	fc := fakeapi.NewCache()
+	m := NewManager(fc)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+
+	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+
+	if m.SharedCount() != 1 {
+		t.Errorf("SharedCount = %d, want 1 (admin ID 1 echoed by plex.tv must be skipped)", m.SharedCount())
+	}
+	if _, ok := fc.UserTokens()["1"]; ok {
+		t.Error("admin token must not be persisted to cache via the shared-user list")
+	}
+	adminCount := 0
+	for _, u := range m.All() {
+		if u.ID == "1" {
+			adminCount++
+		}
+	}
+	if adminCount != 1 {
+		t.Errorf("All() listed admin ID 1 %d times, want 1 (must not appear from both m.admin and m.shared)", adminCount)
+	}
+}
+
+// TestRefreshLoop_ExitsOnContextCancel pins the shutdown-exit path of
+// RefreshLoop (refresh.go), which has no other coverage: the loop must return
+// when its context is cancelled (the <-ctx.Done() select case) so container
+// shutdown is not blocked by the 12h refresh ticker. A regression that dropped
+// the ctx.Done() case (or replaced it with a default) would spin or block
+// forever and trip the timeout below. The tick branch is intentionally not
+// exercised here: the interval is a 12h package const with no injection seam.
+func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
+	parsed, _ := url.Parse("http://plex:32400")
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
+	m := NewManager(fakeapi.NewCache())
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		m.RefreshLoop(ctx, adminClient, "mid")
+		close(done)
+	}()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RefreshLoop did not return within 2s of context cancellation")
+	}
+}
+
+// TestRefreshTokens_LogsPrunedUsersAudit pins the shared-users-pruned audit
+// log that RefreshTokens emits when plex.tv drops a previously-shared user:
+// it must log the INFO "shared users pruned (revoked or unshared)" carrying
+// the exact pruned count and the revoked user_id so an operator can see WHICH
+// users lost access. TestRefreshTokens_EvictsRevokedUsers pins only the
+// resulting state (SharedCount / cache tokens), never this audit line, so a
+// mutant that drops the pruned-log block or reports the wrong count survives.
+//
+// Not parallel: swapPlexTVClient mutates a package-level var and this test
+// swaps the process-global default slog logger.
+func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<MediaContainer>` +
+			`<SharedServer id="1" username="friend1" userID="100" accessToken="token-100"/>` +
+			`</MediaContainer>`))
+	}))
+	t.Cleanup(srv.Close)
+	swapPlexTVClient(t, srv)
+
+	parsed, _ := url.Parse("http://plex:32400")
+	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
+
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
+	m := NewManager(fc)
+	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.LoadFromCache()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+
+	out := buf.String()
+	if !strings.Contains(out, "shared users pruned") {
+		t.Errorf("missing 'shared users pruned' audit log after revoking user 200; log = %q", out)
+	}
+	if !strings.Contains(out, "count=1") {
+		t.Errorf("pruned audit log must report count=1 (exactly one user revoked); log = %q", out)
+	}
+	if !strings.Contains(out, "user_ids=[200]") {
+		t.Errorf("pruned audit log must name the revoked user_id 200; log = %q", out)
 	}
 }

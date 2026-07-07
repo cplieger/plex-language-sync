@@ -33,6 +33,17 @@ func (c *Cache) recordProcessedLocked(key string) {
 	c.data.ProcessedEpisodes[key] = time.Now().Unix()
 	if len(c.data.ProcessedEpisodes) > maxProcessedEntries {
 		c.pruneOldEntriesLocked()
+		// The 24h prune above is decoupled from the 5-minute dedup window: a
+		// burst of >maxProcessedEntries distinct keys within 24h (e.g. a large
+		// library deep-analysis pass writing one scheduler:/streams: key per
+		// episode) leaves the map over the cap with nothing to remove. Any entry
+		// older than recentlyProcessedWindow is already dead for dedup
+		// (WasRecentlyProcessed/CheckAndMark treat it as not-recent), so dropping
+		// those when still over the cap bounds the map without changing any dedup
+		// answer.
+		if len(c.data.ProcessedEpisodes) > maxProcessedEntries {
+			c.pruneStaleForDedupLocked()
+		}
 	}
 }
 
@@ -63,13 +74,29 @@ func (c *Cache) CheckAndMark(key string) bool {
 	return true
 }
 
-// pruneOldEntriesLocked removes processed-episode entries older than 24h.
-// Caller must hold c.mu.
-func (c *Cache) pruneOldEntriesLocked() {
-	cutoff := time.Now().Add(-24 * time.Hour).Unix()
+// pruneOlderThanLocked removes processed-episode entries whose timestamp is
+// older than cutoff (a Unix-second value). It is the shared prune-by-cutoff
+// body for pruneOldEntriesLocked and pruneStaleForDedupLocked. Caller must
+// hold c.mu.
+func (c *Cache) pruneOlderThanLocked(cutoff int64) {
 	for k, ts := range c.data.ProcessedEpisodes {
 		if ts < cutoff {
 			delete(c.data.ProcessedEpisodes, k)
 		}
 	}
+}
+
+// pruneOldEntriesLocked removes processed-episode entries older than 24h.
+// Caller must hold c.mu.
+func (c *Cache) pruneOldEntriesLocked() {
+	c.pruneOlderThanLocked(time.Now().Add(-24 * time.Hour).Unix())
+}
+
+// pruneStaleForDedupLocked removes processed-episode entries older than the
+// dedup window. Such entries are already treated as not-recent by
+// WasRecentlyProcessed and CheckAndMark, so removing them is behavior-
+// preserving for deduplication while bounding the map under a burst of
+// distinct keys inside the 24h pruneOldEntriesLocked horizon. Caller holds c.mu.
+func (c *Cache) pruneStaleForDedupLocked() {
+	c.pruneOlderThanLocked(time.Now().Add(-recentlyProcessedWindow).Unix())
 }

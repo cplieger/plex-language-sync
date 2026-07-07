@@ -416,3 +416,55 @@ func TestCacheSaveToEncryptFailure(t *testing.T) {
 		t.Errorf("SaveTo() wrote a file despite encrypt failure (stat err = %v), want no file", statErr)
 	}
 }
+
+// TestCacheSaveToPrunesStaleProcessedEntries pins that SaveTo -> encodeForSave
+// prunes >24h processed-episode entries before persisting, so the on-disk map
+// cannot grow unbounded across restarts. encodeForSave is statement-covered
+// because pruneOldEntriesLocked() executes, but no existing SaveTo test seeds a
+// stale entry, so a regression dropping that prune call survives every test.
+func TestCacheSaveToPrunesStaleProcessedEntries(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c := New()
+	c.data.ProcessedEpisodes["stale"] = time.Now().Add(-25 * time.Hour).Unix()
+	c.data.ProcessedEpisodes["fresh"] = time.Now().Unix()
+
+	if err := c.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo() error = %v", err)
+	}
+
+	loaded := New()
+	if err := loaded.LoadFrom(path); err != nil {
+		t.Fatalf("LoadFrom() error = %v", err)
+	}
+	if _, ok := loaded.data.ProcessedEpisodes["stale"]; ok {
+		t.Error("SaveTo persisted a >24h stale processed entry; encodeForSave must prune before writing")
+	}
+	if _, ok := loaded.data.ProcessedEpisodes["fresh"]; !ok {
+		t.Error("SaveTo dropped a fresh (<24h) processed entry; only stale entries should be pruned")
+	}
+}
+
+// TestCacheLoadFromStatErrorPropagates pins that LoadFrom propagates a stat
+// error that is NOT os.ErrNotExist rather than swallowing it as a missing-file
+// fresh start. A regular file used as a path component makes os.Stat fail with
+// ENOTDIR (not ErrNotExist) - the branch LoadFrom leaves uncovered at 93.5%. A
+// regression collapsing the errors.Is(statErr, os.ErrNotExist) guard so any
+// stat error is treated as a missing file would return nil here and go uncaught.
+func TestCacheLoadFromStatErrorPropagates(t *testing.T) {
+	t.Parallel()
+	f := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	var c Cache
+	err := c.LoadFrom(filepath.Join(f, "subdir", "cache.json"))
+	if err == nil {
+		t.Fatal("LoadFrom() with a non-ErrNotExist stat error = nil, want the error propagated")
+	}
+	if c.data.ProcessedEpisodes == nil {
+		t.Error("LoadFrom() left ProcessedEpisodes nil on the stat-error return; maps must be reset first")
+	}
+}

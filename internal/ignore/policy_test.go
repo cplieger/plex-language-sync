@@ -202,3 +202,22 @@ func TestPolicyConstructorDefensiveCopy(t *testing.T) {
 		t.Error("NewPolicy Labels contents corrupted")
 	}
 }
+
+// TestPolicyShouldSkipEpisodeEmptyGrandparentSkipsLabelFetch isolates the
+// empty-grandparent half of the "GrandparentRatingKey == \"\" || reader == nil"
+// guard from the nil-reader half. ShouldSkipEpisode is 100% statement-covered,
+// but no existing case pairs an empty grandparent with a non-nil reader, so a
+// regression dropping the GrandparentRatingKey == "" check survives. Here the
+// reader is non-nil AND its show carries a matching ignore label: the empty
+// grandparent must short-circuit to false before that label is ever fetched;
+// dropping the check would fetch the show and return true.
+func TestPolicyShouldSkipEpisodeEmptyGrandparentSkipsLabelFetch(t *testing.T) {
+	t.Parallel()
+	p := NewPolicy(nil, []string{"SKIP"})
+	reader := &stubReader{show: &plex.Show{Label: []streams.Label{{Tag: "SKIP"}}}}
+	ref := &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: ""}
+	if p.ShouldSkipEpisode(context.Background(), reader, ref) {
+		t.Error("ShouldSkipEpisode with empty GrandparentRatingKey = true, want false " +
+			"(the empty-grandparent guard must short-circuit before the show-label fetch)")
+	}
+}

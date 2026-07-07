@@ -1,9 +1,6 @@
 package fakeapi
 
-import (
-	"github.com/cplieger/plex-language-sync/internal/api"
-	"github.com/cplieger/plex-language-sync/internal/plex"
-)
+import "github.com/cplieger/plex-language-sync/internal/api"
 
 // Users implements api.UserLookup for tests. The zero value returns
 // nil/empty from all methods, matching the minimal scheduler fake.
@@ -13,9 +10,6 @@ type Users struct {
 }
 
 var _ api.UserLookup = (*Users)(nil)
-
-// ClientForUser always returns nil; the fake does not manage per-user clients.
-func (u *Users) ClientForUser(_ string, _ *plex.Client) *plex.Client { return nil }
 
 // All returns the AllResult slice configured on the fake.
 func (u *Users) All() []api.UserInfo { return u.AllResult }

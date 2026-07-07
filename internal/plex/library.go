@@ -58,7 +58,7 @@ func (c *Client) SeasonEpisodes(ctx context.Context, rk RatingKey) ([]streams.Ep
 // ShowMetadata fetches the show-level metadata (labels, library) for a show.
 // /library/metadata/{key} returns whatever type the key points to, so this
 // delegates to the same endpoint as Episode but decodes into *Show.
-// Runtime-types-p1 split this off from Episode: a show response does not
+// Split off from Episode: a show response does not
 // have Media/Part/Stream, so typing it as *Show instead of *Episode keeps
 // the field set honest for callers (e.g. shouldIgnoreShow reads only
 // LibraryTitle + Label).

@@ -7,20 +7,19 @@
 // typed sentinel errors so Loki alert rules can segment by cause without
 // substring matching on error text.
 //
-// Inviolate contracts preserved by this package:
+// Stable contracts preserved by this package:
 //   - Plex WebSocket JSON wire format (struct tags on Notification /
-//     PlayEvent / TimelineEntry) — contract item 9.
-//   - WARN/ERROR slog keys and the ReasonXxx string values — contract
-//     item 5 (Loki alerting).
+//     PlayEvent / TimelineEntry).
+//   - WARN/ERROR slog keys and the ReasonXxx string values, which Loki
+//     alert rules match on.
 //   - /:/websockets/notifications URL path, 1 MB read limit, the
-//     X-Plex-Token header — contract item 9 (Plex API). The read-idle
-//     backstop is Config-driven (ReadIdleTimeout, default 1 hour), not a
-//     fixed 5-minute deadline.
+//     X-Plex-Token header. The read-idle backstop is Config-driven
+//     (ReadIdleTimeout, default 1 hour), not a fixed 5-minute deadline.
 package notify
 
 // Notification is the top-level envelope Plex sends over the WebSocket.
 // Field names and JSON tags mirror the Plex NotificationContainer wire
-// format byte-for-byte (inviolate contract item 9).
+// format byte-for-byte.
 type Notification struct {
 	NotificationContainer struct {
 		Type                         string          `json:"type"`

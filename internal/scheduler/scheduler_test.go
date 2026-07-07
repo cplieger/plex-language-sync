@@ -169,7 +169,11 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 
 func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 	t.Parallel()
-	plx := &fakeapi.Plex{}
+	plx := &fakeapi.Plex{
+		EpisodeByKey: map[string]*streams.Episode{
+			"100": {RatingKey: "100", GrandparentRatingKey: "42"},
+		},
+	}
 	c := fakeapi.NewCache()
 	c.MarkProcessed("scheduler:100")
 	syncer := &fakeSyncer{}
@@ -182,11 +186,49 @@ func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 	)
 	ep := &streams.Episode{RatingKey: "100"}
 	sched.processRecentlyAddedEpisode(context.Background(), ep)
-	if plx.Calls.Load() != 0 {
-		t.Errorf("Episode called %d times on deduped key; want 0", plx.Calls.Load())
-	}
+	// Dedup marks on success (after the fetch), so a fetch DOES occur on an
+	// already-deduped key (a redundant idempotent read); the guarantee is
+	// "not PROCESSED", not "not fetched". The CheckAndMark guard still skips
+	// the per-user processing.
 	if syncer.processCalls.Load() != 0 {
 		t.Errorf("ProcessNewOrUpdated called %d times on deduped key; want 0", syncer.processCalls.Load())
+	}
+}
+
+// A transient (non-NotFound) fetch failure must NOT mark the dedup key, so a
+// later pass retries instead of suppressing the episode for the dedup window.
+// Pre-fix the key was marked before the fetch, permanently skipping a
+// transiently-failing episode until the window expired.
+func TestProcessRecentlyAddedEpisode_TransientFetchFailureRetries(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{
+		EpisodeErr: errors.New("plex 500"),
+		EpisodeByKey: map[string]*streams.Episode{
+			"100": {RatingKey: "100", GrandparentRatingKey: "42"},
+		},
+	}
+	c := fakeapi.NewCache()
+	syncer := &fakeSyncer{}
+	sched := New(
+		Config{Enable: true},
+		plx, c, &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx },
+		syncer,
+		nil,
+	)
+	ep := &streams.Episode{RatingKey: "100"}
+
+	// First pass: fetch fails transiently → not processed, key left unmarked.
+	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	if syncer.processCalls.Load() != 0 {
+		t.Fatalf("processed despite a fetch failure; want 0")
+	}
+
+	// Recover: the key was never marked, so the retry processes the episode.
+	plx.EpisodeErr = nil
+	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	if got := syncer.processCalls.Load(); got != 1 {
+		t.Errorf("retry after transient failure processed %d times; want 1 (key must not have been marked on failure)", got)
 	}
 }
 
@@ -370,8 +412,14 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 
 // TestRun_RunsInitialAnalysisWhenNeverRun verifies the "run immediately when the
 // last-run marker is absent" branch. A pre-cancelled context makes the scheduling
-// loop return as soon as the initial pass completes, so the timer wait
-// (timing-bound, intentionally untested) is never entered.
+// loop return as soon as the initial pass is dispatched, so the timer wait
+// (timing-bound, intentionally untested) is never entered. Because the initial
+// pass therefore runs under an already-cancelled ctx, the h-f1 watermark-on-cancel
+// guard means it does NOT advance the last-run marker; the proof that the initial
+// branch fired is the Plex History + ShowSections queries below (fetched at the
+// top of the pass before any ctx short-circuit). Marker advancement on a COMPLETED
+// pass is pinned separately by
+// TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged.
 func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{}
@@ -387,9 +435,6 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	cancel() // loop returns on ctx.Done() right after the initial pass
 	sched.Run(ctx)
 
-	if c.LastSchedulerRun().IsZero() {
-		t.Error("Run did not perform the initial deep analysis (last-run still zero)")
-	}
 	names := plx.CallNames()
 	var sawHistory, sawSections bool
 	for _, n := range names {
@@ -403,6 +448,69 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	if !sawHistory || !sawSections {
 		t.Errorf("initial pass did not query Plex (calls=%v); want History and ShowSections", names)
 	}
+}
+
+// TestRun_InitialPassDecisionFromMarker pins Run's initial-pass gate
+// (lastRun.IsZero() || time.Since(lastRun) > s.cfg.Interval). The existing Run
+// tests cover only the disabled short-circuit and the zero-marker arm; neither
+// sets a non-zero marker, so the documented cold-restart idempotency guard (a
+// marker newer than one interval must NOT double-run the analysis on restart)
+// and its stale-marker catch-up companion have no coverage -- and are not
+// covered transitively, since the deepAnalysisCore-level tests call
+// deepAnalysisCore directly and bypass this gate. A pre-cancelled context makes
+// Run return on ctx.Done() right after the gate, so the timing-bound ticker
+// loop is never entered (the technique TestRun_RunsInitialAnalysisWhenNeverRun
+// uses).
+func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
+	t.Parallel()
+	t.Run("recent marker skips the initial pass", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{}
+		c := fakeapi.NewCache()
+		c.SetLastSchedulerRun(time.Now()) // ran within the last interval
+		sched := New(
+			Config{Enable: true, Interval: 24 * time.Hour},
+			plx, c, &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx },
+			&fakeSyncer{},
+			nil,
+		)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		sched.Run(ctx)
+		if got := plx.Calls.Load(); got != 0 {
+			t.Errorf("Run made %d Plex calls with a recent last-run marker; want 0 (the cold-restart guard must skip the initial pass, not re-run a full sweep)", got)
+		}
+	})
+	t.Run("stale marker runs a catch-up pass", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{}
+		c := fakeapi.NewCache()
+		c.SetLastSchedulerRun(time.Now().Add(-72 * time.Hour)) // older than the 24h interval
+		sched := New(
+			Config{Enable: true, Interval: 24 * time.Hour},
+			plx, c, &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx },
+			&fakeSyncer{},
+			nil,
+		)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		sched.Run(ctx)
+		names := plx.CallNames()
+		var sawHistory, sawSections bool
+		for _, n := range names {
+			if n == "History" {
+				sawHistory = true
+			}
+			if n == "ShowSections" {
+				sawSections = true
+			}
+		}
+		if !sawHistory || !sawSections {
+			t.Errorf("stale marker did not trigger a catch-up pass (calls=%v); want History and ShowSections", names)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -823,4 +931,423 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			t.Errorf("ProcessNewOrUpdated called %d times under a cancelled context; want 0", syncer.processCalls.Load())
 		}
 	})
+}
+
+// TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary pins feedHistory's two
+// pre-dispatch filters: a non-episode history item (a movie) and an episode
+// from an ignored library must both be dropped before any worker fetches them,
+// so only the eligible TV episode is processed. The symmetric recently-added
+// path has TestProcessRecentlyAdded_HonorsIgnoreLibraries; the history path's
+// identical filters were unpinned. changeCalls catches an ignore-library
+// regression (the Kids episode would then be synced); Calls catches a
+// non-episode regression (the movie would then trigger an Episode fetch).
+func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
+	t.Parallel()
+	items := []plex.HistoryItem{
+		{RatingKey: "1", Type: "movie", LibraryTitle: "Movies"},
+		{RatingKey: "2", Type: "episode", LibraryTitle: "Kids"},
+		{RatingKey: "3", Type: "episode", LibraryTitle: "TV"},
+	}
+	plx := &fakeapi.Plex{
+		HistoryItems: items,
+		EpisodeByKey: map[string]*streams.Episode{
+			"2": {RatingKey: "2"},
+			"3": {RatingKey: "3"},
+		},
+	}
+	syncer := &fakeSyncer{}
+	sched := New(
+		Config{Enable: true, Ignore: ignore.NewPolicy([]string{"Kids"}, nil)},
+		plx, fakeapi.NewCache(), &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx },
+		syncer,
+		nil,
+	)
+
+	sched.processRecentHistory(context.Background(), time.Now().Unix())
+
+	if got := syncer.changeCalls.Load(); got != 1 {
+		t.Errorf("ChangeTracks called %d times; want 1 (movie type and ignored-library episode must be filtered before dispatch)", got)
+	}
+	if got := plx.Calls.Load(); got != 2 {
+		t.Errorf("Plex called %d times; want 2 (1 History + 1 Episode for the TV episode only; filtered items must never trigger a fetch)", got)
+	}
+}
+
+// TestScheduler_ContextCanceledFetchIsDebugNotWarn pins the shutdown log
+// contract: a History or ShowSections fetch failing with context.Canceled
+// (graceful shutdown) must emit the Debug "cancelled during shutdown" line, NOT
+// the "failed to fetch" WARN. The WARN keys are a Loki-alert contract, so a
+// spurious one on every shutdown would pollute it. Reuses the fetchErrPlex
+// wrapper and captureSlog helper already in this file. Not parallel: captureSlog
+// mutates the process-global default logger.
+func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
+	t.Run("history", func(t *testing.T) {
+		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: context.Canceled}
+		sched := New(
+			Config{Enable: true},
+			plx, fakeapi.NewCache(), &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx.Plex },
+			&fakeSyncer{},
+			nil,
+		)
+		out := captureSlog(t, func() {
+			sched.processRecentHistory(context.Background(), time.Now().Unix())
+		})
+		if strings.Contains(out, "scheduler: failed to fetch history") {
+			t.Errorf("context.Canceled must not emit the fetch-failure WARN; log: %q", out)
+		}
+		if !strings.Contains(out, "history fetch cancelled during shutdown") {
+			t.Errorf("context.Canceled during shutdown should emit the Debug line; log: %q", out)
+		}
+	})
+	t.Run("sections", func(t *testing.T) {
+		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, sectionsErr: context.Canceled}
+		sched := New(
+			Config{Enable: true},
+			plx, fakeapi.NewCache(), &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx.Plex },
+			&fakeSyncer{},
+			nil,
+		)
+		out := captureSlog(t, func() {
+			sched.processRecentlyAdded(context.Background(), time.Now().Unix())
+		})
+		if strings.Contains(out, "scheduler: failed to fetch sections") {
+			t.Errorf("context.Canceled must not emit the fetch-failure WARN; log: %q", out)
+		}
+		if !strings.Contains(out, "sections fetch cancelled during shutdown") {
+			t.Errorf("context.Canceled during shutdown should emit the Debug line; log: %q", out)
+		}
+	})
+}
+
+// TestProcessRecentHistory_PartialItemFailureWarnsWithCounts pins the aggregate
+// replay-incomplete WARN on the history path: when some history items fail their
+// per-user Episode fetch (below the circuit-breaker threshold, so the pass runs
+// to completion), processRecentHistory emits one WARN reporting failed/total item
+// counts. This mirrors the recently-added path's
+// TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts; the history-path
+// WARN has no assertion pinning its Loki-alert key + attributes. A single worker
+// makes failed_items deterministic and keeps the consecutive-error total (3)
+// below maxConsecutiveErrors (5), so the breaker never trips and all items are
+// processed. Not parallel: captureSlog mutates the process-global default logger.
+func TestProcessRecentHistory_PartialItemFailureWarnsWithCounts(t *testing.T) {
+	items := []plex.HistoryItem{
+		{RatingKey: "1", Type: "episode"},
+		{RatingKey: "2", Type: "episode"},
+		{RatingKey: "3", Type: "episode"},
+	}
+	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
+	sched := New(
+		Config{Enable: true},
+		plx, fakeapi.NewCache(), &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx },
+		&fakeSyncer{},
+		nil,
+	)
+	sched.workers = 1 // serial -> deterministic failed_items; 3 failures < breaker threshold (5)
+	out := captureSlog(t, func() {
+		sched.processRecentHistory(context.Background(), time.Now().Unix())
+	})
+	if !strings.Contains(out, "scheduler: recent-history replay incomplete, some items failed to fetch") {
+		t.Errorf("missing aggregate replay-incomplete WARN on partial item failure; log: %q", out)
+	}
+	if !strings.Contains(out, "failed_items=3") {
+		t.Errorf("aggregate WARN must report failed_items=3; log: %q", out)
+	}
+	if !strings.Contains(out, "total_items=3") {
+		t.Errorf("aggregate WARN must report total_items=3; log: %q", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// deepAnalysisCore — extended look-back window (l-f11 resolution)
+// ---------------------------------------------------------------------------
+
+// sinceCapturePlex wraps fakeapi.Plex and records the sinceUnix argument
+// passed to History -- the seam that lets a test assert the deep-analysis
+// look-back window start (mirrors the fetchErrPlex / recentlyAddedErrPlex /
+// blockingDeepAnalysisPlex wrappers already in this file). Only History is
+// overridden; every other method is promoted from the embedded *fakeapi.Plex.
+type sinceCapturePlex struct {
+	*fakeapi.Plex
+	historySince atomic.Int64
+}
+
+func (p *sinceCapturePlex) History(ctx context.Context, since int64) ([]plex.HistoryItem, error) {
+	p.historySince.Store(since)
+	return p.Plex.History(ctx, since)
+}
+
+// TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun pins the extended
+// look-back window: when the previous run is older than 24h (SCHEDULER_INTERVAL
+// > 24h, or a restart after a long downtime), the replay look-back extends to
+// the full since-last-run gap instead of the fixed 24h floor, so the span
+// between 24h and the interval is not silently skipped by the safety net.
+// deepAnalysisCore reads LastSchedulerRun() (the PREVIOUS run -- its own marker
+// is only written in the deferred SetLastSchedulerRun after the body), extends
+// lookback to max(24h, time.Since(last)), and feeds the resulting sinceUnix to
+// History. The two existing deepAnalysisCore tests use a fresh (zero last-run)
+// cache, so they exercise only the 24h floor; the extend branch and the
+// resulting window value were unasserted.
+func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
+	t.Parallel()
+	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
+	c := fakeapi.NewCache()
+	c.SetLastSchedulerRun(time.Now().Add(-72 * time.Hour)) // previous run 72h ago
+	sched := New(
+		Config{Enable: true},
+		plx, c, &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx.Plex },
+		&fakeSyncer{},
+		nil,
+	)
+
+	sched.deepAnalysisCore(context.Background())
+	after := time.Now()
+
+	windowStart := time.Unix(plx.historySince.Load(), 0)
+	lookback := after.Sub(windowStart)
+	// ~72h expected. The lower bound well above the 24h floor proves the branch
+	// extended the window; the upper bound proves it stayed bounded by the
+	// since-last-run gap rather than an unbounded/incorrect value.
+	if lookback < 48*time.Hour {
+		t.Errorf("look-back %v was not extended past the 24h floor; the >24h gap since the last run is unswept (window start %v)",
+			lookback, windowStart.UTC())
+	}
+	if lookback > 96*time.Hour {
+		t.Errorf("look-back %v exceeds the ~72h since-last-run gap (window start %v)",
+			lookback, windowStart.UTC())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// deepAnalysisCore — watermark-on-cancel guard (h-f1 resolution)
+// ---------------------------------------------------------------------------
+
+// TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged pins the h-f1
+// watermark-on-cancel guard: deepAnalysisCore's deferred SetLastSchedulerRun
+// advances the last-run marker ONLY when the pass completed (ctx.Err()==nil).
+// A pass cancelled mid-flight (graceful shutdown) fetches history and
+// recently-added newest-first and may leave the OLDER end of its window
+// unprocessed, so advancing the marker would make the next run's dynamic
+// look-back (l-f11) start past those unprocessed events -- permanently
+// skipping them. The marker must therefore stay at the previous completed
+// run's value on a cancelled pass and advance on a completed one. The
+// saveCache flush stays UNGUARDED (persisting partial learning is harmless;
+// main.go re-saves on shutdown), which the cancelled subtest's saveCalls
+// check keeps pinned so a regression that wrongly guards the whole defer body
+// is caught too.
+func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
+	t.Parallel()
+	t.Run("cancelled pass does not advance the marker", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{}
+		c := fakeapi.NewCache()
+		prev := time.Now().Add(-72 * time.Hour) // previous COMPLETED run's watermark
+		c.SetLastSchedulerRun(prev)
+		var saveCalls atomic.Int64
+		sched := New(
+			Config{Enable: true},
+			plx, c, &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx },
+			&fakeSyncer{},
+			func() error { saveCalls.Add(1); return nil },
+		)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // graceful-shutdown: the pass sees a cancelled context
+
+		sched.deepAnalysisCore(ctx)
+
+		if got := c.LastSchedulerRun(); !got.Equal(prev) {
+			t.Errorf("cancelled pass advanced the watermark to %v; want it unchanged at the previous completed run %v (advancing would skip the unprocessed older window)",
+				got.UTC(), prev.UTC())
+		}
+		// saveCache stays UNGUARDED: a cancelled pass still flushes partial
+		// learning. A regression that wrongly guards the whole defer body
+		// would drop this flush.
+		if got := saveCalls.Load(); got != 1 {
+			t.Errorf("saveCache called %d times on a cancelled pass; want 1 (the flush is intentionally unguarded)", got)
+		}
+	})
+	t.Run("completed pass advances the marker", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{}
+		c := fakeapi.NewCache()
+		prev := time.Now().Add(-72 * time.Hour)
+		c.SetLastSchedulerRun(prev)
+		sched := New(
+			Config{Enable: true},
+			plx, c, &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx },
+			&fakeSyncer{},
+			nil,
+		)
+		before := time.Now()
+
+		sched.deepAnalysisCore(context.Background())
+
+		got := c.LastSchedulerRun()
+		if !got.After(prev) {
+			t.Errorf("completed pass did not advance the watermark: got %v, still <= previous run %v", got.UTC(), prev.UTC())
+		}
+		if got.Before(before) {
+			t.Errorf("completed pass set the watermark to %v, before the run started %v", got.UTC(), before.UTC())
+		}
+	})
+}
+
+// TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged pins the uniform
+// completeness gate that generalises the h-f1 ctx-cancel guard: deepAnalysisCore
+// advances the last-run marker ONLY when the pass fully covered its look-back
+// window. Because History/RecentlyAdded are swept newest-first, ANY early exit
+// leaves the OLDER end of the window unprocessed, so advancing the marker would
+// make the next run's dynamic look-back start past those unswept events and drop
+// them permanently. The three incomplete-pass triggers below (in addition to the
+// ctx-cancel case, which has its own test) must all leave the marker unchanged:
+// a history circuit-breaker abort, a History fetch/overflow error, and a
+// recently-added per-section fetch failure.
+func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
+	t.Parallel()
+
+	// prev is the previous COMPLETED run's marker; every subtest asserts it is
+	// left untouched by an incomplete pass.
+	newSched := func(plx api.PlexReadWriter, reader func(string) api.PlexReadWriter, c api.Cache) *Scheduler {
+		return New(Config{Enable: true}, plx, c, &fakeapi.Users{}, reader, &fakeSyncer{}, nil)
+	}
+
+	t.Run("history circuit-breaker abort", func(t *testing.T) {
+		t.Parallel()
+		// 20 episode history items whose per-user Episode fetch always fails →
+		// the consecutive-error breaker trips and feedHistory aborts before
+		// feeding the whole window (older items never processed).
+		items := make([]plex.HistoryItem, 20)
+		for i := range items {
+			items[i] = plex.HistoryItem{AccountID: 1, RatingKey: strconv.Itoa(1000 + i), Type: plex.TypeEpisode}
+		}
+		plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
+		c := fakeapi.NewCache()
+		prev := time.Now().Add(-72 * time.Hour)
+		c.SetLastSchedulerRun(prev)
+		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx }, c)
+
+		sched.deepAnalysisCore(context.Background())
+
+		if got := c.LastSchedulerRun(); !got.Equal(prev) {
+			t.Errorf("breaker-abort pass advanced the marker to %v; want unchanged at %v (older window unswept)", got.UTC(), prev.UTC())
+		}
+	})
+
+	t.Run("history fetch/overflow error", func(t *testing.T) {
+		t.Parallel()
+		// A History error models the 10MB-overflow case (errBodyOverCap): zero
+		// items replayed, so the marker must not advance.
+		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: errors.New("body over cap")}
+		c := fakeapi.NewCache()
+		prev := time.Now().Add(-72 * time.Hour)
+		c.SetLastSchedulerRun(prev)
+		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx.Plex }, c)
+
+		sched.deepAnalysisCore(context.Background())
+
+		if got := c.LastSchedulerRun(); !got.Equal(prev) {
+			t.Errorf("history-error pass advanced the marker to %v; want unchanged at %v", got.UTC(), prev.UTC())
+		}
+	})
+
+	t.Run("recently-added section fetch failure", func(t *testing.T) {
+		t.Parallel()
+		// History is empty (complete), but one recently-added section fails its
+		// fetch, leaving that section's window unswept → pass incomplete.
+		base := &fakeapi.Plex{Sections: []plex.Section{{Key: "1", Title: "TV"}}}
+		plx := &recentlyAddedErrPlex{Plex: base, failSections: map[string]bool{"1": true}}
+		c := fakeapi.NewCache()
+		prev := time.Now().Add(-72 * time.Hour)
+		c.SetLastSchedulerRun(prev)
+		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx.Plex }, c)
+
+		sched.deepAnalysisCore(context.Background())
+
+		if got := c.LastSchedulerRun(); !got.Equal(prev) {
+			t.Errorf("section-failure pass advanced the marker to %v; want unchanged at %v", got.UTC(), prev.UTC())
+		}
+	})
+}
+
+// TestDeepAnalysisCore_CapsLookback pins the maxDeepAnalysisLookback cap: a
+// marker far older than the cap (a long outage or a very large
+// SCHEDULER_INTERVAL) must not grow the non-paginated History/RecentlyAdded
+// window without bound. The look-back is clamped to ~30 days regardless of how
+// old the previous run is.
+func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
+	t.Parallel()
+	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
+	c := fakeapi.NewCache()
+	c.SetLastSchedulerRun(time.Now().Add(-60 * 24 * time.Hour)) // 60 days ago, well past the 30d cap
+	sched := New(
+		Config{Enable: true},
+		plx, c, &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx.Plex },
+		&fakeSyncer{},
+		nil,
+	)
+
+	sched.deepAnalysisCore(context.Background())
+	after := time.Now()
+
+	windowStart := time.Unix(plx.historySince.Load(), 0)
+	lookback := after.Sub(windowStart)
+	if lookback > 31*24*time.Hour {
+		t.Errorf("look-back %v exceeds the 30d cap; a 60d-old marker must be clamped (window start %v)", lookback, windowStart.UTC())
+	}
+	if lookback < 29*24*time.Hour {
+		t.Errorf("look-back %v is below the 30d cap; expected the window clamped to ~30d (window start %v)", lookback, windowStart.UTC())
+	}
+}
+
+// TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
+// pins the completeness gate's accepted-loss boundary: scattered per-user
+// Episode() fetch failures that stay BELOW the circuit-breaker threshold do NOT
+// block completion, so the pass is complete and the last-run marker advances.
+// processRecentHistory keys completeness on fedAll (every item fed, breaker did
+// not abort), NOT on totalErrors==0 -- its comment documents this as "the
+// design's accepted skip-and-continue loss". The breaker-ABORT side is pinned by
+// TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged; this pins the
+// complement. Without it a regression coupling completeness to the error count
+// (return fedAll && totalErrors.Load()==0 && ctx.Err()==nil) survives every test
+// -- statement coverage of processRecentHistory/deepAnalysisCore is already
+// 100% -- yet makes any pass with a single transient item failure never advance
+// the marker, growing the look-back to the 30d cap and re-sweeping it every tick.
+func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker(t *testing.T) {
+	t.Parallel()
+	// 3 episode items whose per-user Episode fetch always fails: 3 consecutive
+	// errors stay below maxConsecutiveErrors (5), so the breaker never trips,
+	// feedHistory feeds every item (fedAll=true), and the pass is complete
+	// despite the 3 accepted-loss failures. workers=1 keeps the count
+	// deterministic. Sections are empty, so the recently-added leg is trivially
+	// complete and the marker's advance is governed solely by the history leg.
+	items := []plex.HistoryItem{
+		{AccountID: 1, RatingKey: "1", Type: plex.TypeEpisode},
+		{AccountID: 1, RatingKey: "2", Type: plex.TypeEpisode},
+		{AccountID: 1, RatingKey: "3", Type: plex.TypeEpisode},
+	}
+	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
+	c := fakeapi.NewCache()
+	prev := time.Now().Add(-72 * time.Hour) // previous COMPLETED run's marker
+	c.SetLastSchedulerRun(prev)
+	sched := New(
+		Config{Enable: true},
+		plx, c, &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx },
+		&fakeSyncer{},
+		nil,
+	)
+	sched.workers = 1 // serial -> 3 failures deterministic, below the breaker threshold
+
+	sched.deepAnalysisCore(context.Background())
+
+	if got := c.LastSchedulerRun(); !got.After(prev) {
+		t.Errorf("pass with scattered below-breaker item failures did not advance the marker: got %v, still <= previous run %v (accepted-loss failures must not block completion)", got.UTC(), prev.UTC())
+	}
 }

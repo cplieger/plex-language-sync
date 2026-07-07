@@ -41,7 +41,7 @@ func FuzzNotificationUnmarshal(f *testing.F) {
 		dispatch(context.Background(), &rec, &n)
 
 		wantPlays := 0
-		if n.NotificationContainer.Type == statePlaying {
+		if n.NotificationContainer.Type == wsTypePlaying {
 			wantPlays = len(n.NotificationContainer.PlaySessionStateNotification)
 		}
 		if rec.plays != wantPlays {

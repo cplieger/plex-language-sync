@@ -4,8 +4,8 @@ import "context"
 
 // fetchMetadata issues GET <path> and decodes the response into
 // mc[struct{Metadata []T}]. Used by library-lookup methods whose JSON shape
-// is {"MediaContainer":{"Metadata":[...]}}. Runtime-types-p4: the eight
-// original collection-fetch getters all share this envelope; collapsing the
+// is {"MediaContainer":{"Metadata":[...]}}. The eight original
+// collection-fetch getters all share this envelope; collapsing the
 // ~8 LOC boilerplate onto a single generic helper removes ~50 LOC of
 // near-identical copy-paste while preserving exact request semantics.
 func fetchMetadata[T any](ctx context.Context, c *Client, path string) ([]T, error) {

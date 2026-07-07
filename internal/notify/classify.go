@@ -30,7 +30,8 @@ var (
 )
 
 // Reason codes surfaced to logs (and thus to Loki alert rules). These
-// string values are byte-for-byte frozen — inviolate contract item 5.
+// string values are byte-for-byte frozen because Loki alert rules match
+// on them.
 const (
 	ReasonUnknown     = "unknown"
 	ReasonServerClose = "server_close"
@@ -67,8 +68,7 @@ func ClassifyError(err error) string {
 	case errors.Is(err, ErrReadError):
 		return ReasonReadError
 	}
-	var ce websocket.CloseError
-	if errors.As(err, &ce) && isServerCloseCode(ce.Code) {
+	if ce, ok := errors.AsType[websocket.CloseError](err); ok && isServerCloseCode(ce.Code) {
 		return ReasonServerClose
 	}
 	return ReasonUnknown

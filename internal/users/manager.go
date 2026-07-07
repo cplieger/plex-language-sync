@@ -117,14 +117,15 @@ func (m *Manager) LoadFromCache() {
 
 // ClientForUser returns a *plex.Client using the given user's token.
 // Caches clients to avoid creating new HTTP connection pools on every
-// call. Returns the admin client when the userID matches admin or is
-// unknown (e.g., a historical session from a user who no longer shares
-// the server — admin is the right fallback there because there is no
-// per-user identity to honour). Returns nil when a per-user client
-// CANNOT be constructed (the CA-cert file changed/corrupted mid-run):
-// in that case the caller must skip the operation rather than write
-// under the admin token, which would corrupt the admin's per-user
-// stream selection and not apply the intended user's.
+// call. Returns the admin client only when the userID matches admin.
+// Returns nil (fail CLOSED) whenever no per-user identity is available:
+// either the user is unknown/departed (absent from the shared-user map,
+// or holding an empty token) or a per-user client cannot be constructed
+// (the CA-cert file changed/corrupted mid-run). In every nil case the
+// caller must skip the operation rather than write under the admin
+// token — a per-user stream PUT is per-user-scoped on the server, so
+// executing it under the admin token corrupts the ADMIN's own stream
+// selection and still does not apply the intended user's preference.
 //
 // userID is accepted as a plain string so *Manager satisfies
 // api.UserLookup; convert to ID internally for map keys.
@@ -145,9 +146,27 @@ func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.C
 	}
 	info, ok := m.shared[uid]
 	if !ok || info.Token == "" {
-		// Unknown user — fall back to admin.
+		// Unknown/departed user (absent from the shared-user map, or an
+		// empty token). Fail CLOSED — return nil so the caller skips the
+		// operation rather than writing under the admin token, which is
+		// per-user-scoped and would corrupt the admin's own selection.
+		// This is the same protection the CA-cert-failure branch below
+		// applies. Reachable in steady state (a play event for a user no
+		// longer sharing) and via the fan-out race where a concurrent
+		// RefreshTokens prunes the user between the users.All() snapshot
+		// and this call; in the race the user is re-processed on the next
+		// pass once the refresh completes.
+		//
+		// Intentionally SILENT here: the callers own the "skipping" log
+		// and already de-spam it (the scheduler history path guards a
+		// single WARN per unknown user per pass via its unknownUsers set;
+		// handlePlayEvent WARNs on the naturally rate-limited play path).
+		// A per-call WARN here would re-introduce the exact Loki spam that
+		// de-spam was built to prevent — a departed user with N recent
+		// plays in the deep-analysis look-back window would emit N
+		// identical lines every scheduler pass.
 		m.mu.Unlock()
-		return adminClient
+		return nil
 	}
 	// Capture immutable inputs and release the lock before constructing the
 	// client: NewClientForUser reads and parses the CA-cert file from disk when

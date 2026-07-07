@@ -275,3 +275,37 @@ func TestCacheCheckAndMarkBoundary10000(t *testing.T) {
 			len(c.data.ProcessedEpisodes))
 	}
 }
+
+// TestCacheRecordProcessedPrunesStaleForDedupUnderBurst pins the second-tier
+// prune (pruneStaleForDedupLocked): when a burst of more than
+// maxProcessedEntries distinct keys lands inside the 24h window, the
+// first-tier pruneOldEntriesLocked removes nothing (every entry is <24h), so
+// recordProcessedLocked must fall through to pruneStaleForDedupLocked and drop
+// entries older than the 5-minute dedup window to keep the map bounded. No
+// other test creates the <24h-but->5m over-cap regime, so the delete branch of
+// pruneStaleForDedupLocked is otherwise never exercised.
+func TestCacheRecordProcessedPrunesStaleForDedupUnderBurst(t *testing.T) {
+	c := New()
+	// Each burst entry is 10 minutes old: past the 5m dedup window but well
+	// inside the 24h horizon, so the first-tier 24h prune cannot remove it.
+	staleForDedup := time.Now().Add(-10 * time.Minute).Unix()
+	n := maxProcessedEntries + 1
+	for i := range n {
+		c.data.ProcessedEpisodes[fmt.Sprintf("burst-%d", i)] = staleForDedup
+	}
+
+	// Marking one fresh key trips the > maxProcessedEntries guard. The 24h
+	// prune keeps every burst entry (<24h), so the second-tier prune must run
+	// and drop them, leaving only the just-marked fresh key.
+	c.MarkProcessed("fresh")
+
+	if _, ok := c.data.ProcessedEpisodes["fresh"]; !ok {
+		t.Error("MarkProcessed dropped the just-marked fresh key; only >5m entries should be pruned")
+	}
+	if _, ok := c.data.ProcessedEpisodes["burst-0"]; ok {
+		t.Error("second-tier prune did not remove a >5m stale-for-dedup entry under an over-cap burst")
+	}
+	if got := len(c.data.ProcessedEpisodes); got != 1 {
+		t.Errorf("after over-cap burst prune, got %d entries, want 1 (only the fresh key survives)", got)
+	}
+}

@@ -55,32 +55,18 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 	}
 
 	m.mu.Lock()
-	newShared := make(map[ID]Info, len(servers))
-	for _, s := range servers {
-		if s.UserID == "" || s.AccessToken == "" {
-			continue
-		}
-		uid := ID(s.UserID)
-		// Skip the admin's own ID if plex.tv returns it in the shared
-		// list, matching LoadFromCache's guard. Without this the admin
-		// lands in m.shared and All() emits it twice (from m.admin and
-		// m.shared), double-processing the admin episode; it would also
-		// persist the admin token into cache.json via tokensCopy.
-		// m.admin.ID is read under m.mu, held here.
-		if uid == m.admin.ID {
-			continue
-		}
-		newShared[uid] = Info{
-			ID:    uid,
-			Name:  s.Username,
-			Token: s.AccessToken,
-		}
-	}
+	newShared := sharedMapFromServers(servers, m.admin.ID)
 	// Evict cached clients for users who are no longer shared or whose
 	// token rotated.
 	for uid, cc := range m.clients {
 		if info, ok := newShared[uid]; !ok || info.Token != cc.Token() {
 			delete(m.clients, uid)
+		}
+	}
+	var removed []string
+	for uid := range m.shared {
+		if _, ok := newShared[uid]; !ok {
+			removed = append(removed, uid.String())
 		}
 	}
 	m.shared = newShared
@@ -98,7 +84,36 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 	m.cache.SetUserTokens(tokensCopy)
 
 	slog.Info("shared user tokens refreshed", "users", appliedCount)
+	if len(removed) > 0 {
+		slog.Info("shared users pruned (revoked or unshared)",
+			"count", len(removed), "user_ids", removed)
+	}
 	return nil
+}
+
+// sharedMapFromServers converts the plex.tv shared-server list into the new
+// shared-user map, skipping entries with no user id / token and the admin's
+// own id (matching LoadFromCache's guard -- otherwise the admin lands in
+// m.shared and All() emits it twice, double-processing the admin episode and
+// persisting the admin token into cache.json via tokensCopy). adminID is
+// passed by the caller, which holds m.mu.
+func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]Info {
+	newShared := make(map[ID]Info, len(servers))
+	for _, s := range servers {
+		if s.UserID == "" || s.AccessToken == "" {
+			continue
+		}
+		uid := ID(s.UserID)
+		if uid == adminID {
+			continue
+		}
+		newShared[uid] = Info{
+			ID:    uid,
+			Name:  s.Username,
+			Token: s.AccessToken,
+		}
+	}
+	return newShared
 }
 
 // InitialRefreshWithRetry runs the initial plex.tv shared-user-token
