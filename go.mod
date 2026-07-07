@@ -12,3 +12,5 @@ require (
 )
 
 require github.com/cplieger/atomicfile/v2 v2.1.1
+
+require github.com/cplieger/httpx/v2 v2.1.1
