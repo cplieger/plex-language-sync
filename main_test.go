@@ -2,11 +2,9 @@
 // remain in the main package after the cycle-1 extraction:
 //
 //   - Configuration loading (loadConfig + env helpers).
-//   - Validation helpers (validateScheduleTime, splitTrim, envBool,
-//     envOr, requireEnv with _FILE secret handling, readSecretFile
-//     bounds). The HH:MM parsing itself lives in internal/timeutil
-//     and is covered there; this file only exercises the config-side
-//     wrapper (validateScheduleTime).
+//   - Validation helpers (splitTrim, envBool, envOr, requireEnv with
+//     _FILE secret handling, readSecretFile bounds) and the scheduler
+//     interval parser (loadSchedulerInterval).
 //   - notifyAdapter trigger-gate behaviour (the dispatch guards that
 //     live alongside the WS listener).
 //
@@ -41,12 +39,16 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/cache"
@@ -159,26 +161,38 @@ func TestSplitTrimEdgeCases(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// validateScheduleTime (parseHHMM coverage lives in internal/timeutil)
+// loadSchedulerInterval
 // ---------------------------------------------------------------------------
 
-func TestValidateScheduleTime(t *testing.T) {
+func TestLoadSchedulerInterval(t *testing.T) {
 	tests := []struct {
-		input string
-		want  string
+		name         string
+		val          string
+		wantInterval time.Duration
+		wantEnabled  bool
 	}{
-		{"02:00", "02:00"},
-		{"23:59", "23:59"},
-		{"00:00", "00:00"},
-		{"invalid", "02:00"},
-		{"25:00", "02:00"},
-		{"", "02:00"},
+		{"unset defaults to 24h", "", 24 * time.Hour, true},
+		{"valid duration", "12h", 12 * time.Hour, true},
+		{"minutes", "90m", 90 * time.Minute, true},
+		{"off disables", "off", 0, false},
+		{"disabled disables", "disabled", 0, false},
+		{"OFF case-insensitive", "OFF", 0, false},
+		{"zero disables", "0", 0, false},
+		{"zero seconds disables", "0s", 0, false},
+		{"bogus falls back to default", "notaduration", 24 * time.Hour, true},
+		{"negative falls back to default", "-5h", 24 * time.Hour, true},
 	}
 	for _, tt := range tests {
-		got := validateScheduleTime(tt.input)
-		if got != tt.want {
-			t.Errorf("validateScheduleTime(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SCHEDULER_INTERVAL", tt.val)
+			gotInterval, gotEnabled := loadSchedulerInterval()
+			if gotInterval != tt.wantInterval {
+				t.Errorf("loadSchedulerInterval(%q) interval = %v, want %v", tt.val, gotInterval, tt.wantInterval)
+			}
+			if gotEnabled != tt.wantEnabled {
+				t.Errorf("loadSchedulerInterval(%q) enabled = %v, want %v", tt.val, gotEnabled, tt.wantEnabled)
+			}
+		})
 	}
 }
 
@@ -193,9 +207,8 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "all")
 	t.Setenv("TRIGGER_ON_PLAY", "true")
 	t.Setenv("TRIGGER_ON_SCAN", "false")
-	t.Setenv("SCHEDULER_ENABLE", "true")
 	t.Setenv("LANGUAGE_PROFILES", "false")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "03:00")
+	t.Setenv("SCHEDULER_INTERVAL", "12h")
 	t.Setenv("IGNORE_LABELS", "SKIP,NOPE")
 	t.Setenv("IGNORE_LIBRARIES", "Music,Photos")
 	t.Setenv("DEBUG", "false")
@@ -220,8 +233,11 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.languageProfiles {
 		t.Error("languageProfiles should be false")
 	}
-	if cfg.schedulerTime != "03:00" {
-		t.Errorf("schedulerTime = %q, want 03:00", cfg.schedulerTime)
+	if cfg.schedulerInterval != 12*time.Hour {
+		t.Errorf("schedulerInterval = %v, want 12h", cfg.schedulerInterval)
+	}
+	if !cfg.schedulerEnabled {
+		t.Error("schedulerEnabled should be true")
 	}
 	if len(cfg.ignoreLabels) != 2 || cfg.ignoreLabels[0] != "SKIP" {
 		t.Errorf("ignoreLabels = %v", cfg.ignoreLabels)
@@ -238,9 +254,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("SCHEDULER_ENABLE", "")
 	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "")
+	t.Setenv("SCHEDULER_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
@@ -261,6 +276,12 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if !cfg.triggerOnScan {
 		t.Error("triggerOnScan should default to true")
 	}
+	if cfg.schedulerInterval != 24*time.Hour {
+		t.Errorf("schedulerInterval should default to 24h, got %v", cfg.schedulerInterval)
+	}
+	if !cfg.schedulerEnabled {
+		t.Error("schedulerEnabled should default to true")
+	}
 	if len(cfg.ignoreLabels) != 2 {
 		t.Errorf("ignoreLabels should default to 2 items, got %v", cfg.ignoreLabels)
 	}
@@ -271,7 +292,7 @@ func TestLoadConfigInvalidUpdateLevel(t *testing.T) {
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_LEVEL", "invalid")
 	t.Setenv("UPDATE_STRATEGY", "invalid")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "25:99")
+	t.Setenv("SCHEDULER_INTERVAL", "notaduration")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 	t.Setenv("IGNORE_LABELS", "")
@@ -286,8 +307,8 @@ func TestLoadConfigInvalidUpdateLevel(t *testing.T) {
 	if cfg.updateStrategy != "all" {
 		t.Errorf("invalid updateStrategy should default to all, got %q", cfg.updateStrategy)
 	}
-	if cfg.schedulerTime != "02:00" {
-		t.Errorf("invalid schedulerTime should default to 02:00, got %q", cfg.schedulerTime)
+	if cfg.schedulerInterval != 24*time.Hour {
+		t.Errorf("invalid SCHEDULER_INTERVAL should default to 24h, got %v", cfg.schedulerInterval)
 	}
 }
 
@@ -296,7 +317,7 @@ func TestLoadConfigInvalidUpdateStrategy(t *testing.T) {
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_STRATEGY", "random")
 	t.Setenv("UPDATE_LEVEL", "")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "")
+	t.Setenv("SCHEDULER_INTERVAL", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 	t.Setenv("IGNORE_LABELS", "")
@@ -314,7 +335,7 @@ func TestLoadConfigValidNextStrategy(t *testing.T) {
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_STRATEGY", "next")
 	t.Setenv("UPDATE_LEVEL", "")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "")
+	t.Setenv("SCHEDULER_INTERVAL", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 	t.Setenv("IGNORE_LABELS", "")
@@ -327,53 +348,6 @@ func TestLoadConfigValidNextStrategy(t *testing.T) {
 	}
 }
 
-func TestLoadConfigSchedulerTimeOutOfRange(t *testing.T) {
-	tests := []struct {
-		name string
-		val  string
-	}{
-		{"hour 24", "24:00"},
-		{"minute 60", "23:60"},
-		{"both out", "25:99"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("PLEX_URL", "http://plex:32400")
-			t.Setenv("PLEX_TOKEN", "test-token")
-			t.Setenv("SCHEDULER_SCHEDULE_TIME", tt.val)
-			t.Setenv("UPDATE_LEVEL", "")
-			t.Setenv("UPDATE_STRATEGY", "")
-			t.Setenv("PLEX_URL_FILE", "")
-			t.Setenv("PLEX_TOKEN_FILE", "")
-			t.Setenv("IGNORE_LABELS", "")
-			t.Setenv("IGNORE_LIBRARIES", "")
-			t.Setenv("DEBUG", "")
-			cfg := loadConfig()
-			if cfg.schedulerTime != "02:00" {
-				t.Errorf("%s: schedulerTime = %q, want 02:00", tt.val, cfg.schedulerTime)
-			}
-		})
-	}
-}
-
-func TestLoadConfigSchedulerTimeNoColon(t *testing.T) {
-	t.Setenv("PLEX_URL", "http://plex:32400")
-	t.Setenv("PLEX_TOKEN", "test-token")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "0230")
-	t.Setenv("UPDATE_LEVEL", "")
-	t.Setenv("UPDATE_STRATEGY", "")
-	t.Setenv("PLEX_URL_FILE", "")
-	t.Setenv("PLEX_TOKEN_FILE", "")
-	t.Setenv("IGNORE_LABELS", "")
-	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
-
-	cfg := loadConfig()
-	if cfg.schedulerTime != "02:00" {
-		t.Errorf("schedulerTime without colon should default to 02:00, got %q", cfg.schedulerTime)
-	}
-}
-
 func TestLoadConfigDebugMode(t *testing.T) {
 	t.Setenv("PLEX_URL", "http://plex:32400")
 	t.Setenv("PLEX_TOKEN", "test-token")
@@ -381,9 +355,8 @@ func TestLoadConfigDebugMode(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("SCHEDULER_ENABLE", "")
 	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "")
+	t.Setenv("SCHEDULER_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "true")
@@ -415,9 +388,8 @@ func TestLoadConfigWithFileSecrets(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("SCHEDULER_ENABLE", "")
 	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_SCHEDULE_TIME", "")
+	t.Setenv("SCHEDULER_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
 	t.Setenv("DEBUG", "")
@@ -442,12 +414,12 @@ func TestLogConfig(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	cfg := &config{
-		plexURL:        "http://plex:32400",
-		plexToken:      "super-secret-token-value",
-		updateLevel:    "show",
-		updateStrategy: "all",
-		schedulerTime:  "02:00",
-		ignoreLabels:   []string{"SKIP"},
+		plexURL:           "http://plex:32400",
+		plexToken:         "super-secret-token-value",
+		updateLevel:       "show",
+		updateStrategy:    "all",
+		schedulerInterval: 24 * time.Hour,
+		ignoreLabels:      []string{"SKIP"},
 	}
 	logConfig(cfg)
 
@@ -645,35 +617,6 @@ func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) notifyAdapt
 	}
 }
 
-func TestNotifyAdapterTriggersDisabled(t *testing.T) {
-	adapter := newTestAdapter(t, false, false)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	// Both paths must return without touching any collaborator when the
-	// gate is off — an empty-event slice is a lenient probe and the
-	// adapter should exit before dereferencing syncer.
-	adapter.OnPlay(ctx, notify.PlayEvent{State: "playing", RatingKey: "1"})
-	adapter.OnTimeline(ctx, []notify.TimelineEntry{{ItemID: "1", Type: 4, State: 5}})
-}
-
-func TestNotifyAdapterPlayEnabledEmptyEvents(t *testing.T) {
-	adapter := newTestAdapter(t, true, false)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	// A non-relevant state returns early inside handlePlayEvent (before
-	// any syncer call) — the test passes if no panic occurs.
-	adapter.OnPlay(ctx, notify.PlayEvent{State: "stopped", RatingKey: "1"})
-}
-
-func TestNotifyAdapterTimelineEnabledEmptyEntries(t *testing.T) {
-	adapter := newTestAdapter(t, false, true)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	// Empty slice → no loop iterations.
-	adapter.OnTimeline(ctx, nil)
-}
-
 func TestResolvePlayEventUser_noClientIdentifier_returnsAdmin(t *testing.T) {
 	adapter := newTestAdapter(t, true, false)
 	ev := notify.PlayEvent{State: "playing", RatingKey: "100"}
@@ -719,5 +662,111 @@ func TestWaitForBackgroundLoops_bothLoopsDone_returnsBeforeBudget(t *testing.T) 
 	case <-returned:
 	case <-time.After(2 * time.Second):
 		t.Fatal("waitForBackgroundLoops did not return after both background loops completed")
+	}
+}
+
+func TestWaitForBackgroundLoops_budgetExceeded_bothStuck(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	synctest.Test(t, func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		refreshDone := make(chan struct{})
+		schedDone := make(chan struct{})
+		// Neither loop signals done, so both are still running when the
+		// shutdown budget elapses; both must be named in still_running.
+		waitForBackgroundLoops(&wg, refreshDone, schedDone)
+		// Drain so the internal wg.Wait goroutine exits before the bubble ends.
+		wg.Done()
+		wg.Done()
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "shutdown wait budget exceeded") {
+		t.Errorf("expected budget-exceeded WARN, got: %q", out)
+	}
+	if !strings.Contains(out, "user-token-refresh") {
+		t.Errorf("expected still_running to name user-token-refresh, got: %q", out)
+	}
+	if !strings.Contains(out, "scheduler") {
+		t.Errorf("expected still_running to name scheduler, got: %q", out)
+	}
+}
+
+func TestWaitForBackgroundLoops_budgetExceeded_onlySchedulerStuck(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	synctest.Test(t, func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		refreshDone := make(chan struct{})
+		schedDone := make(chan struct{})
+		// Refresh loop finished; scheduler is the laggard, so only the
+		// scheduler must appear in still_running.
+		wg.Done()
+		close(refreshDone)
+		waitForBackgroundLoops(&wg, refreshDone, schedDone)
+		wg.Done()
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "shutdown wait budget exceeded") {
+		t.Errorf("expected budget-exceeded WARN, got: %q", out)
+	}
+	if !strings.Contains(out, "scheduler") {
+		t.Errorf("expected still_running to name scheduler, got: %q", out)
+	}
+	if strings.Contains(out, "user-token-refresh") {
+		t.Errorf("still_running should not name user-token-refresh (it finished), got: %q", out)
+	}
+}
+
+func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+
+	build := func(play, scan bool) notifyAdapter {
+		c := cache.New()
+		mgr := users.NewManager(c)
+		mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+		return notifyAdapter{
+			cfg:    &config{triggerOnPlay: play, triggerOnScan: scan},
+			users:  mgr,
+			admin:  &plex.User{ID: "1", Name: "admin"},
+			client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+			cache:  c,
+		}
+	}
+
+	relevantPlay := notify.PlayEvent{State: "playing", RatingKey: "1"}
+	relevantTimeline := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
+	ctx := context.Background()
+
+	// Gates disabled: neither dispatch path may reach the Plex client.
+	off := build(false, false)
+	off.OnPlay(ctx, relevantPlay)
+	off.OnTimeline(ctx, relevantTimeline)
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("gates disabled but Plex client hit %d time(s); trigger-gate short-circuit regressed", n)
+	}
+
+	// Positive control: with the play gate enabled the same relevant event
+	// reaches the Plex client (the server 404s so handlePlayEvent returns at
+	// ErrNotFound before any syncer call). Proves the counter is wired, so the
+	// gate-disabled assertion above cannot pass vacuously.
+	build(true, false).OnPlay(ctx, relevantPlay)
+	if hits.Load() == 0 {
+		t.Fatal("play gate enabled but Plex client was never hit; counter wiring is broken")
 	}
 }

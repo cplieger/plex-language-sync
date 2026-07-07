@@ -3,17 +3,16 @@ package plex
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 )
 
 // SharedUserTokens fetches shared user tokens from the plex.tv shared_servers
 // endpoint. This calls the plex.tv API (not the local server) and always
-// uses TLS verification regardless of the client's SKIP_TLS_VERIFICATION
-// setting — plex.tv is a public endpoint and the admin token must never be
+// uses full TLS verification (there is no skip option) — plex.tv is a
+// public endpoint and the admin token must never be
 // forwarded through a skipped-verification transport or a redirect.
 func (c *Client) SharedUserTokens(ctx context.Context, machineIdentifier string) ([]SharedServerXML, error) {
 	apiURL := "https://plex.tv/api/servers/" + url.PathEscape(machineIdentifier) + "/shared_servers"
@@ -36,14 +35,12 @@ func (c *Client) SharedUserTokens(ctx context.Context, machineIdentifier string)
 		return nil, fmt.Errorf("plex.tv shared_servers: %s", resp.Status)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	body, err := readCappedBody(resp.Body, "endpoint", "plex.tv shared_servers")
 	if err != nil {
+		if errors.Is(err, errBodyOverCap) {
+			return nil, fmt.Errorf("plex.tv shared_servers: response exceeded %d-byte read cap", maxResponseBody)
+		}
 		return nil, err
-	}
-	if int64(len(body)) > maxResponseBody {
-		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
-			"endpoint", "plex.tv shared_servers", "cap_bytes", maxResponseBody)
-		return nil, fmt.Errorf("plex.tv shared_servers: response exceeded %d-byte read cap", maxResponseBody)
 	}
 
 	// Some plex.tv responses use an empty body instead of an empty

@@ -91,6 +91,7 @@ func (c *Cache) LoadFrom(path string) error {
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		if errors.Is(statErr, os.ErrNotExist) {
+			slog.Info("cache file not found, starting fresh", "path", path)
 			return nil // missing file = fresh start
 		}
 		return statErr
@@ -101,15 +102,25 @@ func (c *Cache) LoadFrom(path string) error {
 			"path", path, "mode", info.Mode().Perm().String())
 	}
 	// ReadBounded caps the read at maxCacheSize; an oversize file returns an
-	// error (caller starts fresh) rather than truncating. Unmarshal then maps
-	// the bytes onto the frozen schema.
+	// error (caller starts fresh) rather than truncating. Unmarshal into a
+	// local snapshot and commit only on success: json.Unmarshal populates
+	// fields up to the error point, so decoding straight into c.data would
+	// leave partial state (including undecrypted "enc:" token strings) behind
+	// when a corrupt file fails to parse. A local target keeps c.data in the
+	// clean reset state the caller's "starting fresh" fallback assumes.
 	raw, err := atomicfile.ReadBounded(context.Background(), path, maxCacheSize)
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, &c.data); err != nil {
+	loaded := Data{
+		ProcessedEpisodes: make(map[string]int64),
+		LanguageProfiles:  make(map[string]map[string]string),
+		UserTokens:        make(map[string]string),
+	}
+	if err := json.Unmarshal(raw, &loaded); err != nil {
 		return err
 	}
+	c.data = loaded
 
 	// Decrypt user tokens if an encryption key is configured. Plaintext
 	// values (pre-migration) pass through unchanged — on next SaveTo they
@@ -129,6 +140,11 @@ func (c *Cache) LoadFrom(path string) error {
 		}
 	}
 
+	slog.Debug("cache loaded",
+		"path", path,
+		"processed_episodes", len(c.data.ProcessedEpisodes),
+		"language_profiles", len(c.data.LanguageProfiles),
+		"user_tokens", len(c.data.UserTokens))
 	return nil
 }
 

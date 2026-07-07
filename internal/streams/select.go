@@ -4,7 +4,7 @@ package streams
 // episode has no media or parts. It centralizes the Media[0].Part[0]
 // navigation every selection helper below depends on.
 func firstPart(ep *Episode) *Part {
-	if len(ep.Media) == 0 || len(ep.Media[0].Part) == 0 {
+	if ep == nil || len(ep.Media) == 0 || len(ep.Media[0].Part) == 0 {
 		return nil
 	}
 	return &ep.Media[0].Part[0]

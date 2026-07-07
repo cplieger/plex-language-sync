@@ -39,3 +39,34 @@ func TestSetUserTokensCopiesInput(t *testing.T) {
 		t.Error("SetUserTokens did not copy input: caller insert leaked into cache")
 	}
 }
+
+func TestSetUserTokensReplacesWholesale(t *testing.T) {
+	t.Parallel()
+	c := New()
+	c.SetUserTokens(map[string]string{"a": "t-a", "b": "t-b"})
+
+	// A second SetUserTokens replaces the map wholesale: a key absent from
+	// the new map must be evicted, not merged. This eviction is what lets
+	// users.RefreshTokens stop using a revoked user's token.
+	c.SetUserTokens(map[string]string{"a": "t-a2"})
+
+	got := c.UserTokens()
+	if got["a"] != "t-a2" {
+		t.Errorf("UserTokens()[a] = %q, want t-a2 (updated by wholesale replace)", got["a"])
+	}
+	if _, ok := got["b"]; ok {
+		t.Error("UserTokens() retained key b after a wholesale replace that omitted it; want it evicted")
+	}
+}
+
+func TestSetUserTokensNilClears(t *testing.T) {
+	t.Parallel()
+	c := New()
+	c.SetUserTokens(map[string]string{"a": "t-a", "b": "t-b"})
+
+	c.SetUserTokens(nil)
+
+	if got := c.UserTokens(); len(got) != 0 {
+		t.Errorf("UserTokens() after SetUserTokens(nil) = %v (len %d), want empty", got, len(got))
+	}
+}

@@ -21,6 +21,12 @@ import (
 // (inviolate item 9).
 const wsTypeTimeline = "timeline"
 
+// wsTypePlaying is the NotificationContainer.Type value Plex uses for
+// play-session notifications. Distinct from the statePlaying PlayEvent.State
+// value (predicates.go) despite sharing the "playing" wire literal; both are
+// frozen by the Plex JSON wire format (inviolate item 9).
+const wsTypePlaying = "playing"
+
 // wsReadLimitBytes is the per-message size cap enforced by the
 // WebSocket layer. Preserves the main.go behaviour (1 MB).
 const wsReadLimitBytes = 1 << 20
@@ -39,10 +45,12 @@ const persistentReconnectThreshold = 5
 // live in the composition root (main package) and typically fan out
 // per-event work to the sync subsystem.
 //
-// OnPlay is called for each relevant PlaySessionStateNotification
-// in a received Notification. OnTimeline is called once per
-// Notification with the full TimelineEntry slice so the caller can
-// apply its own per-entry dedup or batching policy.
+// OnPlay is called for each PlaySessionStateNotification entry in a
+// "playing" Notification, unfiltered; the caller applies its own
+// relevance policy (see IsRelevantPlayEvent). OnTimeline is called
+// once per Notification with the full TimelineEntry slice so the
+// caller can apply its own per-entry relevance, dedup, or batching
+// policy.
 //
 // The Handler is invoked synchronously from the read loop; a slow
 // handler delays the next Read and can trigger the keepalive timeout.
@@ -85,7 +93,14 @@ func NewListener(client PlexClient, cfg Config) *Listener {
 func (l *Listener) Listen(ctx context.Context, h Handler) {
 	defer slog.Info("websocket listener stopped")
 
-	backoff := l.cfg.MinBackoff
+	// Guard a zero/negative MinBackoff (mirrors the ReadIdleTimeout <= 0 guard
+	// in connectAndListen). A zero floor leaves backoff at 0 and turns the
+	// reconnect loop into a tight spin that hammers Plex.
+	minBackoff := l.cfg.MinBackoff
+	if minBackoff <= 0 {
+		minBackoff = time.Second
+	}
+	backoff := minBackoff
 	reconnecting := false
 	reconnects := 0
 
@@ -112,7 +127,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		// handshake then immediately close" flap hammering Plex at
 		// MinBackoff indefinitely.
 		stable := connected && time.Since(handshakeAt) > l.cfg.StableThreshold
-		backoff = nextBackoff(backoff, l.cfg.MinBackoff, l.cfg.MaxBackoff, stable)
+		backoff = nextBackoff(backoff, minBackoff, l.cfg.MaxBackoff, stable)
 		if stable {
 			reconnects = 0
 		}
@@ -266,6 +281,20 @@ func (l *Listener) dialClient() *http.Client {
 		t = http.DefaultTransport.(*http.Transport).Clone() //nolint:errcheck // stdlib guarantee: DefaultTransport is *http.Transport
 	}
 	t.DialContext = dialer.DialContext
+	// Bound the WebSocket upgrade handshake. net.Dialer.Timeout above
+	// bounds only the TCP connect; ResponseHeaderTimeout / TLSHandshakeTimeout
+	// are zero on a http.DefaultTransport clone (and on a custom skipTLS
+	// transport), and websocket.Dial gets the parent ctx (no per-attempt
+	// deadline), so a peer that accepts the socket but stalls the HTTP 101
+	// upgrade response would hang the dial indefinitely. A transport-level
+	// timeout is NOT context.DeadlineExceeded, so ClassifyError still labels
+	// it dial_failed (no classify.go change, frozen reason set preserved).
+	if t.ResponseHeaderTimeout == 0 {
+		t.ResponseHeaderTimeout = 30 * time.Second
+	}
+	if t.TLSHandshakeTimeout == 0 {
+		t.TLSHandshakeTimeout = 10 * time.Second
+	}
 	return &http.Client{
 		Transport: t,
 		// No overall Timeout: it would apply to the upgrade response
@@ -304,7 +333,7 @@ func wrapReadError(readErr error) error {
 // dispatch routes a decoded Notification to the Handler.
 func dispatch(ctx context.Context, h Handler, notif *Notification) {
 	switch notif.NotificationContainer.Type {
-	case statePlaying:
+	case wsTypePlaying:
 		for _, ev := range notif.NotificationContainer.PlaySessionStateNotification {
 			h.OnPlay(ctx, ev)
 		}

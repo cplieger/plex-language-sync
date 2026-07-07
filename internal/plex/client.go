@@ -28,6 +28,29 @@ const maxResponseBody = 10 << 20 // 10 MB
 // session / etc.). Callers detect it with errors.Is(err, plex.ErrNotFound).
 var ErrNotFound = errors.New("not found")
 
+// errBodyOverCap signals a response exceeded maxResponseBody. Callers map
+// it to an endpoint-specific error so the message stays specific while the
+// read-cap WARN + limit live in one place.
+var errBodyOverCap = errors.New("response exceeded read cap")
+
+// readCappedBody reads up to maxResponseBody bytes from body, logging the
+// shared over-cap WARN (identified by warnAttrs) and returning
+// errBodyOverCap when the response exceeds the cap. Single-sources the
+// WARN string (a Loki-alerting contract) and the cap across both read
+// paths (local Plex JSON, plex.tv XML).
+func readCappedBody(body io.Reader, warnAttrs ...any) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(body, maxResponseBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxResponseBody {
+		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
+			append(warnAttrs, "cap_bytes", maxResponseBody)...)
+		return nil, errBodyOverCap
+	}
+	return b, nil
+}
+
 // Client is an HTTP client for a single Plex Media Server base URL + auth
 // token. Use NewClient or NewClientForUser.
 type Client struct {
@@ -89,7 +112,7 @@ func (c *Client) Token() string { return c.token }
 
 // HTTPClient returns the underlying *http.Client. Exposed so the WebSocket
 // listener can dial the notifications endpoint with the same transport
-// (matching TLS-skip semantics, timeouts, and redirect policy) rather than
+// (matching CA-trust, timeouts, and redirect policy) rather than
 // spinning up a second client.
 func (c *Client) HTTPClient() *http.Client { return c.httpClient }
 
@@ -167,7 +190,7 @@ func newHTTPClient(caCertPath string) (*http.Client, error) {
 }
 
 // tvClient is a shared HTTP client for plex.tv API calls. Always uses
-// standard TLS verification regardless of SKIP_TLS_VERIFICATION. Refuses to
+// full TLS verification (there is no verification-skip option). Refuses to
 // follow redirects to prevent cross-origin X-Plex-Token exfiltration via a
 // compromised plex.tv redirect or CDN front. The admin token is sent to
 // plex.tv for shared_servers lookup and must never be forwarded elsewhere.
@@ -220,14 +243,12 @@ func (c *Client) doJSON(ctx context.Context, method, path string, result any) er
 		drainBody(resp.Body)
 		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	body, err := readCappedBody(resp.Body, "method", method, "path", path)
 	if err != nil {
+		if errors.Is(err, errBodyOverCap) {
+			return fmt.Errorf("plex API %s %s: response exceeded %d-byte read cap", method, path, maxResponseBody)
+		}
 		return err
-	}
-	if int64(len(body)) > maxResponseBody {
-		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
-			"method", method, "path", path, "cap_bytes", maxResponseBody)
-		return fmt.Errorf("plex API %s %s: response exceeded %d-byte read cap", method, path, maxResponseBody)
 	}
 	if len(body) == 0 {
 		return nil

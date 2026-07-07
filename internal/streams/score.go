@@ -104,6 +104,9 @@ func sumRules(rules []scoreRule, ref, s *Stream) int {
 // the tie-break stage of MatchAudio. Higher is better. Codec match,
 // channel layout match, and the same title fields each contribute.
 func ScoreAudio(ref, s *Stream) int {
+	if ref == nil {
+		return 0
+	}
 	return sumRules(audioScoreRules, ref, s) + TitleMatchScore(ref, s)
 }
 
@@ -122,9 +125,8 @@ func TitleMatchScore(ref, s *Stream) int {
 	return sumRules(titleScoreRules, ref, s)
 }
 
-// subtitleCodecScores maps ffmpeg codec identifiers to quality tiers.
-// Higher is better: styled text (3) > image-based (2) > plain text (1).
-// Zero-value (not present) means unknown codec.
+// Subtitle codec identifiers (ffmpeg names) used as keys into
+// subtitleCodecScores below.
 const (
 	codecASS             = "ass"
 	codecSSA             = "ssa"
@@ -139,6 +141,9 @@ const (
 	codecWebVTT          = "webvtt"
 )
 
+// subtitleCodecScores maps ffmpeg codec identifiers to quality tiers.
+// Higher is better: styled text (3) > image-based (2) > plain text (1).
+// Zero-value (not present) means unknown codec.
 var subtitleCodecScores = map[string]int{
 	codecASS:             3,
 	codecSSA:             3,
@@ -193,10 +198,12 @@ func BestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
 	if len(streams) == 0 {
 		return nil
 	}
-	bestIdx, bestScore := 0, -1
-	for i, s := range streams {
-		score := scoreFn(s)
-		if score > bestScore {
+	// Seed from the first element so the general-purpose helper is correct
+	// for any scoreFn, not only non-negative ones. Strict > keeps the
+	// documented tie-goes-to-earliest behaviour.
+	bestIdx, bestScore := 0, scoreFn(streams[0])
+	for i := 1; i < len(streams); i++ {
+		if score := scoreFn(streams[i]); score > bestScore {
 			bestScore = score
 			bestIdx = i
 		}

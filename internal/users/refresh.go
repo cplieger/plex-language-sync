@@ -61,6 +61,15 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 			continue
 		}
 		uid := ID(s.UserID)
+		// Skip the admin's own ID if plex.tv returns it in the shared
+		// list, matching LoadFromCache's guard. Without this the admin
+		// lands in m.shared and All() emits it twice (from m.admin and
+		// m.shared), double-processing the admin episode; it would also
+		// persist the admin token into cache.json via tokensCopy.
+		// m.admin.ID is read under m.mu, held here.
+		if uid == m.admin.ID {
+			continue
+		}
 		newShared[uid] = Info{
 			ID:    uid,
 			Name:  s.Username,

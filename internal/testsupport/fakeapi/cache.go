@@ -8,7 +8,7 @@ package fakeapi
 
 import (
 	"maps"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -152,10 +152,5 @@ func (c *Cache) SetLastSchedulerRun(t time.Time) {
 func (c *Cache) Processed() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make([]string, 0, len(c.processed))
-	for k := range c.processed {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(c.processed))
 }

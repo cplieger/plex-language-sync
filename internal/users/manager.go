@@ -103,7 +103,10 @@ func (m *Manager) LoadFromCache() {
 	defer m.mu.Unlock()
 	for uidStr, token := range tokensCopy {
 		uid := ID(uidStr)
-		if uid == m.admin.ID {
+		// Skip empty tokens: mirror the s.AccessToken == "" guard in
+		// RefreshTokens so a corrupted-cache phantom user never enters
+		// m.shared and never triggers an admin-fallback write.
+		if uid == m.admin.ID || token == "" {
 			continue
 		}
 		if _, exists := m.shared[uid]; !exists {
