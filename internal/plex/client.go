@@ -2,8 +2,6 @@ package plex
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/httpx/v2"
 )
 
 // maxResponseBody caps the number of bytes read from any single Plex JSON
@@ -167,22 +166,18 @@ func newHTTPClient(caCertPath string) (*http.Client, error) {
 	}
 	if caCertPath != "" {
 		const maxCACertSize = 1 << 20 // 1 MB
+		// The bounded PEM read stays here (so the PLEX_CA_CERT_PATH context
+		// wraps the error and httpx stays I/O-free); httpx.CATransport does the
+		// pinning: it clones http.DefaultTransport and installs a fresh TLS
+		// config trusting ONLY the CA(s) in the PEM (RootCAs pinned, TLS 1.2
+		// minimum, verification always on).
 		pemBytes, err := atomicfile.ReadBounded(context.Background(), caCertPath, maxCACertSize)
 		if err != nil {
 			return nil, fmt.Errorf("reading PLEX_CA_CERT_PATH=%q: %w", caCertPath, err)
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemBytes) {
-			return nil, fmt.Errorf("PLEX_CA_CERT_PATH=%q: no PEM-encoded certificates found", caCertPath)
-		}
-		tr, ok := http.DefaultTransport.(*http.Transport)
-		if !ok {
-			return nil, errors.New("unexpected default transport type")
-		}
-		transport := tr.Clone()
-		transport.TLSClientConfig = &tls.Config{
-			RootCAs:    pool,
-			MinVersion: tls.VersionTLS12,
+		transport, err := httpx.CATransport(pemBytes)
+		if err != nil {
+			return nil, fmt.Errorf("PLEX_CA_CERT_PATH=%q: %w", caCertPath, err)
 		}
 		c.Transport = transport
 	}
