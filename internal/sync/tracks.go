@@ -145,6 +145,9 @@ func (s *Syncer) ChangeTracksForEpisode(
 
 	changes := 0
 	for i := range episodes {
+		if ctx.Err() != nil {
+			break
+		}
 		ep := &episodes[i]
 		if s.UpdateEpisodeStreams(ctx, userClient, username, ep.RatingKey, refAudio, refSub) {
 			changes++

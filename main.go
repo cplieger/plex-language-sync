@@ -9,8 +9,8 @@
 //     listener and internal/sync. It gates on cfg.triggerOnPlay /
 //     cfg.triggerOnScan and forwards relevant events to the syncer.
 //
-// Env-var contract, HH:MM parsing, and _FILE-suffix secret handling
-// live in config.go. Business logic lives under internal/{streams,
+// Env-var contract, SCHEDULER_INTERVAL parsing, and _FILE-suffix secret
+// handling live in config.go. Business logic lives under internal/{streams,
 // plex, cache, notify, users, sync, scheduler}.
 package main
 
@@ -24,10 +24,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	// Embed the IANA tz database so TZ (default Europe/Paris) is honored even
-	// though the distroless static base ships no /usr/share/zoneinfo; without
-	// it time.Local silently falls back to UTC.
-	_ "time/tzdata"
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/health"
@@ -158,11 +154,11 @@ func run() int {
 		// pointer (the classic Go nil-interface trap), defeating the
 		// consumers' `== nil` checks. Convert to a genuine nil interface
 		// so sync/scheduler skip the user instead of dereferencing.
-		c := um.ClientForUser(userID, client)
-		if c == nil {
+		uc := um.ClientForUser(userID, client)
+		if uc == nil {
 			return nil
 		}
-		return c
+		return uc
 	}
 	ignorePolicy := ignore.NewPolicy(cfg.ignoreLibraries, cfg.ignoreLabels)
 	syncer := syncpkg.NewSyncer(
@@ -179,9 +175,9 @@ func run() int {
 	)
 	sched := scheduler.New(
 		scheduler.Config{
-			ScheduleTime: cfg.schedulerTime,
-			Enable:       cfg.schedulerEnable,
-			Ignore:       ignorePolicy,
+			Interval: cfg.schedulerInterval,
+			Enable:   cfg.schedulerEnabled,
+			Ignore:   ignorePolicy,
 		},
 		client,
 		c,
@@ -196,19 +192,16 @@ func run() int {
 	// refresh mid-HTTP) completes before the deferred cache save
 	// writes its final snapshot.
 	var wg sync.WaitGroup
-	wg.Add(2)
 	refreshDone := make(chan struct{})
 	schedDone := make(chan struct{})
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer close(refreshDone)
 		um.RefreshLoop(ctx, client, identity.MachineIdentifier)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		defer close(schedDone)
 		sched.Run(ctx)
-	}()
+	})
 	// Bounded wait: once Listen returns we give the background loops
 	// up to shutdownWaitBudget to drain. Past that we save the cache
 	// anyway (stale-by-budget beats unsaved). On timeout we report which

@@ -21,115 +21,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// nextScheduledRun
-// ---------------------------------------------------------------------------
-
-func TestNextScheduledRun(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		now    time.Time
-		want   time.Time
-		name   string
-		hour   int
-		minute int
-	}{
-		{
-			name:   "future today",
-			now:    time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC),
-			hour:   14,
-			minute: 30,
-			want:   time.Date(2026, 3, 15, 14, 30, 0, 0, time.UTC),
-		},
-		{
-			name:   "rolls to tomorrow when passed",
-			now:    time.Date(2026, 3, 15, 15, 0, 0, 0, time.UTC),
-			hour:   14,
-			minute: 30,
-			want:   time.Date(2026, 3, 16, 14, 30, 0, 0, time.UTC),
-		},
-		{
-			name:   "exact boundary rolls forward",
-			now:    time.Date(2026, 3, 15, 14, 30, 0, 0, time.UTC),
-			hour:   14,
-			minute: 30,
-			want:   time.Date(2026, 3, 16, 14, 30, 0, 0, time.UTC),
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := nextScheduledRun(tc.now, tc.hour, tc.minute)
-			if !got.Equal(tc.want) {
-				t.Errorf("nextScheduledRun = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// shouldRunScheduledSlot — slot-aware double-run guard
-// ---------------------------------------------------------------------------
-
-// TestShouldRunScheduledSlot pins the scheduled-tick guard: a slot runs
-// iff the last recorded run is strictly before that slot's instant.
-//
-// The regression case is "off_time_initial_pass": the initial catch-up
-// ran off-schedule (e.g. a 03:30 container restart) only ~22.5h before
-// the next HH:MM slot. The old flat "last run within 23h → skip" proxy
-// falsely skipped that slot, leaving a post-restart day with no
-// scheduled safety-net pass. The slot-aware guard runs it, because the
-// off-time run is still strictly before the slot instant.
-func TestShouldRunScheduledSlot(t *testing.T) {
-	t.Parallel()
-	next := time.Date(2026, 3, 16, 2, 0, 0, 0, time.UTC) // the slot the timer fired for
-	tests := []struct {
-		lastRun time.Time
-		name    string
-		want    bool
-	}{
-		{
-			// Off-schedule initial pass ~22.5h before the slot. A flat
-			// 23h "too recent" window would skip this; slot-aware runs it.
-			name:    "off_time_initial_pass_runs",
-			lastRun: next.Add(-22*time.Hour - 30*time.Minute),
-			want:    true,
-		},
-		{
-			name:    "normal_daily_cadence_runs",
-			lastRun: next.Add(-24 * time.Hour),
-			want:    true,
-		},
-		{
-			name:    "never_run_runs",
-			lastRun: time.Time{}, // zero value is before any real slot
-			want:    true,
-		},
-		{
-			// Same-slot double-fire (NTP rewind re-fires this slot's
-			// timer): last run is exactly at the slot instant -> skip.
-			name:    "same_slot_exact_skips",
-			lastRun: next,
-			want:    false,
-		},
-		{
-			// Last run after the slot (clock rewound further back) -> skip.
-			name:    "last_run_after_slot_skips",
-			lastRun: next.Add(30 * time.Minute),
-			want:    false,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := shouldRunScheduledSlot(tc.lastRun, next); got != tc.want {
-				t.Errorf("shouldRunScheduledSlot(lastRun=%v, next=%v) = %v, want %v",
-					tc.lastRun, next, got, tc.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
 
@@ -486,7 +377,7 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	plx := &fakeapi.Plex{}
 	c := fakeapi.NewCache() // zero last-run -> initial pass should fire
 	sched := New(
-		Config{Enable: true, ScheduleTime: "02:00"},
+		Config{Enable: true, Interval: 24 * time.Hour},
 		plx, c, &fakeapi.Users{},
 		func(_ string) api.PlexReadWriter { return plx },
 		&fakeSyncer{},
@@ -837,4 +728,99 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 	if syncer.processCalls.Load() != 1 {
 		t.Errorf("ProcessNewOrUpdated called %d times; want 1 (only the succeeding section's episode)", syncer.processCalls.Load())
 	}
+}
+
+// TestProcessHistoryItem_NilPerUserClientSkips pins the fail-closed per-user
+// write contract: when the per-user client is nil, the history item is skipped
+// (no admin-client fallback, no Episode fetch, no ChangeTracksForEpisode) and
+// the skip is logged. Not parallel: captureSlog mutates the global logger.
+func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
+	plx := &fakeapi.Plex{
+		HistoryItems: []plex.HistoryItem{{RatingKey: "300", Type: "episode"}},
+	}
+	syncer := &fakeSyncer{}
+	sched := New(
+		Config{Enable: true},
+		plx, fakeapi.NewCache(), &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return nil },
+		syncer,
+		nil,
+	)
+	out := captureSlog(t, func() {
+		sched.processRecentHistory(context.Background(), time.Now().Unix())
+	})
+	if syncer.changeCalls.Load() != 0 {
+		t.Errorf("ChangeTracks called %d times with a nil per-user client; want 0 (must skip, never fall back to admin)", syncer.changeCalls.Load())
+	}
+	if plx.Calls.Load() != 1 {
+		t.Errorf("Plex called %d times; want 1 (History only, no per-user Episode fetch when the client is nil)", plx.Calls.Load())
+	}
+	if !strings.Contains(out, "scheduler: no per-user client, skipping history item") {
+		t.Errorf("missing per-user-client skip WARN; log: %q", out)
+	}
+}
+
+// TestDeepAnalysisCore_SaveCacheErrorWarns pins the deferred cache-flush error
+// branch: a failing saveCache still records the last-run marker and logs the
+// "cache save failed" WARN rather than swallowing the error. Companion to
+// TestDeepAnalysisCore_SetsLastRunAndFlushesCache. Not parallel: captureSlog
+// mutates the global logger.
+func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
+	plx := &fakeapi.Plex{}
+	c := fakeapi.NewCache()
+	sched := New(
+		Config{Enable: true},
+		plx, c, &fakeapi.Users{},
+		func(_ string) api.PlexReadWriter { return plx },
+		&fakeSyncer{},
+		func() error { return errors.New("disk full") },
+	)
+	out := captureSlog(t, func() {
+		sched.deepAnalysisCore(context.Background())
+	})
+	if !strings.Contains(out, "cache save failed") {
+		t.Errorf("missing cache-save-failure WARN when saveCache errors; log: %q", out)
+	}
+	if c.LastSchedulerRun().IsZero() {
+		t.Error("last-run marker must still be recorded even when the cache flush fails")
+	}
+}
+
+// TestScheduler_CancelledContextSkipsPerItemWork pins graceful-shutdown
+// responsiveness: a cancelled context short-circuits the deep-analysis feeders
+// so no per-item work runs (regression guard for the ctx checks in feedHistory
+// and feedRecentlyAdded).
+func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	t.Run("history feeder", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			HistoryItems: []plex.HistoryItem{{RatingKey: "1", Type: "episode"}, {RatingKey: "2", Type: "episode"}},
+			EpisodeByKey: map[string]*streams.Episode{"1": {RatingKey: "1"}, "2": {RatingKey: "2"}},
+		}
+		syncer := &fakeSyncer{}
+		sched := New(Config{Enable: true}, plx, fakeapi.NewCache(), &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx }, syncer, nil)
+		sched.processRecentHistory(ctx, time.Now().Unix())
+		if syncer.changeCalls.Load() != 0 {
+			t.Errorf("ChangeTracks called %d times under a cancelled context; want 0", syncer.changeCalls.Load())
+		}
+	})
+	t.Run("recently-added feeder", func(t *testing.T) {
+		t.Parallel()
+		plx := &fakeapi.Plex{
+			Sections:           []plex.Section{{Key: "1", Title: "TV"}},
+			RecentlyAddedBySec: map[string][]streams.Episode{"1": {{RatingKey: "101"}}},
+			EpisodeByKey:       map[string]*streams.Episode{"101": {RatingKey: "101"}},
+		}
+		syncer := &fakeSyncer{}
+		sched := New(Config{Enable: true}, plx, fakeapi.NewCache(), &fakeapi.Users{},
+			func(_ string) api.PlexReadWriter { return plx }, syncer, nil)
+		sched.processRecentlyAdded(ctx, time.Now().Unix())
+		if syncer.processCalls.Load() != 0 {
+			t.Errorf("ProcessNewOrUpdated called %d times under a cancelled context; want 0", syncer.processCalls.Load())
+		}
+	})
 }

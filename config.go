@@ -3,9 +3,12 @@
 //
 // Everything in this file is main-package state that the wiring in
 // run() reads at startup. The env-var contract (names, defaults,
-// boolean parsing, _FILE secret handling, HH:MM parsing) is frozen
-// per the refactor inviolate contract (item 3); in-memory
-// representation may evolve freely.
+// boolean parsing, _FILE secret handling, Go-duration SCHEDULER_INTERVAL
+// parsing) is stable; the in-memory representation may evolve freely.
+// The former frozen HH:MM SCHEDULER_SCHEDULE_TIME contract was
+// deliberately replaced by the fleet-standard SCHEDULER_INTERVAL (a Go
+// duration) so the app no longer reads local wall-clock time — see the
+// scheduler package.
 
 package main
 
@@ -17,9 +20,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
-	"github.com/cplieger/plex-language-sync/internal/timeutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,9 +30,9 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	defaultUpdateLevel    = syncpkg.LevelShow
-	defaultUpdateStrategy = syncpkg.StrategyAll
-	defaultScheduleTime   = "02:00"
+	defaultUpdateLevel       = syncpkg.LevelShow
+	defaultUpdateStrategy    = syncpkg.StrategyAll
+	defaultSchedulerInterval = 24 * time.Hour
 )
 
 // Default ignore labels applied when IGNORE_LABELS is not set.
@@ -43,24 +46,24 @@ const (
 // ---------------------------------------------------------------------------
 
 type config struct {
-	plexURL          string
-	plexToken        string
-	updateLevel      string // "show" or "season"
-	updateStrategy   string // "all" or "next"
-	schedulerTime    string // "HH:MM"
-	caCertPath       string
-	ignoreLabels     []string
-	ignoreLibraries  []string
-	triggerOnPlay    bool
-	triggerOnScan    bool
-	schedulerEnable  bool
-	languageProfiles bool
-	debug            bool
+	plexURL           string
+	plexToken         string
+	updateLevel       string // "show" or "season"
+	updateStrategy    string // "all" or "next"
+	caCertPath        string
+	ignoreLabels      []string
+	ignoreLibraries   []string
+	schedulerInterval time.Duration // deep-analysis cadence; 0 = disabled
+	triggerOnPlay     bool
+	triggerOnScan     bool
+	schedulerEnabled  bool
+	languageProfiles  bool
+	debug             bool
 }
 
 // loadConfig reads environment variables into a config value, applying
-// the frozen defaults and validation rules. On missing required vars it
-// emits slog.Error and terminates the process via os.Exit(1).
+// the defaults and validation rules. On missing required vars it emits
+// slog.Error and terminates the process via os.Exit(1).
 func loadConfig() config {
 	// Set up slog handler early so requireEnv errors use the configured handler.
 	debug := envBool("DEBUG", false)
@@ -69,7 +72,7 @@ func loadConfig() config {
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr,
-		&slog.HandlerOptions{Level: level})))
+		&slog.HandlerOptions{Level: level, ReplaceAttr: utcTimeAttr})))
 
 	cfg := config{
 		plexURL:          requireEnv("PLEX_URL"),
@@ -78,12 +81,11 @@ func loadConfig() config {
 		updateStrategy:   envOr("UPDATE_STRATEGY", defaultUpdateStrategy),
 		triggerOnPlay:    envBool("TRIGGER_ON_PLAY", true),
 		triggerOnScan:    envBool("TRIGGER_ON_SCAN", true),
-		schedulerEnable:  envBool("SCHEDULER_ENABLE", true),
 		languageProfiles: envBool("LANGUAGE_PROFILES", true),
-		schedulerTime:    envOr("SCHEDULER_SCHEDULE_TIME", defaultScheduleTime),
 		debug:            debug,
 		caCertPath:       envOr("PLEX_CA_CERT_PATH", ""),
 	}
+	cfg.schedulerInterval, cfg.schedulerEnabled = loadSchedulerInterval()
 
 	if v := os.Getenv("IGNORE_LABELS"); v != "" {
 		cfg.ignoreLabels = splitTrim(v)
@@ -103,11 +105,6 @@ func loadConfig() config {
 		cfg.updateStrategy = defaultUpdateStrategy
 	}
 
-	if valid := validateScheduleTime(cfg.schedulerTime); valid != cfg.schedulerTime {
-		slog.Warn("invalid SCHEDULER_SCHEDULE_TIME, defaulting", "value", cfg.schedulerTime)
-		cfg.schedulerTime = valid
-	}
-
 	return cfg
 }
 
@@ -121,9 +118,9 @@ func logConfig(cfg *config) {
 		"update_strategy", cfg.updateStrategy,
 		"trigger_on_play", cfg.triggerOnPlay,
 		"trigger_on_scan", cfg.triggerOnScan,
-		"scheduler_enable", cfg.schedulerEnable,
+		"scheduler_enabled", cfg.schedulerEnabled,
 		"language_profiles", cfg.languageProfiles,
-		"scheduler_time", cfg.schedulerTime,
+		"scheduler_interval", cfg.schedulerInterval.String(),
 		"ignore_labels", cfg.ignoreLabels,
 		"ignore_libraries", cfg.ignoreLibraries,
 		"debug", cfg.debug,
@@ -215,12 +212,53 @@ func splitTrim(s string) []string {
 	return out
 }
 
-// validateScheduleTime returns the time string if valid, or the default.
-// Delegates HH:MM parsing to internal/timeutil so config and scheduler
-// share the same implementation.
-func validateScheduleTime(raw string) string {
-	if _, _, ok := timeutil.ParseHHMM(raw); !ok {
-		return defaultScheduleTime
+// loadSchedulerInterval parses SCHEDULER_INTERVAL and reports the daily
+// deep-analysis cadence and whether the scheduler runs at all. The value
+// is a Go duration ("24h", "12h"), matching the fleet docker-*-scheduler
+// convention. The sentinels "off" and "disabled" (case-insensitive) or a
+// zero duration ("0", "0s") disable the scheduler entirely: the app then
+// runs WebSocket-only (the daily pass is a safety net over the real-time
+// listener, and there is no external trigger). Unset defaults to
+// defaultSchedulerInterval, enabled. Any other parse failure falls back
+// to the default (enabled) with a warning rather than refusing to start.
+func loadSchedulerInterval() (interval time.Duration, enabled bool) {
+	interval = defaultSchedulerInterval
+	enabled = true
+	raw := strings.TrimSpace(os.Getenv("SCHEDULER_INTERVAL"))
+	if raw == "" {
+		return interval, enabled
 	}
-	return raw
+	if lower := strings.ToLower(raw); lower == "off" || lower == "disabled" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(raw)
+	switch {
+	case err != nil:
+		slog.Warn("cannot parse SCHEDULER_INTERVAL, using default",
+			"value", raw, "default", defaultSchedulerInterval.String())
+	case d == 0:
+		// "0"/"0s" disables the daily safety-net pass.
+		return 0, false
+	case d < 0:
+		// A negative duration is a likely typo, not a documented disable
+		// sentinel (off/disabled/0/0s); warn and fall back to the default
+		// rather than silently idling.
+		slog.Warn("SCHEDULER_INTERVAL is negative, using default",
+			"value", raw, "default", defaultSchedulerInterval.String())
+	default:
+		interval = d
+	}
+	return interval, enabled
+}
+
+// utcTimeAttr is a slog ReplaceAttr that renders the record's built-in time
+// key in UTC, so log-line timestamps are zone-stable regardless of the
+// container's TZ (the fleet logs-in-UTC standard). It rewrites only the
+// top-level time attribute; a user attribute that happens to share the "time"
+// key inside a group is left untouched.
+func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+		a.Value = slog.TimeValue(a.Value.Time().UTC())
+	}
+	return a
 }

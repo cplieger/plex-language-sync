@@ -236,3 +236,121 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 		})
 	}
 }
+
+// TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient pins the
+// per-user-write-isolation fail-closed contract in the fan-out loop: when
+// s.userClient returns nil for a user (its per-user Plex client cannot be
+// built), that user is SKIPPED with a warn rather than processed under the
+// admin client. Writing a shared user's selection under the admin token
+// corrupts the admin's own per-user state (the documented h-f6 bug), so the
+// skip is security-critical. A regression that dropped the guard would call
+// applyEpisodeForUser with a nil client and panic on the first nil-interface
+// Episode() call, so this fails loudly if the skip is removed.
+//
+// Not parallel: it swaps the process-global default slog logger.
+func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T) {
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		EpisodeByKey: map[string]*streams.Episode{
+			"2":   mkSelectedAudioEpisode("2"),
+			"100": mkSelectedAudioEpisode("100"),
+		},
+	}
+	users := &fakeapi.Users{AllResult: []api.UserInfo{
+		{ID: "1", Name: "admin"},
+		{ID: "2", Name: "bob"},
+	}}
+	s := NewSyncer(Config{}, plx, fakeapi.NewCache(), users,
+		func(uid string) api.PlexReadWriter {
+			if uid == "2" {
+				return nil
+			}
+			return plx
+		})
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+
+	if got := countCalls(plx.CallNames(), "Episode:100"); got != 1 {
+		t.Errorf("target episode reloaded %d times; want 1 (user 2 has a nil client and must be skipped, not processed under admin)", got)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "skipping user") || !strings.Contains(out, "user_id=2") {
+		t.Errorf("expected a warn skipping user_id=2 for a nil per-user client; log = %q", out)
+	}
+}
+
+// TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile pins the
+// no-reference language-profile fallback in the fan-out path: when a show has
+// no prior episode with a selection (ref == nil) and LANGUAGE_PROFILES is
+// enabled, a new episode receives the user's learned audio->subtitle profile
+// applied per user. This is the documented "applies your habits to brand-new
+// shows" feature; a regression that skipped the fallback branch would leave
+// the new episode's subtitle unset (SetSubtitle count 0).
+func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil}, // no candidate -> ref nil
+	}
+	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
+	c := fakeapi.NewCache()
+	c.LearnLanguageProfile("1", "jpn", "eng")
+	s := newSyncer(Config{LanguageProfiles: true}, plx, c, users)
+	ep := &streams.Episode{
+		RatingKey:            "100",
+		GrandparentRatingKey: "42",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+			{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+		}}}}},
+	}
+
+	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 1 {
+		t.Errorf("SetSubtitle called %d times; want 1 (language-profile fallback must apply the learned eng subtitle when no reference exists)", got)
+	}
+}
+
+// TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser pins
+// the successful per-user apply path: when a shared reference episode is found
+// and a target episode needs a different audio track, the fan-out applies the
+// change through the per-user client and emits the inviolate "new/updated
+// episode language set" summary. The existing fan-out tests only exercise
+// no-change targets, so the changed==true branch of applyEpisodeForUser and
+// its documented log key are otherwise unverified.
+//
+// Not parallel: it swaps the process-global default slog logger.
+func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *testing.T) {
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		EpisodeByKey: map[string]*streams.Episode{
+			"2": {RatingKey: "2", Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			}}}}}},
+			"100": targetNeedingAudioSwitch("100"),
+		},
+	}
+	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), users)
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+
+	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
+		t.Errorf("SetAudio called %d times; want 1 (reference jpn audio applied to the target for the one user)", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "new/updated episode language set") {
+		t.Errorf("missing inviolate 'new/updated episode language set' summary after a per-user change; log = %q", out)
+	}
+}

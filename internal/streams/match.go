@@ -33,7 +33,10 @@ func MatchAudio(ref *Stream, candidates []*Stream) *Stream {
 }
 
 // MatchSubtitle finds the best matching subtitle stream against the
-// reference subtitle (and reference audio, for disambiguation). Returns
+// reference subtitle. The refAudio parameter is accepted for call-site
+// symmetry with the audio path but is NOT consulted: SubtitleCriteria
+// discards it, because the "no subtitle means no subtitle" policy means
+// the audio language is never used to derive subtitle criteria. Returns
 // nil when no match applies — either because the reference had no
 // subtitle (respecting "no subtitle means no subtitle") or because no
 // candidate meets the derived criteria.
@@ -55,6 +58,10 @@ func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream) *Stream {
 		streams = forced
 	}
 	if matchHIOnly {
+		// Unlike forced (an exact requirement above), hearing-impaired is a
+		// soft preference: prefer an HI track but fall back to a non-HI track
+		// in the same language rather than returning no subtitle. This is why
+		// FilterByBoolPref (not an exact filter) is used despite the name.
 		streams = FilterByBoolPref(streams, true,
 			func(s *Stream) bool { return s.HearingImpaired })
 	}
@@ -89,9 +96,12 @@ func SubtitleCriteria(ref, _ *Stream) (langCode string, forcedOnly, hiOnly bool)
 }
 
 // ShouldSkipSubtitleForCommentary returns true if the reference audio
-// is a commentary/descriptive track but the target episode has no
-// matching commentary audio track — in which case subtitle changes
-// should be skipped to avoid generalizing an atypical pairing.
+// is a commentary/descriptive track but the target episode has no audio
+// track in the reference's language at all (MatchAudio matches by
+// language; commentary is only a soft preference, so a same-language
+// non-commentary track still counts as a match) — in which case
+// subtitle changes should be skipped to avoid generalizing an atypical
+// pairing.
 func ShouldSkipSubtitleForCommentary(refAudio *Stream, targetAudioStreams []*Stream) bool {
 	if refAudio == nil {
 		return false

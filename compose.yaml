@@ -7,9 +7,8 @@ services:
     user: "1000:1000"  # match your host user
 
     environment:
-      TZ: "Europe/Paris"
       PLEX_URL: "http://plex:32400"  # full URL including scheme and port
-      PLEX_TOKEN: "your-plex-token"  # admin token from Plex Web settings
+      PLEX_TOKEN: "your-plex-token"  # admin token from Plex Web settings; or set PLEX_TOKEN_FILE to a Docker secret (see README)
       UPDATE_LEVEL: "show"  # show = entire show, season = current season only
       UPDATE_STRATEGY: "all"  # all = every episode, next = future episodes only
 

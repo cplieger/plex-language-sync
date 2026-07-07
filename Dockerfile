@@ -1,6 +1,9 @@
 # check=error=true
 FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS builder
-ENV GOTOOLCHAIN=local
+# GOTOOLCHAIN=auto: a Renovate dep bump requiring a newer Go downloads that toolchain
+# instead of failing the build (org convention, go.md/ci-cd.md); still reproducible
+# because go.mod pins the toolchain version. `local` would hard-fail such a build.
+ENV GOTOOLCHAIN=auto
 
 WORKDIR /src
 COPY go.mod go.sum ./

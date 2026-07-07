@@ -1,10 +1,15 @@
-// Package scheduler owns the daily deep-analysis tick and its
+// Package scheduler owns the periodic deep-analysis tick and its
 // sub-workers (recent-history replay + recently-added sweep).
 //
 // Responsibilities:
-//   - Schedule a daily deep-analysis run at an absolute HH:MM boundary
-//     (clock-jump-safe: DST, NTP step, container start mid-minute all
-//     resolve to the next HH:MM boundary).
+//   - Schedule a periodic deep-analysis run on a fixed Go-duration
+//     interval (default 24h), matching the fleet docker-*-scheduler
+//     convention: one pass at startup (when the last run is older than
+//     one interval) plus a time.Ticker every interval thereafter. The
+//     pass is a safety net over the real-time WebSocket listener, so a
+//     drifting wall-clock start hour is immaterial; using an interval
+//     rather than an absolute HH:MM boundary means the app reads no
+//     local wall-clock time (no TZ / time/tzdata dependency).
 //   - Fan out per-item work across a bounded worker pool
 //     (runtime-algorithms-p1) with a circuit breaker that aborts the
 //     pass after a threshold of consecutive per-item failures.
@@ -46,7 +51,6 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plex-language-sync/internal/timeutil"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -69,9 +73,9 @@ const maxConsecutiveErrors = 5
 // the package boundary clean and lets tests construct a Scheduler
 // without mimicking the app's full env-var surface.
 type Config struct {
-	Ignore       api.IgnoreChecker // library skip rules; nil means "never skip"
-	ScheduleTime string            // "HH:MM"
-	Enable       bool              // scheduler on/off
+	Ignore   api.IgnoreChecker // library skip rules; nil means "never skip"
+	Interval time.Duration     // deep-analysis cadence; <=0 means disabled
+	Enable   bool              // scheduler on/off
 }
 
 // CacheSaver is the narrow persistence sink the scheduler needs: a
@@ -151,99 +155,46 @@ func New(cfg Config, reader api.PlexReader, c api.Cache, lookup api.UserLookup, 
 	}
 }
 
-// Run is the outer scheduler loop: it runs the first deep-analysis
-// pass if the cache's LastSchedulerRun marker is absent or older than
-// 24h, then sleeps until the next HH:MM boundary. Returns when the
-// context is cancelled.
+// Run is the outer scheduler loop: it runs a deep-analysis pass at
+// startup when the cache's LastSchedulerRun marker is absent or older
+// than one Interval, then runs one every Interval via a time.Ticker.
+// Returns when the context is cancelled. A disabled scheduler
+// (Enable=false or Interval<=0) returns immediately.
 func (s *Scheduler) Run(ctx context.Context) {
 	defer slog.Info("scheduler stopped")
 
-	if !s.cfg.Enable {
+	if !s.cfg.Enable || s.cfg.Interval <= 0 {
 		slog.Info("scheduler disabled")
 		return
 	}
 
-	slog.Info("scheduler enabled", "time", s.cfg.ScheduleTime)
+	slog.Info("scheduler enabled", "interval", s.cfg.Interval.String())
 
-	// Run immediately if never run before or last run was >24h ago.
+	// Run immediately when never run before or the last run is older than
+	// one interval, so a container restarting more often than the interval
+	// is never starved of a safety-net pass, while one that ran recently
+	// does not double-run on restart.
 	lastRun := s.cache.LastSchedulerRun()
-	if lastRun.IsZero() || time.Since(lastRun) > 24*time.Hour {
+	if lastRun.IsZero() || time.Since(lastRun) > s.cfg.Interval {
 		slog.Info("running initial deep analysis")
 		s.deepAnalysis(ctx)
 	}
 
-	// Absolute-target scheduling: one timer per day, aligned to HH:MM.
-	// Clock-jump safe (DST, NTP step, container start mid-minute all
-	// resolve to the next HH:MM boundary).
-	hour, minute, ok := timeutil.ParseHHMM(s.cfg.ScheduleTime)
-	if !ok {
-		hour, minute = 2, 0
-	}
+	// Fixed-interval scheduling via time.Ticker (the fleet
+	// docker-*-scheduler convention). Overlapping ticks collapse via the
+	// singleflight in deepAnalysis, so no wall-clock slot-dedup is needed
+	// and no local wall-clock time is read.
+	ticker := time.NewTicker(s.cfg.Interval)
+	defer ticker.Stop()
 	for {
-		next := nextScheduledRun(time.Now(), hour, minute)
-		timer := time.NewTimer(time.Until(next))
 		select {
-		case <-timer.C:
-			// Guard against double-runs for the SAME scheduled slot (e.g.
-			// clock rewound via NTP re-fires this slot's timer). The timer
-			// fired AT next, so a normal daily cadence has a last-run from
-			// ~24h ago (strictly before next) and runs; only a last-run at
-			// or after next — a same-slot double-fire — is skipped. A flat
-			// "too recent" window would instead falsely skip the day after
-			// an off-schedule initial pass, leaving no scheduled safety net.
-			lr := s.cache.LastSchedulerRun()
-			if shouldRunScheduledSlot(lr, next) {
-				slog.Info("scheduled deep analysis starting",
-					"scheduled_for", next.Format(time.RFC3339))
-				s.deepAnalysis(ctx)
-			} else {
-				slog.Debug("scheduler: skipping scheduled run, last run already covered this scheduled slot",
-					"scheduled_for", next.Format(time.RFC3339),
-					"last_run", lr.Format(time.RFC3339))
-			}
+		case <-ticker.C:
+			slog.Info("scheduled deep analysis starting")
+			s.deepAnalysis(ctx)
 		case <-ctx.Done():
-			timer.Stop()
 			return
 		}
 	}
-}
-
-// nextScheduledRun returns the next time the scheduler should fire for
-// "HH:MM" relative to now. If HH:MM already occurred today, it rolls
-// to tomorrow. Uses absolute-target scheduling instead of a minute
-// ticker so that DST spring-forward, NTP step corrections, and
-// container start mid-minute do not silently skip the run.
-func nextScheduledRun(now time.Time, hour, minute int) time.Time {
-	target := time.Date(now.Year(), now.Month(), now.Day(),
-		hour, minute, 0, 0, now.Location())
-	if !target.After(now) {
-		target = target.Add(24 * time.Hour)
-	}
-	return target
-}
-
-// shouldRunScheduledSlot reports whether the scheduled deep-analysis
-// pass for slot `next` should run given the last recorded run at
-// `lastRun`. The intent is "do not run twice for the SAME scheduled
-// slot", not "do not run within some fixed window".
-//
-// The timer that triggers this decision fires AT next, so:
-//   - normal daily cadence: lastRun is from ~24h ago, strictly before
-//     next → run.
-//   - same-slot double-fire (e.g. NTP rewinds the clock back before
-//     next and the timer re-fires for the same slot): lastRun is at or
-//     after next → skip.
-//
-// A zero lastRun (never run) is before next, so the slot runs — the
-// initial-pass block in Run handles the never-run case first, but a
-// zero value here is still correctly treated as "run".
-//
-// Using the slot instant rather than a flat ~23h window removes the
-// false skip that occurred when the initial catch-up pass ran at an
-// off-schedule time (e.g. a container restart at 03:30) less than the
-// window before the next HH:MM boundary.
-func shouldRunScheduledSlot(lastRun, next time.Time) bool {
-	return lastRun.Before(next)
 }
 
 // deepAnalysis runs the 24h replay of history + recently-added sweep,
@@ -292,7 +243,7 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 	s.processRecentlyAdded(ctx, sinceUnix)
 
 	slog.Info("deep analysis completed",
-		"since", time.Unix(sinceUnix, 0).Format(time.RFC3339))
+		"since", time.Unix(sinceUnix, 0).UTC().Format(time.RFC3339))
 }
 
 // processRecentHistory replays language settings from the last window
@@ -309,6 +260,10 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) {
 	history, err := s.plex.History(ctx, sinceUnix)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Debug("scheduler: history fetch cancelled during shutdown", "error", err)
+			return
+		}
 		slog.Warn("scheduler: failed to fetch history", "error", err)
 		return
 	}
@@ -318,9 +273,14 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) {
 	work := make(chan plex.HistoryItem)
 	var wg stdsync.WaitGroup
 	var consecutiveErrors atomic.Int32
+	// unknownUsers de-spams the per-item "no per-user client" WARN: each
+	// unknown userID is reported once per pass instead of once per history
+	// item, so a single unmanaged user with N recent plays no longer emits
+	// N identical WARN lines. Created per pass and shared across workers.
+	var unknownUsers stdsync.Map
 
 	for range s.workerCount() {
-		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors) })
+		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors, &unknownUsers) })
 	}
 	s.feedHistory(ctx, work, history, &consecutiveErrors)
 	close(work)
@@ -331,7 +291,7 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) {
 // item via processHistoryItem. It does no further work once the context
 // is cancelled (returning) or the shared circuit breaker has tripped
 // (continuing to drain so the feeder can finish and close the channel).
-func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors *atomic.Int32) {
+func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors *atomic.Int32, unknownUsers *stdsync.Map) {
 	for item := range work {
 		if ctx.Err() != nil {
 			return
@@ -341,7 +301,7 @@ func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryI
 			// exit; do no further work.
 			continue
 		}
-		s.processHistoryItem(ctx, item, consecutiveErrors)
+		s.processHistoryItem(ctx, item, consecutiveErrors, unknownUsers)
 	}
 }
 
@@ -380,12 +340,18 @@ func (s *Scheduler) processHistoryItem(
 	ctx context.Context,
 	item plex.HistoryItem,
 	consecutiveErrors *atomic.Int32,
+	unknownUsers *stdsync.Map,
 ) {
 	userID := strconv.Itoa(int(item.AccountID))
 	userClient := s.userClient(userID)
 	if userClient == nil {
-		slog.Warn("scheduler: no per-user client, skipping history item",
-			"key", item.RatingKey, "user", userID)
+		// Log once per unknown user per pass, not once per history item:
+		// an unmanaged/removed user's every recent play would otherwise
+		// emit a separate WARN and drown genuine signals in Loki.
+		if _, seen := unknownUsers.LoadOrStore(userID, struct{}{}); !seen {
+			slog.Warn("scheduler: no per-user client, skipping history item",
+				"user", userID)
+		}
 		return
 	}
 	ep, fetchErr := userClient.Episode(ctx, plex.RatingKey(item.RatingKey))
@@ -405,6 +371,10 @@ func (s *Scheduler) processHistoryItem(
 func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) {
 	sections, err := s.plex.ShowSections(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Debug("scheduler: sections fetch cancelled during shutdown", "error", err)
+			return
+		}
 		slog.Warn("scheduler: failed to fetch sections", "error", err)
 		return
 	}
@@ -460,17 +430,30 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 				"section", section.Title, "error", err)
 			continue
 		}
-		for i := range episodes {
-			select {
-			case work <- episodes[i]:
-			case <-ctx.Done():
-			}
+		if !feedEpisodes(ctx, work, episodes) {
+			break
 		}
 	}
-	if failed > 0 {
+	if failed > 0 && ctx.Err() == nil {
 		slog.Warn("scheduler: recently-added sweep incomplete, some sections failed to fetch",
 			"failed_sections", failed, "total_sections", total)
 	}
+}
+
+// feedEpisodes pushes every episode into work in order, returning false
+// if ctx was cancelled before all were sent (signalling the caller to
+// stop the sweep). Extracted from feedRecentlyAdded so the section loop
+// stays under the cognitive-complexity gate; behaviour (ordering, the
+// break-outer-loop-on-cancel via the old `break feed` label) is preserved.
+func feedEpisodes(ctx context.Context, work chan<- streams.Episode, episodes []streams.Episode) bool {
+	for i := range episodes {
+		select {
+		case work <- episodes[i]:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
 }
 
 // processRecentlyAddedEpisode handles a single recently-added episode

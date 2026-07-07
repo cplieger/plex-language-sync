@@ -19,6 +19,5 @@ func (c *Client) SetSubtitleStream(ctx context.Context, partID, streamID int) er
 
 // DisableSubtitles turns subtitles off for a media part.
 func (c *Client) DisableSubtitles(ctx context.Context, partID int) error {
-	path := fmt.Sprintf("/library/parts/%d?subtitleStreamID=0&allParts=1", partID)
-	return c.put(ctx, path)
+	return c.SetSubtitleStream(ctx, partID, 0)
 }

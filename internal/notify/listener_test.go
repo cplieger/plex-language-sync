@@ -218,29 +218,6 @@ func TestListen_ReturnsOnCancelledContext(t *testing.T) {
 	}
 }
 
-// Property-based: never-panics mirror of the main_test.go PBT.
-func TestIsRelevantPlayEventNeverPanics(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		ev := PlayEvent{
-			State:     rapid.StringMatching(`[a-z]{0,10}`).Draw(t, "state"),
-			RatingKey: rapid.StringMatching(`[0-9]{0,5}`).Draw(t, "key"),
-		}
-		_ = IsRelevantPlayEvent(ev)
-	})
-}
-
-func TestIsRelevantTimelineEntryNeverPanics(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		entry := TimelineEntry{
-			Type:          rapid.IntRange(0, 10).Draw(t, "type"),
-			MetadataState: rapid.StringMatching(`[a-z]{0,10}`).Draw(t, "metaState"),
-			MediaState:    rapid.StringMatching(`[a-z]{0,10}`).Draw(t, "mediaState"),
-			ItemID:        rapid.StringMatching(`[0-9]{0,5}`).Draw(t, "itemID"),
-		}
-		_ = IsRelevantTimelineEntry(&entry)
-	})
-}
-
 func TestTimelineActionAlwaysReturnsValidAction(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		entry := TimelineEntry{

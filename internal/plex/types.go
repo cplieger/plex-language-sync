@@ -72,9 +72,6 @@ func (r RatingKey) String() string { return string(r) }
 // scrapers may grep for; keeping the exact text means no Loki query or
 // dashboard breaks on the collapse.
 func (r RatingKey) Validate() error {
-	if r == "" {
-		return fmt.Errorf("invalid rating key %q", string(r))
-	}
 	if _, err := strconv.Atoi(string(r)); err != nil {
 		return fmt.Errorf("invalid rating key %q", string(r))
 	}

@@ -23,7 +23,7 @@ business logic under `internal/`.
   events on `TRIGGER_ON_PLAY` / `TRIGGER_ON_SCAN` and forwards them to
   the syncer.
 - `config.go` — env-var parsing, defaults, `_FILE`-suffix Docker-secret
-  handling, and `HH:MM` validation.
+  handling, and `SCHEDULER_INTERVAL` (Go duration) parsing.
 - `internal/api/` — the cross-package interface spine (`PlexReadWriter`,
   `IgnoreChecker`, cache/user contracts). Concrete types in
   `internal/{plex,cache,users,...}` implement these; consumers
@@ -49,7 +49,7 @@ A few things are deliberately stable; change them only with intent, not
 incidentally:
 
 - The env-var contract (names, defaults, boolean parsing, `_FILE` secret
-  handling, `HH:MM` parsing) in `config.go`.
+  handling, `SCHEDULER_INTERVAL` parsing) in `config.go`.
 - The on-disk cache path `/config/cache.json` (`cachePath` in `main.go`).
 
 The in-memory representation behind these may evolve freely; the

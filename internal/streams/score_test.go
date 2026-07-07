@@ -9,10 +9,9 @@ import (
 
 func TestScoreAudioStream(t *testing.T) {
 	tests := []struct {
-		name     string
-		ref, s   Stream
-		wantMin  int
-		wantMore bool
+		name    string
+		ref, s  Stream
+		wantMin int
 	}{
 		{
 			name:    "same codec adds 5",
@@ -54,8 +53,8 @@ func TestScoreAudioStream(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ScoreAudio(&tt.ref, &tt.s)
-			if got < tt.wantMin {
-				t.Errorf("ScoreAudio() = %d, want >= %d", got, tt.wantMin)
+			if got != tt.wantMin {
+				t.Errorf("ScoreAudio() = %d, want %d", got, tt.wantMin)
 			}
 		})
 	}
