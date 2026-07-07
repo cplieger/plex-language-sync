@@ -1,7 +1,5 @@
 package api
 
-import "github.com/cplieger/plex-language-sync/internal/plex"
-
 // UserInfo is the minimal user record consumers pass across the api
 // spine. Mirrors internal/users.Info but uses primitive string IDs so
 // the api package stays at the bottom of the import graph — importing
@@ -13,9 +11,10 @@ type UserInfo struct {
 	Token string
 }
 
-// UserLookup resolves user IDs to per-user Plex clients, display
-// names, and the full list of known users. The concrete implementation
-// lives in internal/users.
+// UserLookup resolves user IDs to display names and the full list of
+// known users. The concrete implementation lives in internal/users.
+// (Per-user Plex clients are obtained through api.UserClientFunc, not
+// this interface.)
 //
 // Method signatures use plain strings for user IDs (rather than the
 // typed users.ID) to keep this package free of a reverse dependency on
@@ -24,7 +23,6 @@ type UserInfo struct {
 // shared wire other packages (sync, scheduler) can depend on without
 // pulling the full user-manager surface into their import graph.
 type UserLookup interface {
-	ClientForUser(userID string, adminClient *plex.Client) *plex.Client
 	All() []UserInfo
 	Name(userID string) string
 }

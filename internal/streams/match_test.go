@@ -652,3 +652,23 @@ func TestMatchSubtitle_ForcedOnly(t *testing.T) {
 		})
 	}
 }
+
+// TestMatchSubtitleStream_ForcedAndHIRefExcludesNonForced pins the combined
+// forced+HI path in MatchSubtitle. forced is an EXACT filter and
+// hearing-impaired a soft preference, so a ref that is BOTH must first drop
+// every non-forced candidate (even a non-forced HI one that matches the ref's
+// HI flag) and only then prefer HI among the forced survivors.
+// TestMatchSubtitle_ForcedOnly uses non-HI refs and TestMatchSubtitleStreamHIOnly
+// uses non-forced refs, so this interaction is otherwise unpinned even though
+// both branches are statement-covered.
+func TestMatchSubtitleStream_ForcedAndHIRefExcludesNonForced(t *testing.T) {
+	ref := &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: true}
+	candidates := []*Stream{
+		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: false},
+		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: true},
+	}
+	got := MatchSubtitle(ref, nil, candidates)
+	if got == nil || got.ID != 1 {
+		t.Fatalf("forced+HI ref must apply the forced exact-filter and exclude the non-forced HI candidate ID=2, falling back to forced ID=1; got %v", got)
+	}
+}

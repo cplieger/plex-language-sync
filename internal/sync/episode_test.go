@@ -237,6 +237,40 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 	}
 }
 
+// TestFindEpisodeReference_logsShowEpisodesFetchError pins the
+// get_show_episodes_error observability branch of FindEpisodeReference
+// (episode.go): when the admin reader's ShowEpisodes call fails, the search
+// returns nil AND emits a WARN carrying the inviolate key "failed to fetch
+// show episodes for reference" and the frozen reason label
+// get_show_episodes_error. This is symmetric to the already-pinned
+// candidate_fetch_errors branch and is the only observable difference from the
+// benign no_grandparent_key / no_candidate DEBUG paths, which also return nil.
+func TestFindEpisodeReference_logsShowEpisodesFetchError(t *testing.T) {
+	plx := &fakeapi.Plex{ShowEpisodesErr: errors.New("plex 503")}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+
+	if ref := s.FindEpisodeReference(context.Background(), ep); ref != nil {
+		t.Fatalf("FindEpisodeReference = %+v, want nil when ShowEpisodes errors", ref)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "reason=get_show_episodes_error") {
+		t.Errorf("log %q missing reason=get_show_episodes_error", out)
+	}
+	if !strings.Contains(out, "failed to fetch show episodes for reference") {
+		t.Errorf("log %q missing the inviolate WARN key 'failed to fetch show episodes for reference'", out)
+	}
+	if !strings.Contains(out, "level=WARN") {
+		t.Errorf("a ShowEpisodes fetch error must log at WARN; log = %q", out)
+	}
+}
+
 // TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient pins the
 // per-user-write-isolation fail-closed contract in the fan-out loop: when
 // s.userClient returns nil for a user (its per-user Plex client cannot be
@@ -352,5 +386,74 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *te
 	}
 	if out := buf.String(); !strings.Contains(out, "new/updated episode language set") {
 		t.Errorf("missing inviolate 'new/updated episode language set' summary after a per-user change; log = %q", out)
+	}
+}
+
+// TestFindReferenceEpisode_StopsOnCancelledContext pins the top-of-loop context
+// guard in findReferenceEpisode (episode.go): on an already-cancelled context
+// the search must return immediately with searched==0 and issue no per-candidate
+// metadata fetch, so a shutdown mid-scan cannot keep hitting Plex. A mutant that
+// dropped the top-of-loop ctx.Err() guard would fetch the newest candidate
+// (which has a selected audio here) and return it as the reference.
+func TestFindReferenceEpisode_StopsOnCancelledContext(t *testing.T) {
+	t.Parallel()
+	episodes := []streams.Episode{{RatingKey: "1"}, {RatingKey: "2"}}
+	plx := &fakeapi.Plex{
+		EpisodeByKey: map[string]*streams.Episode{
+			"1": mkSelectedAudioEpisode("1"),
+			"2": mkSelectedAudioEpisode("2"),
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ref, searched, fetchErrors := findReferenceEpisode(ctx, plx, episodes, "exclude-none", maxRefSearchDepth)
+
+	if ref != nil {
+		t.Errorf("findReferenceEpisode ref = %+v, want nil on a cancelled context", ref)
+	}
+	if searched != 0 {
+		t.Errorf("searched = %d, want 0 (the top-of-loop ctx guard must stop before the first fetch)", searched)
+	}
+	if fetchErrors != 0 {
+		t.Errorf("fetchErrors = %d, want 0", fetchErrors)
+	}
+	if got := len(plx.CallNames()); got != 0 {
+		t.Errorf("Plex Episode fetched %d times on a cancelled context, want 0", got)
+	}
+}
+
+// TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext pins the
+// per-user fan-out loop's context guard: a cancelled context halts the fan-out
+// before any per-user apply. The reference search returns nil (empty show), so
+// without the guard the loop would fall through to the language-profile path
+// and apply the learned subtitle; the guard prevents that. Mirrors
+// TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile, which shows
+// the same setup DOES apply the profile on a live context.
+func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil},
+	}
+	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
+	c := fakeapi.NewCache()
+	c.LearnLanguageProfile("1", "jpn", "eng")
+	s := newSyncer(Config{LanguageProfiles: true}, plx, c, users)
+	ep := &streams.Episode{
+		RatingKey:            "100",
+		GrandparentRatingKey: "42",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+			{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+		}}}}},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s.ProcessNewOrUpdatedEpisodeAllUsers(ctx, ep, "scan_new")
+
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+		t.Errorf("SetSubtitle called %d times on a cancelled context; want 0 (the fan-out loop's ctx guard must halt before applying the language profile)", got)
 	}
 }

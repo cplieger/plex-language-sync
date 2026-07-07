@@ -22,6 +22,7 @@ type Plex struct {
 	SetAudioErr         error
 	SetSubtitleErr      error
 	DisableErr          error
+	ShowEpisodesErr     error
 	ShowEpisodesByShow  map[string][]streams.Episode
 	EpisodeByKey        map[string]*streams.Episode
 	SeasonEpisodesByKey map[string][]streams.Episode
@@ -62,6 +63,9 @@ func (f *Plex) Episode(_ context.Context, key plex.RatingKey) (*streams.Episode,
 // ShowEpisodes returns all episodes stored under showRatingKey in ShowEpisodesByShow.
 func (f *Plex) ShowEpisodes(_ context.Context, showRatingKey plex.RatingKey) ([]streams.Episode, error) {
 	f.record("ShowEpisodes:" + showRatingKey.String())
+	if f.ShowEpisodesErr != nil {
+		return nil, f.ShowEpisodesErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.ShowEpisodesByShow[showRatingKey.String()], nil

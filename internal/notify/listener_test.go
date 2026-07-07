@@ -240,30 +240,16 @@ func TestBuildStreamCacheKeyFormat(t *testing.T) {
 
 		got := BuildStreamCacheKey(userID, ratingKey, audioID, subID)
 
-		if !containsASCII(got, "streams:") || got[:len("streams:")] != "streams:" {
+		if !strings.HasPrefix(got, "streams:") {
 			t.Errorf("BuildStreamCacheKey(...) = %q, want 'streams:' prefix", got)
 		}
-		if !containsASCII(got, userID) {
+		if !strings.Contains(got, userID) {
 			t.Errorf("BuildStreamCacheKey result %q does not contain userID %q", got, userID)
 		}
-		if !containsASCII(got, ratingKey) {
+		if !strings.Contains(got, ratingKey) {
 			t.Errorf("BuildStreamCacheKey result %q does not contain ratingKey %q", got, ratingKey)
 		}
 	})
-}
-
-// containsASCII is a local substring check so this file does not need
-// to import "strings" just for two invariant assertions.
-func containsASCII(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // TestConnectAndListen_SlowDialNotStable is the regression guard for the
@@ -483,5 +469,92 @@ func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 	}
 	if got := buf.String(); !strings.Contains(got, "level=ERROR") {
 		t.Errorf("escalation: want level=ERROR, got %q", got)
+	}
+}
+
+func TestBackoffBounds_Defaults(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantMin time.Duration
+		wantMax time.Duration
+	}{
+		{"zero both defaults to 1s/30s", Config{}, time.Second, 30 * time.Second},
+		{"negative both defaults to 1s/30s", Config{MinBackoff: -1, MaxBackoff: -5 * time.Second}, time.Second, 30 * time.Second},
+		{"zero min keeps positive max", Config{MinBackoff: 0, MaxBackoff: 12 * time.Second}, time.Second, 12 * time.Second},
+		{"positive min zero max defaults", Config{MinBackoff: 2 * time.Second, MaxBackoff: 0}, 2 * time.Second, 30 * time.Second},
+		{"both positive pass through", Config{MinBackoff: 500 * time.Millisecond, MaxBackoff: 45 * time.Second}, 500 * time.Millisecond, 45 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			l := NewListener(&fakePlexClient{}, tt.cfg)
+			gotMin, gotMax := l.backoffBounds()
+			if gotMin != tt.wantMin {
+				t.Errorf("backoffBounds() min = %v, want %v", gotMin, tt.wantMin)
+			}
+			if gotMax != tt.wantMax {
+				t.Errorf("backoffBounds() max = %v, want %v", gotMax, tt.wantMax)
+			}
+		})
+	}
+}
+
+// TestConnectAndListen_DispatchesReceivedMessage exercises the live
+// read->decode->dispatch happy path of connectAndListen end to end: a
+// websocket server writes one real "playing" Notification frame and the
+// handler must receive exactly one decoded OnPlay. The isolated
+// TestDispatch_* tests and FuzzNotificationUnmarshal call dispatch()
+// directly and never reach the in-loop dispatch call inside
+// connectAndListen, so nulling that call would leave them green while
+// breaking event delivery.
+func TestConnectAndListen_DispatchesReceivedMessage(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("server accept: %v", err)
+			return
+		}
+		msg := []byte(`{"NotificationContainer":{"type":"playing",` +
+			`"PlaySessionStateNotification":[{"ratingKey":"42","state":"playing"}]}}`)
+		if err := c.Write(r.Context(), websocket.MessageText, msg); err != nil {
+			t.Errorf("server write: %v", err)
+			return
+		}
+		c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	base, _ := url.Parse(srv.URL)
+	cfg := DefaultConfig()
+	cfg.ReadIdleTimeout = 2 * time.Second
+	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h := &fakeHandler{}
+	connected, handshakeAt, err := l.connectAndListen(ctx, h)
+
+	if !connected {
+		t.Fatalf("connected = false, want true (handshake should succeed)")
+	}
+	if handshakeAt.IsZero() {
+		t.Fatalf("handshakeAt is zero, want the post-handshake instant")
+	}
+	if err == nil {
+		t.Errorf("expected a server-close disconnect error after the message, got nil")
+	}
+	if len(h.plays) != 1 {
+		t.Fatalf("OnPlay fired %d times, want 1 (received message not decoded+dispatched)", len(h.plays))
+	}
+	if h.plays[0].RatingKey != "42" || h.plays[0].State != "playing" {
+		t.Errorf("dispatched play event = %+v, want RatingKey=42 state=playing", h.plays[0])
+	}
+	if len(h.timelines) != 0 {
+		t.Errorf("OnTimeline fired %d times, want 0", len(h.timelines))
 	}
 }

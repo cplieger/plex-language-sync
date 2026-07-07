@@ -1074,3 +1074,217 @@ func TestChangeTracksForEpisode_SilentWhenNothingChanged(t *testing.T) {
 		t.Errorf("'language update complete' must not be logged when no episode changed; log = %q", out)
 	}
 }
+
+// TestApplyLanguageProfile_PUTErrorReturnsFalse pins the two failed-write
+// branches of applyProfileSubtitle (profile.go): when the per-user client's
+// SetSubtitleStream or DisableSubtitles PUT fails, ApplyLanguageProfile must
+// report changed=false so the caller never emits the "language profile applied
+// to new show" INFO summary for a write that never landed. Mirrors the existing
+// UpdateEpisodeStreams "PUT error returns false" test for the reference path; a
+// mutant flipping either error-branch return to true survives without this.
+func TestApplyLanguageProfile_PUTErrorReturnsFalse(t *testing.T) {
+	t.Parallel()
+	audioJpnSelected := streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"}
+	tests := []struct {
+		name       string
+		profileSub string
+		plex       *fakeapi.Plex
+		subStream  streams.Stream
+		wantCall   string
+	}{
+		{
+			name:       "SetSubtitleStream error returns false",
+			profileSub: "eng",
+			plex:       &fakeapi.Plex{SetSubtitleErr: errors.New("boom")},
+			subStream:  streams.Stream{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			wantCall:   "SetSubtitle",
+		},
+		{
+			name:       "DisableSubtitles error returns false",
+			profileSub: "",
+			plex:       &fakeapi.Plex{DisableErr: errors.New("boom")},
+			subStream:  streams.Stream{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			wantCall:   "DisableSubtitle",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := fakeapi.NewCache()
+			c.LearnLanguageProfile("1", "jpn", tc.profileSub)
+			s := newSyncer(Config{LanguageProfiles: true}, tc.plex, c, &fakeapi.Users{})
+			ep := &streams.Episode{
+				RatingKey: "100",
+				Media:     []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{audioJpnSelected, tc.subStream}}}}},
+			}
+
+			if s.ApplyLanguageProfile(context.Background(), tc.plex, "1", ep, "test") {
+				t.Error("ApplyLanguageProfile = true after a failed PUT, want false (a failed write must not report a change)")
+			}
+			if got := countCalls(tc.plex.CallNames(), tc.wantCall); got != 1 {
+				t.Errorf("%s called %d times, want 1 (the write must be attempted before failing)", tc.wantCall, got)
+			}
+		})
+	}
+}
+
+// TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse pins the two failed-write
+// branches of applySubtitleStream (tracks.go) that the existing "PUT error
+// returns false" test (SetAudioErr only) never reaches: a failed DisableSubtitles
+// (no-subtitle policy) and a failed SetSubtitleStream must both make
+// UpdateEpisodeStreams report changed=false. The reference audio equals the
+// target's already-selected audio so no audio write occurs and changed reflects
+// only the subtitle write outcome.
+func TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse(t *testing.T) {
+	t.Parallel()
+	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	tests := []struct {
+		name     string
+		refSub   *streams.Stream
+		target   []streams.Stream
+		setErr   func(*fakeapi.Plex)
+		wantCall string
+	}{
+		{
+			name:     "DisableSubtitles error returns false",
+			refSub:   nil,
+			target:   []streams.Stream{{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true}},
+			setErr:   func(p *fakeapi.Plex) { p.DisableErr = errors.New("boom") },
+			wantCall: "DisableSubtitle",
+		},
+		{
+			name:     "SetSubtitleStream error returns false",
+			refSub:   &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
+			target:   []streams.Stream{{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true}, {ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}},
+			setErr:   func(p *fakeapi.Plex) { p.SetSubtitleErr = errors.New("boom") },
+			wantCall: "SetSubtitle",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			streamList := append([]streams.Stream{
+				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			}, tc.target...)
+			ep := &streams.Episode{
+				RatingKey: "123",
+				Media:     []streams.Media{{Part: []streams.Part{{ID: 100, Stream: streamList}}}},
+			}
+			plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+			tc.setErr(plx)
+			s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+
+			changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, tc.refSub)
+
+			if changed {
+				t.Error("UpdateEpisodeStreams = true after a failed subtitle PUT, want false")
+			}
+			if got := countCalls(plx.CallNames(), tc.wantCall); got != 1 {
+				t.Errorf("%s called %d times, want 1 (the write must be attempted before failing)", tc.wantCall, got)
+			}
+			if got := countCalls(plx.CallNames(), "SetAudio"); got != 0 {
+				t.Errorf("SetAudio called %d times, want 0 (reference audio already selected; only the subtitle path is under test)", got)
+			}
+		})
+	}
+}
+
+// TestUpdateEpisodeStreams_SkipsSubtitleForCommentaryReference pins the
+// commentary/descriptive guard in applySubtitleStream (tracks.go): when the
+// reference audio is a commentary track AND the target episode has no audio in
+// the reference's language, streams.ShouldSkipSubtitleForCommentary returns
+// true and the subtitle change is skipped so an atypical commentary->subtitle
+// pairing is never generalized to the target. No existing subtitle-policy test
+// sets a commentary reference, so this branch is otherwise unpinned.
+//
+// Red-green: the target carries a jpn subtitle matching the jpn reference
+// subtitle (streams.MatchSubtitle ignores refAudio, verified in match.go), so
+// WITHOUT the commentary guard applySubtitleStream would match ID 21 and issue
+// a SetSubtitleStream (changed=true). The guard is the sole suppressor.
+func TestUpdateEpisodeStreams_SkipsSubtitleForCommentaryReference(t *testing.T) {
+	t.Parallel()
+	// jpn audio selected (no eng track -> MatchAudio(eng-ref) == nil), eng
+	// subtitle selected, jpn subtitle available.
+	ep := &streams.Episode{
+		RatingKey: "123",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
+			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
+		}}}}},
+	}
+	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	// Commentary reference audio in eng (unmatched by the jpn-only target), with
+	// a jpn reference subtitle that would otherwise match target ID 21.
+	refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"}
+	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
+
+	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+
+	if changed {
+		t.Error("UpdateEpisodeStreams = true, want false (commentary reference with no target-language audio must skip the subtitle change)")
+	}
+	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
+		t.Errorf("SetSubtitle called %d times, want 0 (commentary-skip must suppress the subtitle write)", got)
+	}
+	if got := countCalls(plx.CallNames(), "SetAudio"); got != 0 {
+		t.Errorf("SetAudio called %d times, want 0 (no eng audio on the target to match the commentary reference)", got)
+	}
+}
+
+// TestChangeTracksForEpisode_logsEpisodeFetchError pins the inviolate
+// "failed to fetch episodes for update" WARN branch of ChangeTracksForEpisode:
+// when the per-user client's episode fetch errors, the update aborts with that
+// exact log key and writes nothing. This is the tracks.go counterpart of
+// TestFindEpisodeReference_logsShowEpisodesFetchError in episode.go.
+func TestChangeTracksForEpisode_logsEpisodeFetchError(t *testing.T) {
+	plx := &fakeapi.Plex{ShowEpisodesErr: errors.New("plex 503")}
+	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+
+	out := buf.String()
+	if !strings.Contains(out, "failed to fetch episodes for update") {
+		t.Errorf("missing inviolate WARN key 'failed to fetch episodes for update' when the episode fetch errors; log = %q", out)
+	}
+	if !strings.Contains(out, "level=WARN") {
+		t.Errorf("an episode-fetch error must log at WARN; log = %q", out)
+	}
+	if got := countCalls(plx.CallNames(), "SetAudio"); got != 0 {
+		t.Errorf("SetAudio called %d times after a fetch error; want 0 (must abort before applying any change)", got)
+	}
+}
+
+// TestChangeTracksForEpisode_stopsOnCancelledContext pins the mid-loop context
+// guard in ChangeTracksForEpisode: once the update loop is entered, a cancelled
+// context breaks it before any further per-episode write. The fake reader
+// ignores the context, so the loop's own ctx.Err() break is the only thing that
+// stops the write; a negated guard would apply the reference audio via SetAudio.
+func TestChangeTracksForEpisode_stopsOnCancelledContext(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{
+		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
+		EpisodeByKey:       map[string]*streams.Episode{"2": targetNeedingAudioSwitch("2")},
+	}
+	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s.ChangeTracksForEpisode(ctx, plx, "1", ref, "play")
+
+	if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 1 {
+		t.Errorf("ShowEpisodes:42 called %d times, want 1 (the fetch precedes the loop guard)", got)
+	}
+	if got := countCalls(plx.CallNames(), "SetAudio"); got != 0 {
+		t.Errorf("SetAudio called %d times on a cancelled context; want 0 (the mid-loop ctx guard must break before applying changes)", got)
+	}
+}

@@ -15,7 +15,7 @@ import (
 )
 
 // Plex wire-protocol constants. These strings/numbers appear in the
-// Plex HTTP API and are inviolate item 9. Consumers (main, config,
+// Plex HTTP API and are a frozen wire contract. Consumers (main, config,
 // scheduler, notify, sync, this package's own library.go) import
 // these rather than redeclaring them locally.
 const (
@@ -34,8 +34,8 @@ const (
 )
 
 // RatingKey is a typed Plex ratingKey — the opaque numeric string Plex
-// uses to address episodes, seasons, shows, and other library items
-// (runtime-types-p2). The on-disk and wire representation is always
+// uses to address episodes, seasons, shows, and other library items.
+// The on-disk and wire representation is always
 // a string; this type exists to prevent ratingKey values from being
 // conflated with other string keys (userID, sessionKey) at module
 // boundaries and to give callers a single place to validate that a
@@ -50,8 +50,7 @@ const (
 // strconv.Atoi. Wire-origin strings (streams.Episode.RatingKey,
 // plex.Section.Key, plex.HistoryItem.RatingKey) stay typed as string
 // in their struct definitions — the plex.RatingKey wrap happens at
-// the call site, which preserves the Plex JSON wire format (inviolate
-// item 9).
+// the call site, which preserves the Plex JSON wire format.
 type RatingKey string
 
 // String returns the ratingKey as a plain string for APIs that accept
@@ -65,12 +64,11 @@ func (r RatingKey) String() string { return string(r) }
 // Plex API as a malformed URL path.
 //
 // The error format is deliberately `invalid rating key %q` — byte-for-
-// byte identical to the five pre-extraction strconv.Atoi+fmt.Errorf
-// stanzas it replaces in library.go (Episode, ShowEpisodes,
-// SeasonEpisodes, ShowMetadata, RecentlyAdded). The inviolate contract
-// item 5 (WARN/ERROR log-key stability) includes error messages that
-// scrapers may grep for; keeping the exact text means no Loki query or
-// dashboard breaks on the collapse.
+// byte identical to the five strconv.Atoi+fmt.Errorf stanzas it replaces
+// in library.go (Episode, ShowEpisodes, SeasonEpisodes, ShowMetadata,
+// RecentlyAdded). That error text is a stable log-key contract that
+// scrapers may grep for; keeping it byte-for-byte means no Loki query or
+// dashboard breaks.
 func (r RatingKey) Validate() error {
 	if _, err := strconv.Atoi(string(r)); err != nil {
 		return fmt.Errorf("invalid rating key %q", string(r))
@@ -112,8 +110,8 @@ type Section struct {
 }
 
 // Show is the show-level metadata returned by GET /library/metadata/{key}
-// when the key points to a TV show. Runtime-types-p1 split this off from
-// Episode so callers asking "what are the show's labels?" don't receive an
+// when the key points to a TV show. Split off from Episode so callers
+// asking "what are the show's labels?" don't receive an
 // Episode-typed value.
 type Show struct {
 	RatingKey        string          `json:"ratingKey"`
@@ -124,8 +122,8 @@ type Show struct {
 }
 
 // Season is the season-level metadata returned by GET /library/metadata/{key}
-// when the key points to a season. Runtime-types-p1 split this off from
-// Episode for callers that only need the navigational spine (parent key,
+// when the key points to a season. Split off from Episode for callers
+// that only need the navigational spine (parent key,
 // season index) without the whole media/part/stream graph.
 type Season struct {
 	RatingKey       string          `json:"ratingKey"`

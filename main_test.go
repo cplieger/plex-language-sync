@@ -51,9 +51,12 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plex-language-sync/internal/streams"
+	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
 	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
@@ -768,5 +771,243 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 	build(true, false).OnPlay(ctx, relevantPlay)
 	if hits.Load() == 0 {
 		t.Fatal("play gate enabled but Plex client was never hit; counter wiring is broken")
+	}
+}
+
+// TestHandleTimeline_nonEpisodeNotMarked pins handleTimeline's mark-on-success
+// ordering: MarkProcessed must run only AFTER the entry is confirmed a real,
+// non-ignored episode, so an irrelevant/non-episode entry never suppresses a
+// later genuine event for the same ItemID. It drives OnTimeline with a relevant
+// entry whose fetched item is a non-episode (a movie) and asserts the cache key
+// is NOT marked (the over-suppression failure mode).
+func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","type":"movie"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+
+	c := cache.New()
+	mgr := users.NewManager(c)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	adapter := notifyAdapter{
+		cfg:    &config{triggerOnScan: true},
+		users:  mgr,
+		admin:  &plex.User{ID: "1", Name: "admin"},
+		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+		cache:  c,
+	}
+
+	adapter.OnTimeline(context.Background(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
+
+	if hits.Load() == 0 {
+		t.Fatal("handleTimeline never fetched the item; it bailed before the type check, so the not-marked assertion is vacuous")
+	}
+	key := notify.BuildTimelineCacheKey("1")
+	if c.WasRecentlyProcessed(key) {
+		t.Error("handleTimeline marked a non-episode timeline entry processed; the mark-on-success ordering regressed (a later genuine event for the same ItemID would be suppressed)")
+	}
+	c.MarkProcessed(key)
+	if !c.WasRecentlyProcessed(key) {
+		t.Fatal("cache did not mark the timeline key; the not-marked assertion above would be vacuous")
+	}
+}
+
+func TestWaitForBackgroundLoops_budgetExceeded_onlyRefreshStuck(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	synctest.Test(t, func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		refreshDone := make(chan struct{})
+		schedDone := make(chan struct{})
+		// Scheduler finished; the refresh loop is the laggard, so only the
+		// refresh loop must appear in still_running.
+		wg.Done()
+		close(schedDone)
+		waitForBackgroundLoops(&wg, refreshDone, schedDone)
+		wg.Done()
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "shutdown wait budget exceeded") {
+		t.Errorf("expected budget-exceeded WARN, got: %q", out)
+	}
+	if !strings.Contains(out, "user-token-refresh") {
+		t.Errorf("expected still_running to name user-token-refresh, got: %q", out)
+	}
+	if strings.Contains(out, "scheduler") {
+		t.Errorf("still_running should not name scheduler (it finished), got: %q", out)
+	}
+}
+
+type fakeIgnoreChecker struct{ skip bool }
+
+func (f fakeIgnoreChecker) IgnoreLibrary(string) bool { return false }
+
+func (f fakeIgnoreChecker) ShouldSkipEpisode(context.Context, api.PlexReader, *streams.Episode) bool {
+	return f.skip
+}
+
+func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","type":"episode"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+
+	c := cache.New()
+	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
+	mgr := users.NewManager(c)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
+	adapter := notifyAdapter{
+		syncer: syncer,
+		cfg:    &config{triggerOnScan: true},
+		users:  mgr,
+		admin:  &plex.User{ID: "1", Name: "admin"},
+		client: client,
+		cache:  c,
+		ignore: fakeIgnoreChecker{skip: true},
+	}
+
+	adapter.OnTimeline(context.Background(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
+
+	if hits.Load() == 0 {
+		t.Fatal("handleTimeline never fetched the item; it bailed before the ignore check, so the not-marked assertion is vacuous")
+	}
+	key := notify.BuildTimelineCacheKey("1")
+	if c.WasRecentlyProcessed(key) {
+		t.Error("handleTimeline marked an ignored episode processed; the ignore gate (sole ignore enforcement for the scan/timeline path) regressed")
+	}
+	c.MarkProcessed(key)
+	if !c.WasRecentlyProcessed(key) {
+		t.Fatal("cache did not mark the timeline key; the not-marked assertion above would be vacuous")
+	}
+}
+
+func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","type":"episode"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+
+	c := cache.New()
+	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
+	mgr := users.NewManager(c)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
+	adapter := notifyAdapter{
+		syncer: syncer,
+		cfg:    &config{triggerOnScan: true},
+		users:  mgr,
+		admin:  &plex.User{ID: "1", Name: "admin"},
+		client: client,
+		cache:  c,
+		// ignore nil: the n.ignore != nil conjunct is false, so a genuine
+		// episode reaches the success tail (TimelineAction + MarkProcessed + dispatch).
+	}
+
+	adapter.OnTimeline(context.Background(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
+
+	if hits.Load() == 0 {
+		t.Fatal("handleTimeline never fetched the item; it bailed before the success tail, so the marked assertion is vacuous")
+	}
+	key := notify.BuildTimelineCacheKey("1")
+	if !c.WasRecentlyProcessed(key) {
+		t.Error("handleTimeline did not mark a genuine non-ignored episode processed; the success-path MarkProcessed regressed (duplicate timeline events for the same ItemID would no longer be deduped)")
+	}
+}
+
+func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","type":"episode"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+
+	c := cache.New()
+	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
+	mgr := users.NewManager(c)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
+	adapter := notifyAdapter{
+		syncer: syncer,
+		cfg:    &config{triggerOnScan: true},
+		users:  mgr,
+		admin:  &plex.User{ID: "1", Name: "admin"},
+		client: client,
+		cache:  c,
+	}
+	entries := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
+
+	adapter.OnTimeline(context.Background(), entries)
+	first := hits.Load()
+	if first == 0 {
+		t.Fatal("first timeline event never fetched the item; positive control broken, the dedup-skip assertion would be vacuous")
+	}
+
+	adapter.OnTimeline(context.Background(), entries)
+	if hits.Load() != first {
+		t.Errorf("re-fired timeline event for an already-processed ItemID hit Plex again (%d -> %d); the WasRecentlyProcessed dedup guard in handleTimeline regressed (a repeat event would re-run ProcessNewOrUpdatedEpisodeAllUsers)", first, hits.Load())
+	}
+}
+
+func TestResolvePlayEventUser_sessionResolvesNonAdmin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[` +
+			`{"User":{"id":"9","title":"bob"},"Player":{"machineIdentifier":"mac-B"}}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+	adapter := notifyAdapter{
+		cfg:    &config{},
+		admin:  &plex.User{ID: "1", Name: "admin"},
+		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+	}
+
+	uid, uname := adapter.resolvePlayEventUser(context.Background(),
+		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-B"})
+
+	if uid != "9" || uname != "bob" {
+		t.Errorf("resolvePlayEventUser = (%q, %q), want (9, bob); the admin fallback must NOT fire when the session resolves to a real user", uid, uname)
+	}
+}
+
+func TestResolvePlayEventUser_unresolvedSessionFallsBackAdmin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+	adapter := notifyAdapter{
+		cfg:    &config{},
+		admin:  &plex.User{ID: "1", Name: "admin"},
+		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+	}
+
+	uid, uname := adapter.resolvePlayEventUser(context.Background(),
+		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-missing"})
+
+	if uid != "1" || uname != "admin" {
+		t.Errorf("resolvePlayEventUser = (%q, %q), want (1, admin); an unresolved session must fall back to admin", uid, uname)
 	}
 }

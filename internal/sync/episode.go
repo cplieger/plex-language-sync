@@ -41,6 +41,17 @@ const maxRefSearchDepth = 50
 // episode (e.g. 15 users × ~10 calls = 150 admin-equivalent calls). Now
 // ~10 calls total for the reference search plus N writes — the only
 // per-user work required.
+//
+// Ignore contract: this entry point does NOT apply the ignore
+// policy itself. Callers MUST gate on
+// api.IgnoreChecker.ShouldSkipEpisode before invoking it (main.go
+// handleTimeline and scheduler processRecentlyAddedEpisode both
+// do). The gate is kept upstream deliberately to avoid a
+// redundant ShowMetadata fetch here; a caller that skips it will
+// silently apply language to an ignored show, breaking the
+// documented "ignored show excluded from BOTH propagation AND
+// learning" policy. (Contrast ChangeTracksForEpisode, which
+// self-gates.)
 func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 	ctx context.Context,
 	episode *streams.Episode,

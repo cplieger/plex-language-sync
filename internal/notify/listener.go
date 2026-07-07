@@ -17,14 +17,13 @@ import (
 
 // wsTypeTimeline is the NotificationContainer.Type value Plex uses for
 // library scan events. Kept unexported; the Listener routes based on it
-// internally and the value is part of the Plex JSON wire format
-// (inviolate item 9).
+// internally and the value is part of the Plex JSON wire format.
 const wsTypeTimeline = "timeline"
 
 // wsTypePlaying is the NotificationContainer.Type value Plex uses for
 // play-session notifications. Distinct from the statePlaying PlayEvent.State
 // value (predicates.go) despite sharing the "playing" wire literal; both are
-// frozen by the Plex JSON wire format (inviolate item 9).
+// frozen by the Plex JSON wire format.
 const wsTypePlaying = "playing"
 
 // wsReadLimitBytes is the per-message size cap enforced by the
@@ -93,12 +92,10 @@ func NewListener(client PlexClient, cfg Config) *Listener {
 func (l *Listener) Listen(ctx context.Context, h Handler) {
 	defer slog.Info("websocket listener stopped")
 
-	// Guard a zero/negative MinBackoff (mirrors the ReadIdleTimeout <= 0 guard
-	// in connectAndListen). A zero floor leaves backoff at 0 and turns the
-	// reconnect loop into a tight spin that hammers Plex.
-	minBackoff := l.cfg.MinBackoff
-	if minBackoff <= 0 {
-		minBackoff = time.Second
+	minBackoff, maxBackoff := l.backoffBounds()
+	stableThreshold := l.cfg.StableThreshold
+	if stableThreshold <= 0 {
+		stableThreshold = time.Minute
 	}
 	backoff := minBackoff
 	reconnecting := false
@@ -126,8 +123,8 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		// that drives the sole health ERROR). Avoids the "accept
 		// handshake then immediately close" flap hammering Plex at
 		// MinBackoff indefinitely.
-		stable := connected && time.Since(handshakeAt) > l.cfg.StableThreshold
-		backoff = nextBackoff(backoff, minBackoff, l.cfg.MaxBackoff, stable)
+		stable := connected && time.Since(handshakeAt) > stableThreshold
+		backoff = nextBackoff(backoff, minBackoff, maxBackoff, stable)
 		if stable {
 			reconnects = 0
 		}
@@ -150,15 +147,30 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 	}
 }
 
+// backoffBounds returns the reconnect backoff floor and ceiling, applying
+// defaults for zero/negative config values. A zero MinBackoff floor would
+// leave backoff at 0 and turn the reconnect loop into a tight spin that
+// hammers Plex (mirrors the ReadIdleTimeout <= 0 guard in connectAndListen).
+func (l *Listener) backoffBounds() (minBackoff, maxBackoff time.Duration) {
+	minBackoff = l.cfg.MinBackoff
+	if minBackoff <= 0 {
+		minBackoff = time.Second
+	}
+	maxBackoff = l.cfg.MaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = 30 * time.Second
+	}
+	return minBackoff, maxBackoff
+}
+
 // logDisconnect emits the per-cycle disconnect log at the level the
 // disconnect reason warrants and escalates to a single ERROR once
 // consecutive reconnects pile up past the threshold. Clean server-close
 // is expected info-level; dial/read errors stay warnings. A sustained
 // outage leaves the file-marker health green while zero events are
 // processed, so the escalation is the only alertable signal that the
-// container is healthy-but-processing-nothing. Split out of Listen to
-// keep the reconnect loop within the cognitive-complexity budget; the
-// log messages and keys are unchanged (inviolate item 5).
+// container is healthy-but-processing-nothing. The log messages and keys
+// are a frozen Loki contract and must not change.
 func (l *Listener) logDisconnect(ctx context.Context, err error, backoff time.Duration, stable bool, reconnects int) {
 	level := slog.LevelWarn
 	reason := ClassifyError(err)
@@ -239,7 +251,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		idle = time.Hour
 	}
 	for {
-		readCtx, cancelRead := context.WithDeadline(ctx, time.Now().Add(idle))
+		readCtx, cancelRead := context.WithTimeout(ctx, idle)
 		_, message, readErr := conn.Read(readCtx)
 		cancelRead()
 		if readErr != nil {
@@ -278,7 +290,13 @@ func (l *Listener) dialClient() *http.Client {
 		}
 	}
 	if t == nil {
-		t = http.DefaultTransport.(*http.Transport).Clone() //nolint:errcheck // stdlib guarantee: DefaultTransport is *http.Transport
+		if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+			t = dt.Clone()
+		} else {
+			// Unreachable in practice (stdlib guarantees DefaultTransport is
+			// *http.Transport); explicit fallback avoids the //nolint:errcheck.
+			t = &http.Transport{}
+		}
 	}
 	t.DialContext = dialer.DialContext
 	// Bound the WebSocket upgrade handshake. net.Dialer.Timeout above
@@ -320,8 +338,7 @@ func wrapReadError(readErr error) error {
 	// abnormal) via typed CloseError, or plain io.EOF. The close-code
 	// set is shared with ClassifyError via isServerCloseCode so the
 	// two cannot drift apart.
-	var ce websocket.CloseError
-	if errors.As(readErr, &ce) && isServerCloseCode(ce.Code) {
+	if ce, ok := errors.AsType[websocket.CloseError](readErr); ok && isServerCloseCode(ce.Code) {
 		return fmt.Errorf("%w: %w", ErrServerClose, readErr)
 	}
 	if errors.Is(readErr, io.EOF) {

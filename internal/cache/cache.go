@@ -25,8 +25,9 @@ import (
 var _ api.Cache = (*Cache)(nil)
 
 // maxCacheSize caps the cache file at 50 MB. A file at this size is almost
-// certainly corrupted or deliberately bloated; we warn and proceed rather
-// than refusing to start.
+// certainly corrupted or deliberately bloated; LoadFrom warns and returns an
+// error (leaving the reset in-memory state) so the caller starts fresh,
+// rather than truncating the read.
 const maxCacheSize = 50 << 20 // 50 MB
 
 // Data is the JSON schema persisted to /config/cache.json. Field names and
@@ -34,7 +35,10 @@ const maxCacheSize = 50 << 20 // 50 MB
 type Data struct {
 	// ProcessedEpisodes tracks recently processed episode keys to avoid
 	// re-processing the same episode on rapid successive events.
-	// Keys include userID: "play:{userID}:{ratingKey}".
+	// Keys carry a subsystem prefix from keys.go:
+	// "streams:{userID}:{ratingKey}:{audioID}:{subID}" (play events),
+	// "timeline:{itemID}" (library scans), and "scheduler:{ratingKey}"
+	// (deep-analysis runs).
 	ProcessedEpisodes map[string]int64 `json:"processed_episodes"`
 	// LanguageProfiles maps userID → audioLang → subtitleLang.
 	// Empty subtitle string means "no subtitles" for that audio language.
@@ -110,6 +114,9 @@ func (c *Cache) LoadFrom(path string) error {
 	// clean reset state the caller's "starting fresh" fallback assumes.
 	raw, err := atomicfile.ReadBounded(context.Background(), path, maxCacheSize)
 	if err != nil {
+		slog.Warn("cache file unreadable or exceeds size cap; not loaded, "+
+			"learned profiles and cached tokens reset until rebuilt from Plex",
+			"path", path, "error", err)
 		return err
 	}
 	loaded := Data{
@@ -118,6 +125,9 @@ func (c *Cache) LoadFrom(path string) error {
 		UserTokens:        make(map[string]string),
 	}
 	if err := json.Unmarshal(raw, &loaded); err != nil {
+		slog.Warn("cache file corrupt (JSON parse failed); not loaded, "+
+			"learned profiles and cached tokens reset until rebuilt from Plex",
+			"path", path, "error", err)
 		return err
 	}
 	c.data = loaded

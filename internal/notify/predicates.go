@@ -8,12 +8,12 @@ import (
 )
 
 // Plex wire-format constants used by the event predicates. These mirror
-// the Plex notification schema (inviolate contract item 9). Kept
-// unexported here because they are implementation details of the
-// notify package's classification logic; callers should use
-// IsRelevantPlayEvent / IsRelevantTimelineEntry / TimelineAction rather
-// than branching on these values directly. The episode metadata type is
-// imported from internal/plex (single source of truth, cycle-2 step 2).
+// the Plex notification schema. Kept unexported here because they are
+// implementation details of the notify package's classification logic;
+// callers should use IsRelevantPlayEvent / IsRelevantTimelineEntry /
+// TimelineAction rather than branching on these values directly. The
+// episode metadata type is imported from internal/plex (single source of
+// truth).
 const (
 	stateCreated = "created"
 	stateUpdated = "updated"
@@ -49,8 +49,8 @@ func IsRelevantTimelineEntry(entry *TimelineEntry) bool {
 
 // TimelineAction returns "scan_new" if the entry represents a newly
 // created item, or "scan_updated" otherwise. The returned strings are
-// byte-for-byte frozen (inviolate contract item 5 — emitted as log/metric
-// values consumed by dashboards).
+// byte-for-byte frozen — they are emitted as log/metric values consumed
+// by dashboards.
 func TimelineAction(entry *TimelineEntry) string {
 	if entry.MetadataState == stateCreated || entry.MediaState == stateCreated {
 		return scanActionNew
@@ -61,14 +61,14 @@ func TimelineAction(entry *TimelineEntry) string {
 // BuildStreamCacheKey builds a deduplication key from user, episode, and
 // current stream IDs so we only process when the selection actually
 // changes. The "streams:" prefix and colon-separated layout are part of
-// the on-disk cache.json schema (inviolate contract item 7).
+// the on-disk cache.json schema.
 func BuildStreamCacheKey(userID, ratingKey string, audioID, subID int) string {
 	return fmt.Sprintf("%s%s:%s:%d:%d", cache.KeyPrefixStreams, userID, ratingKey, audioID, subID)
 }
 
 // BuildTimelineCacheKey builds the per-episode timeline (library-scan)
 // dedup key. The "timeline:" prefix is part of the on-disk cache.json
-// schema (inviolate contract item 7).
+// schema.
 func BuildTimelineCacheKey(itemID string) string {
 	return cache.KeyPrefixTimeline + itemID
 }
