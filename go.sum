@@ -1,11 +1,11 @@
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/cplieger/atomicfile/v2 v2.1.1 h1:P7dDVSMfADOgi2LzVn/r9UX0uKOw8bgxVULfENWqvBY=
-github.com/cplieger/atomicfile/v2 v2.1.1/go.mod h1:KBWqpUfvJAbxQxoJNEje4oRe78iLGIjYZkbPYGjzxV4=
-github.com/cplieger/health v1.1.4 h1:q/6QEffGp+TdJ3tBet5cfIIQH1mDHcyCVBxXkKbDDwg=
-github.com/cplieger/health v1.1.4/go.mod h1:INjkN9qJnR14X5AFqX6ymFaHvx51djYgk2oQb/gJ9u8=
-github.com/cplieger/httpx/v2 v2.1.1 h1:SowDAs8mL3PqfSnFhS025sNLfmYSL+xAHP6M9MB9zwI=
-github.com/cplieger/httpx/v2 v2.1.1/go.mod h1:DffGCIJihiQhVjn481ZYnA2HU26Qpvhd5swi+2rXdck=
+github.com/cplieger/atomicfile/v2 v2.1.2 h1:WPU8rXB4/Ziq3JNiqBfOhHxTgBr7I+B/VzkkcM2WWkY=
+github.com/cplieger/atomicfile/v2 v2.1.2/go.mod h1:jgwJ7oU3qahL4NwiF+1iBIzPRpR8LwXnicSalGoJeVA=
+github.com/cplieger/health v1.1.5 h1:xavp2d3k9N6/Kwz3N1BCFzziRGsL8bXgDGlUuJbIKmM=
+github.com/cplieger/health v1.1.5/go.mod h1:15Lm3XhPMU3nCEDfIH2hVAz6TXH06Wwiz9tgBi71vEE=
+github.com/cplieger/httpx/v2 v2.1.2 h1:52Af+MK2IGX4H+H8ZDyxH43s6DIzIN9In6uECbISawY=
+github.com/cplieger/httpx/v2 v2.1.2/go.mod h1:Q3ulXhfiO40EGxIVofnz2KdJY1X3MSKZTwYhv/pL9W0=
 golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
 golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
 pgregory.net/rapid v1.3.0 h1:vBvO0VSqti75J1jjYqpgPNBLKMd1+gxa9fYo7vk/Exc=
