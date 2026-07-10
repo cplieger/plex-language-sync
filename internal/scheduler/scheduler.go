@@ -51,6 +51,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	schedlib "github.com/cplieger/scheduler"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -190,21 +191,17 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.deepAnalysis(ctx)
 	}
 
-	// Fixed-interval scheduling via time.Ticker (the fleet
-	// docker-*-scheduler convention). Overlapping ticks collapse via the
-	// singleflight in deepAnalysis, so no wall-clock slot-dedup is needed
+	// Fixed-interval scheduling via scheduler.RunLoop (the fleet
+	// docker-*-scheduler convention). FireOnStart is false: the conditional
+	// startup pass above already handled the immediate run (RunLoop's
+	// unconditional FireOnStart would ignore the last-run marker and double-run
+	// on a recent restart). Overlapping ticks collapse via the singleflight in
+	// deepAnalysis, RunLoop is sequential, so no wall-clock slot-dedup is needed
 	// and no local wall-clock time is read.
-	ticker := time.NewTicker(s.cfg.Interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			slog.Info("scheduled deep analysis starting")
-			s.deepAnalysis(ctx)
-		case <-ctx.Done():
-			return
-		}
-	}
+	schedlib.RunLoop(ctx, func(ctx context.Context) {
+		slog.Info("scheduled deep analysis starting")
+		s.deepAnalysis(ctx)
+	}, schedlib.LoopOptions{Interval: s.cfg.Interval})
 }
 
 // deepAnalysis runs the recent-history replay + recently-added sweep,

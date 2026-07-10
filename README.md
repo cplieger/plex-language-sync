@@ -119,6 +119,48 @@ recoverable — the cache is rebuilt from Plex over time and the daily
 deep-analysis scheduler re-learns profiles — but a clean save preserves
 your latest preferences immediately.
 
+## Alerting
+
+plex-language-sync has no metrics endpoint; its operational state is in
+its logs. Ship the container's logs to Loki (Grafana Alloy's Docker log
+discovery does this with no configuration) and evaluate this rule with
+[Loki's ruler](https://grafana.com/docs/loki/latest/alert/); firing
+alerts deliver through your Alertmanager exactly like Prometheus metric
+alerts.
+
+```yaml
+groups:
+  - name: plex-language-sync
+    rules:
+      - alert: PlexLanguageSyncErrorLog
+        expr: |
+          sum by (container) (count_over_time(
+            {container="plex-language-sync"} |= `level=ERROR` [15m]
+          )) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync emitting repeated ERROR logs"
+          description: >
+            plex-language-sync logged 3 or more ERROR lines in 15m
+            (sustained 5m). At ERROR level the app reports only its hard
+            failures: an unreachable Plex server or a bad PLEX_TOKEN at
+            startup (it logs the error and exits, so a misconfigured
+            container crash-loops), and a WebSocket connection that keeps
+            failing to reconnect once the outage is sustained. The
+            healthcheck deliberately ignores WebSocket state (the listener
+            auto-reconnects with backoff), so this alert is the only
+            signal that the container is up but silently processing
+            nothing. The known-benign "failed to refresh shared user
+            tokens" is logged at WARN, so filtering on level=ERROR
+            excludes it.
+```
+
+The threshold, window, and `severity` label are starting points; adjust
+the `container` selector to your deployment and route by whatever labels
+your Alertmanager uses.
+
 ## Healthcheck
 
 The container includes a built-in CLI health probe (`/plex-language-sync health`) that checks for a marker file written at `/tmp/.healthy`. It requires no shell, HTTP client, or open port.
