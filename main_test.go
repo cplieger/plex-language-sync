@@ -38,6 +38,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1009,5 +1013,55 @@ func TestResolvePlayEventUser_unresolvedSessionFallsBackAdmin(t *testing.T) {
 
 	if uid != "1" || uname != "admin" {
 		t.Errorf("resolvePlayEventUser = (%q, %q), want (1, admin); an unresolved session must fall back to admin", uid, uname)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isFatalStartupError / startupBackoff (degraded-start classifier + backoff)
+// ---------------------------------------------------------------------------
+
+func TestIsFatalStartupError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"bad token 401 is fatal", &plex.HTTPStatusError{Code: 401, Status: "401 Unauthorized", Method: "GET", Path: "/myplex/account"}, true},
+		{"forbidden 403 is fatal", &plex.HTTPStatusError{Code: 403, Status: "403 Forbidden", Method: "GET", Path: "/"}, true},
+		{"other 4xx is fatal", &plex.HTTPStatusError{Code: 400, Status: "400 Bad Request", Method: "GET", Path: "/"}, true},
+		{"503 is transient", &plex.HTTPStatusError{Code: 503, Status: "503 Service Unavailable", Method: "GET", Path: "/"}, false},
+		{"500 is transient", &plex.HTTPStatusError{Code: 500, Status: "500 Internal Server Error", Method: "GET", Path: "/"}, false},
+		{"429 rate limited is transient", &plex.HTTPStatusError{Code: 429, Status: "429 Too Many Requests", Method: "GET", Path: "/"}, false},
+		{"408 request timeout is transient", &plex.HTTPStatusError{Code: 408, Status: "408 Request Timeout", Method: "GET", Path: "/"}, false},
+		{"not found (wrong server) is fatal", fmt.Errorf("connecting to plex server: %w", plex.ErrNotFound), true},
+		{"unknown CA is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: x509.UnknownAuthorityError{}}), true},
+		{"cert verification error is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: &tls.CertificateVerificationError{Err: errors.New("x509: certificate has expired or is not yet valid")}}), true},
+		{"connection refused is transient", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "http://127.0.0.1:1/", Err: errors.New("connect: connection refused")}), false},
+		{"dns failure is transient", errors.New("connecting to plex server: dial tcp: lookup plex: no such host"), false},
+		{"wrapped 401 is fatal", fmt.Errorf("resolving admin user: %w", &plex.HTTPStatusError{Code: 401, Status: "401 Unauthorized", Method: "GET", Path: "/myplex/account"}), true},
+		{"nil is not fatal", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isFatalStartupError(tt.err); got != tt.want {
+				t.Errorf("isFatalStartupError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartupBackoff(t *testing.T) {
+	if got := startupBackoff(0); got != startupBaseBackoff {
+		t.Errorf("startupBackoff(0) = %v, want %v", got, startupBaseBackoff)
+	}
+	if got := startupBackoff(1); got != 2*startupBaseBackoff {
+		t.Errorf("startupBackoff(1) = %v, want %v", got, 2*startupBaseBackoff)
+	}
+	// Large and negative attempt counts must cap cleanly, never overflowing the
+	// duration to zero or a negative value.
+	for _, n := range []int{5, 30, 62, 63, 100, -1} {
+		if got := startupBackoff(n); got <= 0 || got > startupMaxBackoff {
+			t.Errorf("startupBackoff(%d) = %v, want in (0, %v]", n, got, startupMaxBackoff)
+		}
 	}
 }

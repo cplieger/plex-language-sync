@@ -16,8 +16,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -80,35 +84,42 @@ func run() int {
 	}
 	plex.WarnIfPlaintextURL(client.BaseURL())
 
-	// Verify connectivity.
-	identity, err := client.ServerIdentity(ctx)
+	// Derive the cache encryption key from the admin PLEX_TOKEN up front. It is
+	// a pure function of the token (no Plex round-trip) and is deterministic for
+	// a given token, so decryption works offline on restart. Computing it here,
+	// before the connect loop, means a malformed token is surfaced as a config
+	// error BEFORE the loop can mark the container healthy-degraded.
+	encKey, err := cache.DeriveKey(cfg.plexToken)
 	if err != nil {
-		slog.Error("cannot connect to plex server", "error", err)
+		slog.Error("cannot derive encryption key", "error", err)
+		return 1
+	}
+
+	// Establish the initial Plex connection and resolve the admin user. A
+	// transient failure (Plex down or unreachable at boot) marks the container
+	// healthy-degraded and keeps retrying rather than crash-looping under the
+	// restart policy; a fatal failure (bad token, wrong server, or a TLS/cert
+	// misconfiguration) exits non-zero. Blocks until connected, fatal, or a
+	// shutdown signal.
+	identity, admin, err := connectAndResolveAdmin(ctx, client, marker)
+	if err != nil {
+		marker.Set(false) // clear any degraded-healthy marker before exiting
+		if ctx.Err() != nil {
+			slog.Info("shutdown requested during startup", "cause", context.Cause(ctx))
+			return 0
+		}
+		slog.Error("cannot establish initial plex connection", "error", err)
 		return 1
 	}
 	slog.Info("connected to plex server",
 		"name", identity.FriendlyName,
 		"id", identity.MachineIdentifier,
 		"version", identity.Version)
-
-	// Resolve the admin user.
-	admin, err := client.LoggedUser(ctx)
-	if err != nil {
-		slog.Error("cannot resolve admin user", "error", err)
-		return 1
-	}
 	slog.Info("authenticated as admin user", "name", admin.Name, "id", admin.ID)
 
-	// Cache — load persistent state, or start fresh on error.
+	// Cache — load persistent state, or start fresh on error. The encryption
+	// key (derived above) makes user-token decryption work offline on restart.
 	c := cache.New()
-	// Derive encryption key from admin PLEX_TOKEN for user-token at-rest
-	// encryption. The key is deterministic for a given token — decryption
-	// works offline (no plex.tv round-trip needed on restart).
-	encKey, err := cache.DeriveKey(cfg.plexToken)
-	if err != nil {
-		slog.Error("cannot derive encryption key", "error", err)
-		return 1
-	}
 	c.SetEncryptionKey(encKey)
 	if err := c.LoadFrom(cachePath); err != nil {
 		slog.Warn("cache load failed, starting fresh", "error", err)
@@ -125,14 +136,17 @@ func run() int {
 	um.Init(admin, client.BaseURL(), cfg.caCertPath)
 	um.LoadFromCache()
 
-	// Core Plex connection is verified, admin resolved, and the cache + user
-	// manager initialized with any cached tokens: the app can serve. Mark
-	// healthy BEFORE the plex.tv shared-user refresh so container liveness is
-	// not gated on that secondary dependency. Per the README, health =
-	// "initial Plex connection succeeds and admin user verified"; gating on the
-	// refresh would delay healthy up to ~75s (DefaultRefreshConfig) on a plex.tv
-	// outage and risk a Docker unhealthy/restart that cannot fix plex.tv. The
-	// periodic RefreshLoop keeps retrying.
+	// Connection verified and admin resolved (possibly after a healthy-degraded
+	// retry period), cache + user manager initialized: the app can serve.
+	// marker.Set(true) is idempotent — the connect loop already set it if the
+	// initial connection was degraded; setting it here also covers the
+	// connected-on-first-try path. Health = "connected, or transiently retrying
+	// the initial connect"; a fatal config/auth error exits before this point.
+	// Marked BEFORE the plex.tv shared-user refresh so container liveness is not
+	// gated on that secondary dependency: gating on the refresh would delay
+	// healthy up to ~75s (DefaultRefreshConfig) on a plex.tv outage and risk a
+	// Docker unhealthy/restart that cannot fix plex.tv. The periodic RefreshLoop
+	// keeps retrying.
 	marker.Set(true)
 	// Shutdown sequence: flag unhealthy first so Docker stops routing health
 	// probes as passing while the (slow) cache save runs, then persist the
@@ -256,6 +270,129 @@ func waitForBackgroundLoops(wg *sync.WaitGroup, refreshDone, schedDone <-chan st
 		slog.Warn("shutdown wait budget exceeded, saving cache anyway",
 			"budget", shutdownWaitBudget, "still_running", stuck)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Initial connection (degraded start)
+// ---------------------------------------------------------------------------
+//
+// The app cannot do anything without a Plex connection + a resolved admin
+// user (the WebSocket listener, scheduler, syncer, and user manager all
+// depend on them), so a "degraded start" is: mark healthy, then retry the
+// initial connect until it succeeds, rather than serving in a reduced mode.
+// This keeps a Plex-down-at-boot from crash-looping the container under the
+// restart policy (the old behaviour was os.Exit(1) on the first failure).
+// A fatal config/auth error still exits fast so the misconfiguration is loud.
+
+const (
+	startupBaseBackoff = 1 * time.Second
+	startupMaxBackoff  = 30 * time.Second
+)
+
+// connectAndResolveAdmin verifies the Plex connection and resolves the admin
+// user, retrying transient failures with capped exponential backoff. On the
+// first transient failure it marks the container healthy (a degraded start),
+// then keeps retrying until Plex answers. A fatal error (bad token / 4xx, a
+// wrong-server 404, or a TLS/cert misconfiguration) returns immediately so the
+// caller can exit non-zero. Returns ctx.Err() when shutdown is signalled
+// mid-retry.
+func connectAndResolveAdmin(ctx context.Context, client *plex.Client, marker *health.Marker) (*plex.ServerIdentity, *plex.User, error) {
+	degraded := false
+	for attempt := 0; ; attempt++ {
+		identity, admin, err := connectOnce(ctx, client)
+		if err == nil {
+			if degraded {
+				slog.Info("plex connection recovered; leaving degraded state")
+			}
+			return identity, admin, nil
+		}
+		if isFatalStartupError(err) {
+			return nil, nil, err
+		}
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		if degraded {
+			slog.Warn("plex still unreachable; retrying", "error", err)
+		} else {
+			// First transient failure: mark healthy so the restart policy does
+			// not crash-loop the container while Plex is unreachable, then keep
+			// retrying. Recovery needs no counterpart flip — the marker is
+			// already set and stays set.
+			marker.Set(true)
+			degraded = true
+			slog.Warn("initial plex connection failed; starting in degraded state and retrying", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(startupBackoff(attempt)):
+		}
+	}
+}
+
+// connectOnce performs a single connect + admin-resolve attempt.
+func connectOnce(ctx context.Context, client *plex.Client) (*plex.ServerIdentity, *plex.User, error) {
+	identity, err := client.ServerIdentity(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting to plex server: %w", err)
+	}
+	admin, err := client.LoggedUser(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving admin user: %w", err)
+	}
+	return identity, admin, nil
+}
+
+// startupBackoff returns the delay before retry attempt n (0-indexed):
+// startupBaseBackoff * 2^n, capped at startupMaxBackoff. The shift is guarded
+// so a large attempt count cannot overflow the duration to a negative value.
+func startupBackoff(attempt int) time.Duration {
+	if attempt < 0 || attempt >= 30 {
+		return startupMaxBackoff
+	}
+	d := startupBaseBackoff << attempt
+	if d <= 0 || d > startupMaxBackoff {
+		return startupMaxBackoff
+	}
+	return d
+}
+
+// isFatalStartupError reports whether an initial Plex connect/admin-resolve
+// error is a configuration or authentication problem that will not resolve
+// without operator action (so run() should exit) rather than a transient
+// connectivity failure (so run() should start degraded and keep retrying). A
+// bad token (401/403) or other 4xx, a 404 (wrong server), and TLS/certificate
+// errors are fatal; dial/DNS/timeout errors, 5xx (a Plex still starting up),
+// and 429/408 (throttle/timeout signals) are treated as transient.
+func isFatalStartupError(err error) bool {
+	var statusErr *plex.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		// 429 (Too Many Requests) and 408 (Request Timeout) are throttle/timeout
+		// signals, not config/auth errors: treat them as transient so a busy or
+		// slow Plex backs off and retries rather than exiting and crash-looping.
+		if statusErr.Code == http.StatusTooManyRequests || statusErr.Code == http.StatusRequestTimeout {
+			return false
+		}
+		return statusErr.Code < 500
+	}
+	// 404 on the identity endpoint: reached Plex, wrong server.
+	if errors.Is(err, plex.ErrNotFound) {
+		return true
+	}
+	// TLS/certificate misconfiguration (e.g. a self-signed cert without
+	// PLEX_CA_CERT_PATH): will not recover without a config change.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return true
+	}
+	var unknownAuthority x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthority) {
+		return true
+	}
+	// Transport errors (connection refused, DNS failure, timeout): Plex is
+	// unreachable now but may come back.
+	return false
 }
 
 // ---------------------------------------------------------------------------
