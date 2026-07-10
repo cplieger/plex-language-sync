@@ -23,6 +23,7 @@ import (
 	"time"
 
 	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
+	"github.com/cplieger/slogx"
 )
 
 // ---------------------------------------------------------------------------
@@ -71,8 +72,7 @@ func loadConfig() config {
 	if debug {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr,
-		&slog.HandlerOptions{Level: level, ReplaceAttr: utcTimeAttr})))
+	slogx.Setup(slogx.Options{Level: level})
 
 	cfg := config{
 		plexURL:          requireEnv("PLEX_URL"),
@@ -249,16 +249,4 @@ func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 		interval = d
 	}
 	return interval, enabled
-}
-
-// utcTimeAttr is a slog ReplaceAttr that renders the record's built-in time
-// key in UTC, so log-line timestamps are zone-stable regardless of the
-// container's TZ (the fleet logs-in-UTC standard). It rewrites only the
-// top-level time attribute; a user attribute that happens to share the "time"
-// key inside a group is left untouched.
-func utcTimeAttr(groups []string, a slog.Attr) slog.Attr {
-	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
-		a.Value = slog.TimeValue(a.Value.Time().UTC())
-	}
-	return a
 }

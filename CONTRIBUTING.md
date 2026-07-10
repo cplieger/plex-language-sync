@@ -96,7 +96,7 @@ A few config choices worth knowing:
   attribute helpers.
 - The Plex token must never be logged or written to the cache — log it
   as `"configured"`, the way `logConfig` does.
-- Logs are UTC: a `utcTimeAttr` slog `ReplaceAttr` forces every record's
+- Logs are UTC: the `slogx` library (its `UTCTime` `ReplaceAttr`) forces every record's
   timestamp to UTC, so the container needs no `TZ` and the binary embeds
   no `time/tzdata`.
 
