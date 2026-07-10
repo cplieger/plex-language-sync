@@ -121,7 +121,9 @@ your latest preferences immediately.
 
 ## Healthcheck
 
-The container includes a built-in CLI health probe (`/plex-language-sync health`) that checks for a marker file written at `/tmp/.healthy` once the initial Plex connection succeeds and the admin user is verified. It requires no shell, HTTP client, or open port. The probe reports unhealthy only if the initial connection to Plex fails or the admin user cannot be resolved — WebSocket disconnects do not cause unhealthy status because the tool automatically reconnects with exponential backoff (1s→30s).
+The container includes a built-in CLI health probe (`/plex-language-sync health`) that checks for a marker file written at `/tmp/.healthy`. It requires no shell, HTTP client, or open port.
+
+Startup distinguishes fatal from transient failures. A **fatal** misconfiguration — a bad `PLEX_TOKEN` (401/403), a wrong-server URL (404), or a TLS/certificate error — exits non-zero, so the container never goes healthy and the problem stays loud. A **transient** failure — Plex unreachable or still starting at boot (connection refused, DNS/timeout, or a 5xx) — starts the container **healthy in a degraded state** and keeps retrying the initial connection with capped exponential backoff (1s→30s) instead of crash-looping under the restart policy; the marker is set as soon as the failure is classified transient, and normal operation begins once Plex answers and the admin user is resolved. WebSocket disconnects after the initial connection never cause unhealthy status either — the listener reconnects with the same backoff.
 
 ## Security
 

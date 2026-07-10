@@ -27,6 +27,22 @@ const maxResponseBody = 10 << 20 // 10 MB
 // session / etc.). Callers detect it with errors.Is(err, plex.ErrNotFound).
 var ErrNotFound = errors.New("not found")
 
+// HTTPStatusError is returned for a non-200, non-404 Plex response. It carries
+// the status code so callers can classify the failure: a 4xx (bad token / auth
+// / wrong endpoint) will not self-heal, while a 5xx (Plex up but not ready)
+// may recover. The startup connect classifier in package main uses errors.As
+// to distinguish fatal (4xx) from transient (5xx) initial-connection failures.
+type HTTPStatusError struct {
+	Method string
+	Path   string
+	Status string
+	Code   int
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("plex API %s %s: %s", e.Method, e.Path, e.Status)
+}
+
 // errBodyOverCap signals a response exceeded maxResponseBody. Callers map
 // it to an endpoint-specific error so the message stays specific while the
 // read-cap WARN + limit live in one place.
@@ -230,9 +246,11 @@ func (c *Client) doJSON(ctx context.Context, method, path string, result any) er
 		return ErrNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		// Drain body to allow connection reuse.
+		// Drain body to allow connection reuse. Return a typed status error so
+		// the startup connect classifier can distinguish 4xx (fatal) from 5xx
+		// (transient); the message text is unchanged.
 		drainBody(resp.Body)
-		return fmt.Errorf("plex API %s %s: %s", method, path, resp.Status)
+		return &HTTPStatusError{Method: method, Path: path, Status: resp.Status, Code: resp.StatusCode}
 	}
 	if result == nil {
 		drainBody(resp.Body)
