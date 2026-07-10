@@ -3,17 +3,10 @@ package plex
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"io"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,37 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-// writeSelfSignedPEM generates an in-memory self-signed CA cert and writes
-// it to a tempfile under t.TempDir(). Returns the path. Used by the
-// caCertPath tests; the cert is parsed by the production code, not actually
-// validated against a TLS handshake.
-func writeSelfSignedPEM(t *testing.T) string {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("ecdsa.GenerateKey: %v", err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "test-plex-ca"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		IsCA:         true,
-		KeyUsage:     x509.KeyUsageCertSign,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("x509.CreateCertificate: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "ca.pem")
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
-		t.Fatalf("os.WriteFile: %v", err)
-	}
-	return path
-}
+	"github.com/cplieger/httpx/v2/certtest"
+)
 
 // newTestClient builds a Client pointed at an httptest server running the
 // given handler. The server is torn down when the test ends. Shared across
@@ -141,7 +106,7 @@ func TestNewClientForUser(t *testing.T) {
 
 func TestNewClientForUserCACert(t *testing.T) {
 	parsed, _ := url.Parse("https://plex:32400")
-	caPath := writeSelfSignedPEM(t)
+	caPath := certtest.WriteSelfSignedCA(t)
 	c, err := NewClientForUser(parsed, "test-token", caPath)
 	if err != nil {
 		t.Fatalf("NewClientForUser: %v", err)
@@ -164,7 +129,7 @@ func TestNewHTTPClientNoCA(t *testing.T) {
 }
 
 func TestNewHTTPClientWithCA(t *testing.T) {
-	caPath := writeSelfSignedPEM(t)
+	caPath := certtest.WriteSelfSignedCA(t)
 	c, err := newHTTPClient(caPath)
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
