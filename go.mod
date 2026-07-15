@@ -18,7 +18,7 @@ require github.com/cplieger/httpx/v2 v2.5.0
 require github.com/cplieger/slogx v1.2.0
 
 require (
-	github.com/cplieger/envx v1.0.0
+	github.com/cplieger/envx v1.1.0
 	github.com/cplieger/plexapi v1.1.2
 	github.com/cplieger/scheduler v1.1.1
 )
