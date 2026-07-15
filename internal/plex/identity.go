@@ -7,34 +7,18 @@ import (
 )
 
 // ServerIdentity returns the Plex server's identity (friendly name, machine
-// ID, version) from GET /.
+// ID, version) from GET /. Delegates to the library's Identity.
 func (c *Client) ServerIdentity(ctx context.Context) (*ServerIdentity, error) {
-	var resp mc[ServerIdentity]
-	if err := c.get(ctx, "/", &resp); err != nil {
-		return nil, err
-	}
-	return &resp.MediaContainer, nil
+	return c.Identity(ctx)
 }
 
 // LoggedUser resolves the admin user by looking up the myplex account
-// username and matching it against the system accounts list.
+// username and matching it against the system accounts list (the library's
+// AdminAccount), shaped into the app's User type.
 func (c *Client) LoggedUser(ctx context.Context) (*User, error) {
-	// Get the admin username from myPlex account.
-	var acctResp struct {
-		Username string `json:"username"`
-	}
-	if err := c.get(ctx, "/myplex/account", &acctResp); err != nil {
-		return nil, fmt.Errorf("fetching account: %w", err)
-	}
-	// Match against system accounts via the shared fetchAccounts helper.
-	accounts, err := fetchAccounts[Account](ctx, c, "/accounts")
+	acct, err := c.AdminAccount(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetching system accounts: %w", err)
+		return nil, fmt.Errorf("resolving admin user: %w", err)
 	}
-	for _, a := range accounts {
-		if a.Name == acctResp.Username {
-			return &User{ID: strconv.Itoa(a.ID), Name: a.Name}, nil
-		}
-	}
-	return nil, fmt.Errorf("admin user %q not found in system accounts", acctResp.Username)
+	return &User{ID: strconv.Itoa(acct.ID), Name: acct.Name}, nil
 }

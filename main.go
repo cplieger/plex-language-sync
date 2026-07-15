@@ -77,12 +77,13 @@ func run() int {
 	marker := health.NewMarker(health.DefaultPath)
 	marker.Set(false)
 
+	// NewClient warns (via the shared library) when the URL is plain http
+	// to a non-local host — the X-Plex-Token would transit unencrypted.
 	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.caCertPath)
 	if err != nil {
 		slog.Error("cannot initialize plex client", "error", err)
 		return 1
 	}
-	plex.WarnIfPlaintextURL(client.BaseURL())
 
 	// Derive the cache encryption key from the admin PLEX_TOKEN up front. It is
 	// a pure function of the token (no Plex round-trip) and is deterministic for

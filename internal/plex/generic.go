@@ -1,43 +1,49 @@
 package plex
 
-import "context"
+import (
+	"context"
+	"errors"
+	"log/slog"
 
-// fetchMetadata issues GET <path> and decodes the response into
-// mc[struct{Metadata []T}]. Used by library-lookup methods whose JSON shape
-// is {"MediaContainer":{"Metadata":[...]}}. The eight original
-// collection-fetch getters all share this envelope; collapsing the
-// ~8 LOC boilerplate onto a single generic helper removes ~50 LOC of
-// near-identical copy-paste while preserving exact request semantics.
+	"github.com/cplieger/plexapi"
+)
+
+// fetchMetadata issues GET <path> and decodes the response into the
+// {"MediaContainer":{"Metadata":[...]}} envelope with the app's own item
+// type T (the internal/streams domain model). The transport and its
+// hardening are the library's Get.
 func fetchMetadata[T any](ctx context.Context, c *Client, path string) ([]T, error) {
-	var resp mc[struct {
+	var resp plexapi.MC[struct {
 		Metadata []T `json:"Metadata"`
 	}]
-	if err := c.get(ctx, path, &resp); err != nil {
-		return nil, err
+	if err := c.Get(ctx, path, &resp); err != nil {
+		return nil, warnIfOverCap(err, path)
 	}
 	return resp.MediaContainer.Metadata, nil
 }
 
-// fetchDirectory is the same as fetchMetadata but for responses whose
-// container field is named "Directory" (library sections, plugin lists).
+// fetchDirectory is fetchMetadata for responses whose container field is
+// named "Directory" (library sections).
 func fetchDirectory[T any](ctx context.Context, c *Client, path string) ([]T, error) {
-	var resp mc[struct {
+	var resp plexapi.MC[struct {
 		Directory []T `json:"Directory"`
 	}]
-	if err := c.get(ctx, path, &resp); err != nil {
-		return nil, err
+	if err := c.Get(ctx, path, &resp); err != nil {
+		return nil, warnIfOverCap(err, path)
 	}
 	return resp.MediaContainer.Directory, nil
 }
 
-// fetchAccounts is the Account-container sibling of fetchMetadata; the
-// /accounts endpoint wraps its list in a field literally named "Account".
-func fetchAccounts[T any](ctx context.Context, c *Client, path string) ([]T, error) {
-	var resp mc[struct {
-		Account []T `json:"Account"`
-	}]
-	if err := c.get(ctx, path, &resp); err != nil {
-		return nil, err
+// warnIfOverCap emits this app's operator-facing WARN when a read blew the
+// library's response cap. The message text is plex-language-sync's own
+// Loki-alerting contract (it predates the shared library and dashboards
+// grep for it), so the APP owns the string; the library reports the
+// condition via the typed error. Returns err unchanged for the caller.
+func warnIfOverCap(err error, path string) error {
+	var tooLarge *plexapi.ResponseTooLargeError
+	if errors.As(err, &tooLarge) {
+		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
+			"path", path, "cap_bytes", tooLarge.Limit)
 	}
-	return resp.MediaContainer.Account, nil
+	return err
 }
