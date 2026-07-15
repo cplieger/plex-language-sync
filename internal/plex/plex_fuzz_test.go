@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi"
 )
 
 func FuzzSharedServersXMLUnmarshal(f *testing.F) {
@@ -15,7 +16,9 @@ func FuzzSharedServersXMLUnmarshal(f *testing.F) {
 	f.Add([]byte(`not xml`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var v SharedServersXML
+		var v struct {
+			SharedServer []SharedServerXML `xml:"SharedServer"`
+		}
 		_ = xml.Unmarshal(data, &v)
 	})
 }
@@ -26,7 +29,7 @@ func FuzzEpisodeUnmarshal(f *testing.F) {
 	f.Add([]byte(`not json`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var env mc[struct {
+		var env plexapi.MC[struct {
 			Metadata []streams.Episode `json:"Metadata"`
 		}]
 		if err := json.Unmarshal(data, &env); err != nil {

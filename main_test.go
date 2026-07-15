@@ -2,8 +2,8 @@
 // remain in the main package after the cycle-1 extraction:
 //
 //   - Configuration loading (loadConfig + env helpers).
-//   - Validation helpers (splitTrim, envBool, envOr, requireEnv with
-//     _FILE secret handling, readSecretFile bounds) and the scheduler
+//   - Validation helpers (splitTrim, requireEnv with _FILE secret
+//     handling via envx.Secret) and the scheduler
 //     interval parser (loadSchedulerInterval).
 //   - notifyAdapter trigger-gate behaviour (the dispatch guards that
 //     live alongside the WS listener).
@@ -67,69 +67,6 @@ import (
 // ---------------------------------------------------------------------------
 // envBool / envOr / splitTrim
 // ---------------------------------------------------------------------------
-
-func TestEnvBool(t *testing.T) {
-	tests := []struct {
-		val      string
-		fallback bool
-		want     bool
-	}{
-		{"true", false, true},
-		{"1", false, true},
-		{"yes", false, true},
-		{"on", false, true},
-		{"false", true, false},
-		{"0", true, false},
-		{"no", true, false},
-		{"off", true, false},
-		{"", true, true},
-		{"invalid", true, true},
-	}
-	for _, tt := range tests {
-		t.Setenv("TEST_ENV_BOOL", tt.val)
-		if got := envBool("TEST_ENV_BOOL", tt.fallback); got != tt.want {
-			t.Errorf("envBool(%q, %v) = %v, want %v", tt.val, tt.fallback, got, tt.want)
-		}
-	}
-}
-
-func TestEnvBoolCaseInsensitive(t *testing.T) {
-	tests := []struct {
-		val  string
-		want bool
-	}{
-		{"TRUE", true},
-		{"True", true},
-		{"FALSE", false},
-		{"False", false},
-		{"YES", true},
-		{"Yes", true},
-		{"NO", false},
-		{"No", false},
-		{"ON", true},
-		{"On", true},
-		{"OFF", false},
-		{"Off", false},
-	}
-	for _, tt := range tests {
-		t.Setenv("TEST_ENV_BOOL_CI", tt.val)
-		fallback := !tt.want
-		if got := envBool("TEST_ENV_BOOL_CI", fallback); got != tt.want {
-			t.Errorf("envBool(%q) = %v, want %v", tt.val, got, tt.want)
-		}
-	}
-}
-
-func TestEnvOr(t *testing.T) {
-	t.Setenv("TEST_PLS_ENV", "custom")
-	if got := envOr("TEST_PLS_ENV", "default"); got != "custom" {
-		t.Errorf("envOr = %q, want custom", got)
-	}
-	t.Setenv("TEST_PLS_ENV", "")
-	if got := envOr("TEST_PLS_ENV", "default"); got != "default" {
-		t.Errorf("envOr = %q, want default", got)
-	}
-}
 
 func TestSplitTrim(t *testing.T) {
 	got := splitTrim(" foo , bar , , baz ")
@@ -462,139 +399,6 @@ func TestRequireEnvFromFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 // readSecretFile bounds
 // ---------------------------------------------------------------------------
-
-func TestReadSecretFileOversized(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	secretFile := filepath.Join(dir, "big.txt")
-	// Write just over the 1 MB limit.
-	oversized := make([]byte, (1<<20)+1)
-	for i := range oversized {
-		oversized[i] = 'a'
-	}
-	if err := os.WriteFile(secretFile, oversized, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := readSecretFile(secretFile)
-	if err == nil {
-		t.Error("readSecretFile should error on oversized file, got nil")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("error should mention size exceedance, got %v", err)
-	}
-}
-
-func TestReadSecretFileNotFound(t *testing.T) {
-	t.Parallel()
-	_, err := readSecretFile("/nonexistent/path/secret.txt")
-	if err == nil {
-		t.Error("readSecretFile should error on missing file")
-	}
-}
-
-func TestReadSecretFileValid(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	secretFile := filepath.Join(dir, "ok.txt")
-	if err := os.WriteFile(secretFile, []byte("payload"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readSecretFile(secretFile)
-	if err != nil {
-		t.Fatalf("readSecretFile: %v", err)
-	}
-	if string(got) != "payload" {
-		t.Errorf("readSecretFile = %q, want payload", got)
-	}
-}
-
-func TestReadSecretFileExactLimit(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	secretFile := filepath.Join(dir, "exact.txt")
-	data := make([]byte, 1<<20) // exactly 1 MB
-	for i := range data {
-		data[i] = 'x'
-	}
-	if err := os.WriteFile(secretFile, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readSecretFile(secretFile)
-	if err != nil {
-		t.Fatalf("readSecretFile at exact limit: %v", err)
-	}
-	if len(got) != 1<<20 {
-		t.Errorf("readSecretFile len = %d, want %d", len(got), 1<<20)
-	}
-}
-
-func TestReadSecretFilePathTraversal(t *testing.T) {
-	t.Parallel()
-	_, err := readSecretFile("/run/secrets/../../etc/passwd")
-	if err == nil {
-		t.Error("readSecretFile should reject path traversal")
-	}
-}
-
-func TestReadSecretFileEmpty(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	secretFile := filepath.Join(dir, "empty.txt")
-	if err := os.WriteFile(secretFile, []byte{}, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readSecretFile(secretFile)
-	if err != nil {
-		t.Fatalf("readSecretFile on empty file: unexpected error %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("readSecretFile on empty file = %q (len %d), want empty", got, len(got))
-	}
-}
-
-// TestRequireEnvSecretFileEmptyDetection characterizes the empty-secret
-// detection that requireEnv's _FILE branch performs after reading. The
-// fail-fast itself (slog.Error + os.Exit(1)) cannot be exercised
-// in-process and the repo intentionally has no subprocess/injected-exit
-// harness, so this test pins the read-layer + trim contract requireEnv
-// keys off: an empty OR whitespace-only secret file trims to "", which
-// is what triggers the "secret file is empty" exit. If this contract
-// regresses (e.g. readSecretFile starts erroring or trimming changes),
-// the guard would silently stop firing. Mirrors the direct-env empty
-// check (loadConfig requires PLEX_URL / PLEX_TOKEN non-empty); both the
-// _FILE and direct branches must reject an effectively-empty value.
-func TestRequireEnvSecretFileEmptyDetection(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		content string
-	}{
-		{"empty file", ""},
-		{"whitespace only spaces", "   "},
-		{"whitespace only newline", "\n"},
-		{"whitespace tabs and newlines", "\t\n  \t\n"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			secretFile := filepath.Join(dir, "secret.txt")
-			if err := os.WriteFile(secretFile, []byte(tt.content), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			data, err := readSecretFile(secretFile)
-			if err != nil {
-				t.Fatalf("readSecretFile(%q): unexpected error %v", tt.content, err)
-			}
-			// requireEnv's _FILE branch trims the bytes and fails fast
-			// when the result is empty; assert the trim yields "" so the
-			// guard fires for PLEX_TOKEN_FILE / PLEX_URL_FILE.
-			if got := strings.TrimSpace(string(data)); got != "" {
-				t.Errorf("TrimSpace(secret %q) = %q, want empty (would skip the empty-secret fail-fast)", tt.content, got)
-			}
-		})
-	}
-}
 
 // ---------------------------------------------------------------------------
 // notifyAdapter trigger gates

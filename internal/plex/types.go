@@ -1,100 +1,44 @@
-// Package plex holds the HTTP client and response types for the Plex Media
-// Server API. Consumers get a typed *Client with library, history, identity,
-// stream-selection, and shared-server methods. Value types (Episode, Stream,
-// Media, Part, Label) live in plex-language-sync/internal/streams; this
-// package owns the container + admin-facing types (Account, User, Section,
-// Session, HistoryItem, Show, Season) and the MediaContainer wrapper.
+// Package plex types: the app-facing container and admin types, plus
+// aliases onto the shared plexapi library where the shapes are the
+// library's own (RatingKey, Section, ServerIdentity, SharedServer). Value
+// types for the stream-selection domain (Episode, Stream, Media, Part,
+// Label) live in internal/streams; this package decodes into them via the
+// generic fetch helpers.
 package plex
 
 import (
-	"encoding/xml"
-	"fmt"
-	"strconv"
-
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi"
 )
 
-// Plex wire-protocol constants. These strings/numbers appear in the
-// Plex HTTP API and are a frozen wire contract. Consumers (main, config,
-// scheduler, notify, sync, this package's own library.go) import
-// these rather than redeclaring them locally.
+// Plex wire-protocol constants, re-exported from the library so consumers
+// (main, config, scheduler, notify, sync, library.go) keep one import.
 const (
-	// TypeEpisode is the Plex metadata "type" string for episode items,
-	// used when filtering MediaContainer responses by item type.
-	TypeEpisode = "episode"
-
-	// MetadataTypeEpisode is the numeric type ID for episode items used
-	// in /library/sections/{id}/all?type=... URL parameters.
-	MetadataTypeEpisode = 4
-
-	// SectionTypeShow is the Plex library-section "type" string for TV
-	// show sections, used when filtering library sections to TV shows
-	// only.
-	SectionTypeShow = "show"
+	// TypeEpisode is the Plex metadata "type" string for episode items.
+	TypeEpisode = plexapi.TypeEpisode
+	// MetadataTypeEpisode is the numeric type ID for ?type= filters.
+	MetadataTypeEpisode = plexapi.MetadataTypeEpisode
+	// SectionTypeShow is the library-section "type" string for TV shows.
+	SectionTypeShow = plexapi.SectionTypeShow
 )
 
-// RatingKey is a typed Plex ratingKey — the opaque numeric string Plex
-// uses to address episodes, seasons, shows, and other library items.
-// The on-disk and wire representation is always
-// a string; this type exists to prevent ratingKey values from being
-// conflated with other string keys (userID, sessionKey) at module
-// boundaries and to give callers a single place to validate that a
-// value is a well-formed numeric key.
-//
-// Methods on RatingKey intentionally avoid allocation: String returns
-// the underlying string, and Validate parses without copying. The
-// api.PlexReader interface and the *plex.Client methods (Episode,
-// ShowEpisodes, SeasonEpisodes, ShowMetadata, RecentlyAdded) take
-// RatingKey at the boundary so validation happens once via
-// RatingKey.Validate rather than being repeated per-method with
-// strconv.Atoi. Wire-origin strings (streams.Episode.RatingKey,
-// plex.Section.Key, plex.HistoryItem.RatingKey) stay typed as string
-// in their struct definitions — the plex.RatingKey wrap happens at
-// the call site, which preserves the Plex JSON wire format.
-type RatingKey string
+// RatingKey is the library's validated Plex item identifier. The alias
+// preserves this package's boundary vocabulary (api.PlexReader and the
+// *Client methods take plex.RatingKey); validation semantics — and the
+// exact `invalid rating key %q` error text scrapers grep for — are the
+// library's.
+type RatingKey = plexapi.RatingKey
 
-// String returns the ratingKey as a plain string for APIs that accept
-// strings (HTTP path interpolation, log values, cache keys).
-func (r RatingKey) String() string { return string(r) }
+// ServerIdentity is the library's GET / identity payload (the app reads
+// FriendlyName, MachineIdentifier, Version).
+type ServerIdentity = plexapi.ServerIdentity
 
-// Validate reports whether the ratingKey is a non-empty numeric string.
-// Plex ratingKeys are always numeric strings in practice; a malformed
-// key indicates a programming error (e.g., a userID leaked into a
-// ratingKey slot) that is worth surfacing rather than forwarding to the
-// Plex API as a malformed URL path.
-//
-// The error format is deliberately `invalid rating key %q` — byte-for-
-// byte identical to the five strconv.Atoi+fmt.Errorf stanzas it replaces
-// in library.go (Episode, ShowEpisodes, SeasonEpisodes, ShowMetadata,
-// RecentlyAdded). That error text is a stable log-key contract that
-// scrapers may grep for; keeping it byte-for-byte means no Loki query or
-// dashboard breaks.
-func (r RatingKey) Validate() error {
-	if _, err := strconv.Atoi(string(r)); err != nil {
-		return fmt.Errorf("invalid rating key %q", string(r))
-	}
-	return nil
-}
+// Section is a library section returned by GET /library/sections.
+type Section = plexapi.Section
 
-// mc is the MediaContainer envelope Plex wraps every JSON response in.
-// Generic over T so callers can embed the specific Metadata/Directory/Account
-// shape they expect.
-type mc[T any] struct {
-	MediaContainer T `json:"MediaContainer"`
-}
-
-// ServerIdentity is returned by GET /.
-type ServerIdentity struct {
-	FriendlyName      string `json:"friendlyName"`
-	MachineIdentifier string `json:"machineIdentifier"`
-	Version           string `json:"version"`
-}
-
-// Account is a Plex system account returned by GET /accounts.
-type Account struct {
-	Name string `json:"name"`
-	ID   int    `json:"id"`
-}
+// SharedServerXML is one shared-user entry from the plex.tv
+// shared_servers endpoint (userID, username, user-scoped access token).
+type SharedServerXML = plexapi.SharedServer
 
 // User represents the resolved admin (or any) Plex user.
 type User struct {
@@ -102,17 +46,10 @@ type User struct {
 	Name string
 }
 
-// Section is a library section returned by GET /library/sections.
-type Section struct {
-	Key   string `json:"key"`
-	Title string `json:"title"`
-	Type  string `json:"type"`
-}
-
 // Show is the show-level metadata returned by GET /library/metadata/{key}
 // when the key points to a TV show. Split off from Episode so callers
-// asking "what are the show's labels?" don't receive an
-// Episode-typed value.
+// asking "what are the show's labels?" don't receive an Episode-typed
+// value.
 type Show struct {
 	RatingKey        string          `json:"ratingKey"`
 	Title            string          `json:"title"`
@@ -121,10 +58,10 @@ type Show struct {
 	LibrarySectionID streams.FlexInt `json:"librarySectionID"`
 }
 
-// Season is the season-level metadata returned by GET /library/metadata/{key}
-// when the key points to a season. Split off from Episode for callers
-// that only need the navigational spine (parent key,
-// season index) without the whole media/part/stream graph.
+// Season is the season-level metadata returned by GET
+// /library/metadata/{key} when the key points to a season: the
+// navigational spine (parent key, season index) without the whole
+// media/part/stream graph.
 type Season struct {
 	RatingKey       string          `json:"ratingKey"`
 	ParentRatingKey string          `json:"parentRatingKey"`
@@ -141,19 +78,6 @@ type Session struct {
 	Player struct {
 		MachineIdentifier string `json:"machineIdentifier"`
 	} `json:"Player"`
-}
-
-// SharedServersXML is the XML response from plex.tv shared_servers.
-type SharedServersXML struct {
-	XMLName      xml.Name          `xml:"MediaContainer"`
-	SharedServer []SharedServerXML `xml:"SharedServer"`
-}
-
-// SharedServerXML is one <SharedServer> element from shared_servers.
-type SharedServerXML struct {
-	UserID      string `xml:"userID,attr"`
-	Username    string `xml:"username,attr"`
-	AccessToken string `xml:"accessToken,attr"`
 }
 
 // HistoryItem is one entry from GET /status/sessions/history/all.

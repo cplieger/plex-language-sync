@@ -2,59 +2,38 @@ package plex
 
 import (
 	"context"
-	"encoding/xml"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
+	"time"
+
+	"github.com/cplieger/httpx/v2"
+	"github.com/cplieger/plexapi"
 )
 
-// SharedUserTokens fetches shared user tokens from the plex.tv shared_servers
-// endpoint. This calls the plex.tv API (not the local server) and always
-// uses full TLS verification (there is no skip option) — plex.tv is a
-// public endpoint and the admin token must never be
-// forwarded through a skipped-verification transport or a redirect.
+// tvClient is the shared HTTP client for plex.tv API calls. Always uses
+// full TLS verification (there is no verification-skip option) and refuses
+// redirects, so the admin token can never be forwarded off plex.tv by a
+// compromised redirect or CDN front. Swappable for tests via SwapTVClient.
+var tvClient = &http.Client{
+	Timeout:       30 * time.Second,
+	CheckRedirect: httpx.RefuseAllRedirects,
+}
+
+// SwapTVClient replaces the package-level plex.tv HTTP client with the
+// supplied one and returns a function that restores the original. Intended
+// for tests that point shared-server lookups at a local httptest server;
+// production code never calls this.
+func SwapTVClient(replacement *http.Client) (restore func()) {
+	orig := tvClient
+	tvClient = replacement
+	return func() { tvClient = orig }
+}
+
+// SharedUserTokens fetches shared user tokens from the plex.tv
+// shared_servers endpoint. This calls the plex.tv API (not the local
+// server) through the library's TV client, which never skips TLS
+// verification and never follows redirects — the admin token must not be
+// forwarded anywhere but plex.tv.
 func (c *Client) SharedUserTokens(ctx context.Context, machineIdentifier string) ([]SharedServerXML, error) {
-	apiURL := "https://plex.tv/api/servers/" + url.PathEscape(machineIdentifier) + "/shared_servers"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, http.NoBody)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/xml")
-	req.Header.Set("X-Plex-Token", c.token)
-
-	// Use the shared plex.tv client — never skip TLS for public endpoints.
-	resp, err := tvClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("plex.tv shared_servers: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		drainBody(resp.Body)
-		return nil, fmt.Errorf("plex.tv shared_servers: %s", resp.Status)
-	}
-
-	body, err := readCappedBody(resp.Body, "endpoint", "plex.tv shared_servers")
-	if err != nil {
-		if errors.Is(err, errBodyOverCap) {
-			return nil, fmt.Errorf("plex.tv shared_servers: response exceeded %d-byte read cap", maxResponseBody)
-		}
-		return nil, err
-	}
-
-	// Some plex.tv responses use an empty body instead of an empty
-	// <MediaContainer/>; xml.Unmarshal of a zero-length body returns
-	// io.EOF, which would be misreported as a parse failure. Treat an
-	// empty body as zero shared servers (mirrors the JSON read path's
-	// len(body)==0 guard in client.go).
-	if len(body) == 0 {
-		return nil, nil
-	}
-
-	var result SharedServersXML
-	if err := xml.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parsing shared_servers XML: %w", err)
-	}
-	return result.SharedServer, nil
+	tv := plexapi.NewTV(c.Token(), plexapi.WithTVHTTPClient(tvClient))
+	return tv.SharedServers(ctx, machineIdentifier)
 }
