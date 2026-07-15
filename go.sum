@@ -2,8 +2,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/cplieger/atomicfile/v2 v2.1.3 h1:EAg+ZFO1+kgS7/eOfM/Kgk+QHvuz66mnX4LUQkcW5ic=
 github.com/cplieger/atomicfile/v2 v2.1.3/go.mod h1:jgwJ7oU3qahL4NwiF+1iBIzPRpR8LwXnicSalGoJeVA=
-github.com/cplieger/envx v1.0.0 h1:amAnEy+LrJDSlczo1N71UqB9zdRMlsOmBO2uwqop5EY=
-github.com/cplieger/envx v1.0.0/go.mod h1:OA7MSc3ChDXYZgIlHkABJZWt5FqUtr66yWBISLUvq20=
+github.com/cplieger/envx v1.1.0 h1:BwA+KmddeF0dWGqY0FGi1cv9SyKyP949sA05RfmCJ+c=
+github.com/cplieger/envx v1.1.0/go.mod h1:B9SEh2sZ3aP10PXELMEgIYfAO3qwP8uzuIL7BGfGlxQ=
 github.com/cplieger/health v1.2.0 h1:QQzQuvZ1IjBlH+foq7CqXBN7ClD7WLq62D6MFmA7joA=
 github.com/cplieger/health v1.2.0/go.mod h1:15Lm3XhPMU3nCEDfIH2hVAz6TXH06Wwiz9tgBi71vEE=
 github.com/cplieger/httpx/v2 v2.5.0 h1:lTFxDAT/4ijZ7wzaFPipipEpnHvv7ABKswB0NuUjLpg=
