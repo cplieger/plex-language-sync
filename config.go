@@ -63,13 +63,15 @@ type config struct {
 // the defaults and validation rules. On missing required vars it emits
 // slog.Error and terminates the process via os.Exit(1).
 func loadConfig() config {
-	// Set up slog handler early so requireEnv errors use the configured handler.
+	// Install the configured handler BEFORE the first envx read so a
+	// malformed DEBUG value warns through it (logfmt, Loki-parseable) rather
+	// than Go's pre-setup default logger; the level is then raised in place
+	// once DEBUG is known. requireEnv errors get the same treatment.
+	levelVar := slogx.Setup(slogx.Options{Level: slog.LevelInfo})
 	debug := envx.Bool("DEBUG", false)
-	level := slog.LevelInfo
 	if debug {
-		level = slog.LevelDebug
+		levelVar.Set(slog.LevelDebug)
 	}
-	slogx.Setup(slogx.Options{Level: level})
 
 	cfg := config{
 		plexURL:          requireEnv("PLEX_URL"),
