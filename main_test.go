@@ -417,28 +417,24 @@ func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) notifyAdapt
 	c := cache.New()
 	client := plex.NewClientFromHTTP(parsed, "test-token", nil)
 	mgr := users.NewManager(c)
-	mgr.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	return notifyAdapter{
 		syncer: nil, // unused on the gated-off paths
 		cfg:    &config{triggerOnPlay: triggerOnPlay, triggerOnScan: triggerOnScan},
 		users:  mgr,
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: client,
 		cache:  c,
 	}
 }
 
-func TestResolvePlayEventUser_noClientIdentifier_returnsAdmin(t *testing.T) {
+func TestResolvePlayEventUser_noClientIdentifier_failsClosed(t *testing.T) {
 	adapter := newTestAdapter(t, true, false)
 	ev := notify.PlayEvent{State: "playing", RatingKey: "100"}
 
-	uid, uname := adapter.resolvePlayEventUser(context.Background(), ev)
+	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(), ev)
 
-	if uid != "1" {
-		t.Errorf("resolvePlayEventUser userID = %q, want %q (admin fallback)", uid, "1")
-	}
-	if uname != "admin" {
-		t.Errorf("resolvePlayEventUser username = %q, want %q (admin fallback)", uname, "admin")
+	if ok {
+		t.Errorf("resolvePlayEventUser ok = true for an event with no client identifier, got (%q, %q); the fail-closed skip regressed (the event would be misattributed)", uid, uname)
 	}
 }
 
@@ -550,17 +546,16 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 	build := func(play, scan bool) notifyAdapter {
 		c := cache.New()
 		mgr := users.NewManager(c)
-		mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+		mgr.Init(&plex.User{ID: "1", Name: "admin"})
 		return notifyAdapter{
 			cfg:    &config{triggerOnPlay: play, triggerOnScan: scan},
 			users:  mgr,
-			admin:  &plex.User{ID: "1", Name: "admin"},
 			client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
 			cache:  c,
 		}
 	}
 
-	relevantPlay := notify.PlayEvent{State: "playing", RatingKey: "1"}
+	relevantPlay := notify.PlayEvent{State: "playing", RatingKey: "1", ClientIdentifier: "mac-A"}
 	relevantTimeline := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
 	ctx := context.Background()
 
@@ -573,9 +568,9 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 	}
 
 	// Positive control: with the play gate enabled the same relevant event
-	// reaches the Plex client (the server 404s so handlePlayEvent returns at
-	// ErrNotFound before any syncer call). Proves the counter is wired, so the
-	// gate-disabled assertion above cannot pass vacuously.
+	// reaches the Plex client (the session lookup 404s, so the fail-closed
+	// resolve skips before any syncer call). Proves the counter is wired, so
+	// the gate-disabled assertion above cannot pass vacuously.
 	build(true, false).OnPlay(ctx, relevantPlay)
 	if hits.Load() == 0 {
 		t.Fatal("play gate enabled but Plex client was never hit; counter wiring is broken")
@@ -600,11 +595,10 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 
 	c := cache.New()
 	mgr := users.NewManager(c)
-	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	adapter := notifyAdapter{
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
 		cache:  c,
 	}
@@ -676,13 +670,12 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 	c := cache.New()
 	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
 	mgr := users.NewManager(c)
-	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
 	adapter := notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: client,
 		cache:  c,
 		ignore: fakeIgnoreChecker{skip: true},
@@ -716,13 +709,12 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 	c := cache.New()
 	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
 	mgr := users.NewManager(c)
-	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
 	adapter := notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: client,
 		cache:  c,
 		// ignore nil: the n.ignore != nil conjunct is false, so a genuine
@@ -753,13 +745,12 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	c := cache.New()
 	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
 	mgr := users.NewManager(c)
-	mgr.Init(&plex.User{ID: "1", Name: "admin"}, base, "")
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
 	adapter := notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: client,
 		cache:  c,
 	}
@@ -787,19 +778,18 @@ func TestResolvePlayEventUser_sessionResolvesNonAdmin(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 	adapter := notifyAdapter{
 		cfg:    &config{},
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
 	}
 
-	uid, uname := adapter.resolvePlayEventUser(context.Background(),
+	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(),
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-B"})
 
-	if uid != "9" || uname != "bob" {
-		t.Errorf("resolvePlayEventUser = (%q, %q), want (9, bob); the admin fallback must NOT fire when the session resolves to a real user", uid, uname)
+	if !ok || uid != "9" || uname != "bob" {
+		t.Errorf("resolvePlayEventUser = (%q, %q, %v), want (9, bob, true); the fail-closed skip must NOT fire when the session resolves to a real user", uid, uname, ok)
 	}
 }
 
-func TestResolvePlayEventUser_unresolvedSessionFallsBackAdmin(t *testing.T) {
+func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
@@ -808,15 +798,14 @@ func TestResolvePlayEventUser_unresolvedSessionFallsBackAdmin(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 	adapter := notifyAdapter{
 		cfg:    &config{},
-		admin:  &plex.User{ID: "1", Name: "admin"},
 		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
 	}
 
-	uid, uname := adapter.resolvePlayEventUser(context.Background(),
+	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(),
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-missing"})
 
-	if uid != "1" || uname != "admin" {
-		t.Errorf("resolvePlayEventUser = (%q, %q), want (1, admin); an unresolved session must fall back to admin", uid, uname)
+	if ok {
+		t.Errorf("resolvePlayEventUser ok = true for an unresolved session, got (%q, %q); an unresolved session must fail closed (skip), not fall back to admin", uid, uname)
 	}
 }
 
