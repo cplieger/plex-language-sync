@@ -30,10 +30,9 @@ func TestID_StringRoundTrip(t *testing.T) {
 	}
 }
 
-func TestManager_InitSeedsAdminAndBaseURL(t *testing.T) {
-	parsed, _ := url.Parse("http://plex:32400")
+func TestManager_InitSeedsAdmin(t *testing.T) {
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	admin := m.Admin()
 	if admin.ID != "1" || admin.Name != "admin" {
@@ -42,13 +41,12 @@ func TestManager_InitSeedsAdminAndBaseURL(t *testing.T) {
 }
 
 func TestManager_InitPreservesExistingShared(t *testing.T) {
-	parsed, _ := url.Parse("http://plex:32400")
 	m := NewManager(fakeapi.NewCache())
 	fc := m.cache.(*fakeapi.Cache)
 	fc.SetUserTokens(map[string]string{"2": "pre-token"})
 	m.LoadFromCache()
 
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	// After Init, shared user "2" should still be resolvable because
 	// Init only resets the clients cache, not the shared map.
@@ -66,7 +64,7 @@ func TestManager_LoadFromCacheSeedsTokens(t *testing.T) {
 	})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	if m.SharedCount() != 2 {
@@ -79,7 +77,6 @@ func TestManager_LoadFromCacheSeedsTokens(t *testing.T) {
 }
 
 func TestManager_LoadFromCacheSkipsAdmin(t *testing.T) {
-	parsed, _ := url.Parse("http://plex:32400")
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{
 		"1": "admin-token-from-cache",
@@ -87,7 +84,7 @@ func TestManager_LoadFromCacheSkipsAdmin(t *testing.T) {
 	})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	// SharedCount should be 1 — the admin entry must be ignored.
@@ -102,7 +99,7 @@ func TestManager_ClientForUser(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -124,12 +121,11 @@ func TestManager_ClientForUser(t *testing.T) {
 }
 
 func TestManager_AllReturnsAdminAndShared(t *testing.T) {
-	parsed, _ := url.Parse("http://plex:32400")
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "t-bob", "3": "t-carol"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	all := m.All()
@@ -147,7 +143,7 @@ func TestManager_AllReturnsAdminAndShared(t *testing.T) {
 
 func TestManager_NameUnknownReturnsPlaceholder(t *testing.T) {
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, &url.URL{}, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	if got := m.Name("999"); got != "unknown-999" {
 		t.Errorf("Name(unknown) = %q, want unknown-999", got)
 	}
@@ -155,16 +151,12 @@ func TestManager_NameUnknownReturnsPlaceholder(t *testing.T) {
 
 // TestManager_ConcurrentClientForUser_TokenRotation drives a
 // RefreshTokens-style token rotation (mutating m.shared under m.mu)
-// concurrently with ClientForUser for the same uid, crossing the
-// lock-drop-then-recheck window in ClientForUser repeatedly. Under -race
-// (run locally; CI omits -race: CGO) this exercises concurrent access to
-// m.shared and pins one observable invariant: a returned per-user client
-// always carries a token that was live during the run, never an empty or
-// stale-zero token. NOTE: it does NOT pin the pruned/rotated re-check (a
-// mutant that drops `cur.Token != token` survives because a cached
-// once-live client still has a non-empty token and the next call's
-// fast-path rebuilds on a rotated token); that branch is a cache-hygiene
-// optimisation, not a branch this invariant can distinguish.
+// concurrently with ClientForUser for the same uid. ClientForUser now
+// derives clients via ForToken entirely under m.mu (no lock-drop window),
+// so under -race (run locally; CI omits -race: CGO) this pins concurrent
+// access to m.shared plus one observable invariant: a returned per-user
+// client always carries a token that was live during the run, never an
+// empty or stale-zero token.
 //
 // given a shared user whose token is rotated under the manager lock
 // when ClientForUser races the rotation
@@ -176,7 +168,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "tok-0"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -259,7 +251,7 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
 
@@ -294,7 +286,7 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	// Pre-populate the per-user client cache so we can assert eviction.
@@ -341,7 +333,7 @@ func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"100": "existing-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
@@ -371,7 +363,7 @@ func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
 
@@ -404,7 +396,7 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"100": "cached-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	cfg := testRefreshConfig(5, 10*time.Millisecond, 20*time.Millisecond)
@@ -440,7 +432,7 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	cfg := testRefreshConfig(5, 5*time.Millisecond, 20*time.Millisecond)
 	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
@@ -466,7 +458,7 @@ func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	cfg := testRefreshConfig(3, 5*time.Millisecond, 10*time.Millisecond)
 	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
@@ -492,7 +484,7 @@ func TestInitialRefreshWithRetry_context_cancellation(t *testing.T) {
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	// Long delays so the test must rely on context cancellation to exit.
 	cfg := testRefreshConfig(10, 5*time.Second, 10*time.Second)
@@ -557,7 +549,7 @@ func TestManager_ClientForUserCachesInstance(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -570,62 +562,51 @@ func TestManager_ClientForUserCachesInstance(t *testing.T) {
 	}
 }
 
-// TestManager_ClientForUser_FailsClosedOnConstructionError pins the
-// per-user client construction-failure contract in ClientForUser: when the
-// pinned CA certificate can no longer be loaded (file removed or corrupted
-// mid-run), the manager must log a warning and return nil rather than
-// falling back to the admin client. caCertPath is validated at startup, so
-// this models on-disk drift after startup.
-//
-// Returning nil (not the admin client) is the security-critical behaviour:
-// per-episode stream selection is per-user-scoped on the Plex server, so a
-// shared user's selection PUT executed under the admin token would corrupt
-// the admin's own per-user selection and never apply the intended user's.
-// Callers nil-check the result and skip the operation.
-//
-// given a known shared user and a caCertPath pointing at a missing file
-// when ClientForUser is called
-// then it returns nil (fail closed, no admin fallback, no panic).
-func TestManager_ClientForUser_FailsClosedOnConstructionError(t *testing.T) {
-	parsed, _ := url.Parse("https://plex:32400")
+// TestManager_ClientForUser_DerivesFromAdminClient pins the ForToken
+// derivation contract: a shared user's client shares the admin client's
+// transport and connection pool (the library's same-server derivation)
+// while carrying the user's own token. The former construction-failure
+// path (CA file unreadable mid-run) no longer exists — derivation is pure
+// and cannot fail; the fail-closed nil contract now applies only to
+// unknown/departed users (pinned in TestManager_ClientForUser).
+func TestManager_ClientForUser_DerivesFromAdminClient(t *testing.T) {
+	parsed, _ := url.Parse("http://plex:32400")
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
 	m := NewManager(fc)
-	// A non-existent CA path makes plex.NewClientForUser -> newHTTPClient ->
-	// atomicfile.ReadBounded fail, exercising the err != nil branch.
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "/nonexistent/plex-ca-absent.pem")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
 
 	got := m.ClientForUser("2", adminClient)
-	if got != nil {
-		t.Errorf("ClientForUser should fail closed (return nil) when per-user client construction fails; got %v", got)
+	if got == nil {
+		t.Fatal("ClientForUser returned nil for a known shared user")
 	}
-	if got == adminClient {
-		t.Error("ClientForUser must NOT fall back to the admin client on construction failure: a per-user write under the admin token corrupts the admin's per-user stream selection")
+	if got.Token() != "friend-token" {
+		t.Errorf("token = %q, want friend-token", got.Token())
+	}
+	// Pool sharing is the library's pinned ForToken contract; the
+	// derivation-shape signal observable here is the shared server origin.
+	if got.BaseURL().String() != adminClient.BaseURL().String() {
+		t.Error("per-user client must target the admin client's server (ForToken derivation)")
 	}
 }
 
 // TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance is a
 // -race data-race probe over the concurrent publish path in ClientForUser:
-// many goroutines request the same user's client under a stable token, the
-// lock is dropped while each builds a *plex.Client, and the re-acquire
-// re-checks state before publishing. Under -race (run locally; CI omits
-// -race: CGO) this exercises concurrent access to m.clients / m.shared and
-// asserts every caller ends on a non-nil per-user client with the live
-// token. NOTE: this is NOT a deterministic guard for the
-// "another goroutine already published" re-check -- without -race the
-// top-of-function cache-hit lets the first publisher win and later callers
-// read it before reaching their own lock-drop window, so a mutant that
-// drops that re-check survives in the no-race gate. Convergence on a single
-// cached instance is the happy-path expectation; divergence is only
-// observable (and only a data race) under -race.
+// many goroutines request the same user's client under a stable token.
+// Derivation now runs entirely under m.mu (ForToken is pure, so no
+// lock-drop window exists), making single-instance convergence a hard
+// guarantee: the first caller publishes the derived client into m.clients
+// and every subsequent caller takes the cache hit. Under -race (run
+// locally; CI omits -race: CGO) this also exercises concurrent access to
+// m.clients / m.shared.
 //
 // given a stable-token shared user and N concurrent ClientForUser calls
-// when they race through the lock-drop client-build window
-// then every caller observes a non-nil per-user *plex.Client for that uid.
+// when they race on the manager lock
+// then every caller observes the same cached per-user *plex.Client.
 func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing.T) {
 	t.Parallel()
 	parsed, _ := url.Parse("http://plex:32400")
@@ -633,7 +614,7 @@ func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing
 	fc.SetUserTokens(map[string]string{"2": "stable-token"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -687,7 +668,7 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 	fc.SetUserTokens(map[string]string{"2": "tok-old"})
 
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", nil)
@@ -739,7 +720,7 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
 
@@ -771,7 +752,7 @@ func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	adminClient := plex.NewClientFromHTTP(parsed, "admin-token", &http.Client{})
 	m := NewManager(fakeapi.NewCache())
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -814,7 +795,7 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
 	m := NewManager(fc)
-	m.Init(&plex.User{ID: "1", Name: "admin"}, parsed, "")
+	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
 	var buf bytes.Buffer

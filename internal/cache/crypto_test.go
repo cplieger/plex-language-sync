@@ -155,12 +155,11 @@ func TestIsEncrypted(t *testing.T) {
 	}
 }
 
-// --- Integration: SaveTo encrypts, LoadFrom decrypts ---
+// --- Integration: Save encrypts, Load decrypts ---
 
-func TestSaveToEncryptsUserTokens(t *testing.T) {
+func TestSaveEncryptsUserTokens(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "cache.json")
 
 	key, _ := DeriveKey("admin-token")
 	c := New()
@@ -170,16 +169,16 @@ func TestSaveToEncryptsUserTokens(t *testing.T) {
 		"user2": "secret-token-2",
 	})
 
-	if err := c.SaveTo(path); err != nil {
-		t.Fatalf("SaveTo() error = %v", err)
+	if err := c.Save(dir); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
 
 	// Read raw JSON and verify tokens are NOT plaintext.
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(filepath.Join(dir, tokensFile))
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	var ondisk Data
+	var ondisk tokensData
 	if err := json.Unmarshal(raw, &ondisk); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
@@ -199,10 +198,9 @@ func TestSaveToEncryptsUserTokens(t *testing.T) {
 	}
 }
 
-func TestLoadFromDecryptsUserTokens(t *testing.T) {
+func TestLoadDecryptsUserTokens(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "cache.json")
 
 	key, _ := DeriveKey("admin-token")
 
@@ -210,35 +208,32 @@ func TestLoadFromDecryptsUserTokens(t *testing.T) {
 	orig := New()
 	orig.SetEncryptionKey(key)
 	orig.SetUserTokens(map[string]string{"u1": "tok1"})
-	if err := orig.SaveTo(path); err != nil {
-		t.Fatalf("SaveTo() error = %v", err)
+	if err := orig.Save(dir); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
 
 	// Load into a new cache with the same key.
 	loaded := New()
 	loaded.SetEncryptionKey(key)
-	if err := loaded.LoadFrom(path); err != nil {
-		t.Fatalf("LoadFrom() error = %v", err)
+	if err := loaded.Load(dir); err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 	tokens := loaded.UserTokens()
 	if tokens["u1"] != "tok1" {
-		t.Errorf("LoadFrom decrypted token = %q, want tok1", tokens["u1"])
+		t.Errorf("Load decrypted token = %q, want tok1", tokens["u1"])
 	}
 }
 
-func TestLoadFromPlaintextCacheMigrates(t *testing.T) {
+func TestLoadPlaintextTokensFileMigrates(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "cache.json")
+	path := filepath.Join(dir, tokensFile)
 
-	// Write a pre-encryption plaintext cache file.
-	plainData := Data{
-		ProcessedEpisodes: map[string]int64{},
-		LanguageProfiles:  map[string]map[string]string{},
-		UserTokens:        map[string]string{"u1": "plain-token-abc"},
-		LastSchedulerRun:  0,
-	}
-	raw, _ := json.MarshalIndent(&plainData, "", "  ")
+	// Write a pre-encryption plaintext tokens file (produced by a run
+	// without an encryption key).
+	raw, _ := json.MarshalIndent(&tokensData{
+		UserTokens: map[string]string{"u1": "plain-token-abc"},
+	}, "", "  ")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -247,20 +242,20 @@ func TestLoadFromPlaintextCacheMigrates(t *testing.T) {
 	key, _ := DeriveKey("admin-token")
 	c := New()
 	c.SetEncryptionKey(key)
-	if err := c.LoadFrom(path); err != nil {
-		t.Fatalf("LoadFrom() error = %v", err)
+	if err := c.Load(dir); err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 	tokens := c.UserTokens()
 	if tokens["u1"] != "plain-token-abc" {
 		t.Errorf("plaintext migration: token = %q, want plain-token-abc", tokens["u1"])
 	}
 
-	// Next SaveTo should encrypt it.
-	if err := c.SaveTo(path); err != nil {
-		t.Fatalf("SaveTo() error = %v", err)
+	// Next Save should encrypt it.
+	if err := c.Save(dir); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
 	raw2, _ := os.ReadFile(path)
-	var ondisk Data
+	var ondisk tokensData
 	if err := json.Unmarshal(raw2, &ondisk); err != nil {
 		t.Fatal(err)
 	}
@@ -269,19 +264,18 @@ func TestLoadFromPlaintextCacheMigrates(t *testing.T) {
 	}
 }
 
-func TestSaveToWithoutKeyStoresPlaintext(t *testing.T) {
+func TestSaveWithoutKeyStoresPlaintext(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "cache.json")
 
 	// No encryption key set — tokens remain plaintext on disk.
 	c := New()
 	c.SetUserTokens(map[string]string{"u1": "my-plain-token"})
-	if err := c.SaveTo(path); err != nil {
-		t.Fatalf("SaveTo() error = %v", err)
+	if err := c.Save(dir); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
-	raw, _ := os.ReadFile(path)
-	var ondisk Data
+	raw, _ := os.ReadFile(filepath.Join(dir, tokensFile))
+	var ondisk tokensData
 	if err := json.Unmarshal(raw, &ondisk); err != nil {
 		t.Fatal(err)
 	}
@@ -355,14 +349,13 @@ func TestDecryptTokenCiphertextLengthBoundary(t *testing.T) {
 	}
 }
 
-// TestLoadFromDropsUndecryptableToken pins the key-rotation / tampered-token
-// path in LoadFrom: a user token that fails to decrypt (here, written under
+// TestLoadDropsUndecryptableToken pins the key-rotation / tampered-token
+// path in Load: a user token that fails to decrypt (here, written under
 // one derived key and loaded under another) must be DROPPED from the map and
 // a warning logged, so a stale ciphertext is never surfaced to callers as if
 // it were a valid token. The next plex.tv refresh repopulates it.
-func TestLoadFromDropsUndecryptableToken(t *testing.T) {
+func TestLoadDropsUndecryptableToken(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "cache.json")
 
 	keyA, err := DeriveKey("token-A")
 	if err != nil {
@@ -371,8 +364,8 @@ func TestLoadFromDropsUndecryptableToken(t *testing.T) {
 	orig := New()
 	orig.SetEncryptionKey(keyA)
 	orig.SetUserTokens(map[string]string{"u1": "secret-1"})
-	if err := orig.SaveTo(path); err != nil {
-		t.Fatalf("SaveTo() error = %v", err)
+	if err := orig.Save(dir); err != nil {
+		t.Fatalf("Save() error = %v", err)
 	}
 
 	keyB, err := DeriveKey("token-B")
@@ -382,8 +375,8 @@ func TestLoadFromDropsUndecryptableToken(t *testing.T) {
 	loaded := New()
 	loaded.SetEncryptionKey(keyB)
 	out := captureSlog(t, func() {
-		if err := loaded.LoadFrom(path); err != nil {
-			t.Fatalf("LoadFrom() error = %v", err)
+		if err := loaded.Load(dir); err != nil {
+			t.Fatalf("Load() error = %v", err)
 		}
 	})
 

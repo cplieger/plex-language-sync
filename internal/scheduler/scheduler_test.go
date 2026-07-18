@@ -29,7 +29,7 @@ type fakeSyncer struct {
 	processCalls atomic.Int64
 }
 
-func (s *fakeSyncer) ChangeTracksForEpisode(_ context.Context, _ api.PlexReadWriter, _ string, _ *streams.Episode, _ string) {
+func (s *fakeSyncer) ReconcileWithIntent(_ context.Context, _ api.PlexReadWriter, _ string, _ *streams.Episode, _ int64, _ string) {
 	s.changeCalls.Add(1)
 }
 
@@ -840,7 +840,7 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 
 // TestProcessHistoryItem_NilPerUserClientSkips pins the fail-closed per-user
 // write contract: when the per-user client is nil, the history item is skipped
-// (no admin-client fallback, no Episode fetch, no ChangeTracksForEpisode) and
+// (no admin-client fallback, no Episode fetch, no ReconcileWithIntent) and
 // the skip is logged. Not parallel: captureSlog mutates the global logger.
 func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	plx := &fakeapi.Plex{

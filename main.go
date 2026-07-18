@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -46,9 +45,10 @@ import (
 // whose defining packages cannot import api (import cycle).
 var _ api.PlexReadWriter = (*plex.Client)(nil)
 
-// cachePath is the on-disk location for the persisted cache. Frozen by
-// inviolate contract item 7 (file paths).
-const cachePath = "/config/cache.json"
+// cacheDir is the on-disk directory for the persisted cache (the split
+// profiles.json / tokens.json / state.json layout; a legacy cache.json is
+// migrated on first load). Frozen by inviolate contract item 7 (file paths).
+const cacheDir = "/config"
 
 // shutdownWaitBudget bounds how long run() waits for background loops
 // (user-token refresh + scheduler) to join before persisting the cache
@@ -122,19 +122,19 @@ func run() int {
 	// key (derived above) makes user-token decryption work offline on restart.
 	c := cache.New()
 	c.SetEncryptionKey(encKey)
-	if err := c.LoadFrom(cachePath); err != nil {
-		slog.Warn("cache load failed, starting fresh", "error", err)
+	if err := c.Load(cacheDir); err != nil {
+		slog.Warn("cache load incomplete, affected sections starting fresh", "error", err)
 	}
-	// Reap any temp orphaned by an interrupted SaveTo so they don't accumulate
+	// Reap any temp orphaned by an interrupted Save so they don't accumulate
 	// on the persistent /config volume. Best-effort: a cleanup failure is
 	// non-fatal at startup, so log at Warn and continue.
-	if _, err := atomicfile.CleanupStaleTemps(filepath.Dir(cachePath), time.Hour); err != nil {
-		slog.Warn("stale temp cleanup failed", "path", filepath.Dir(cachePath), "error", err)
+	if _, err := atomicfile.CleanupStaleTemps(cacheDir, time.Hour); err != nil {
+		slog.Warn("stale temp cleanup failed", "path", cacheDir, "error", err)
 	}
 
 	// User manager — admin identity + cached shared-user tokens.
 	um := users.NewManager(c)
-	um.Init(admin, client.BaseURL(), cfg.caCertPath)
+	um.Init(admin)
 	um.LoadFromCache()
 
 	// Connection verified and admin resolved (possibly after a healthy-degraded
@@ -157,9 +157,9 @@ func run() int {
 	// for transient mid-run save failures.
 	defer func() {
 		marker.Set(false)
-		if err := c.SaveTo(cachePath); err != nil {
+		if err := c.Save(cacheDir); err != nil {
 			slog.Error("cache save on shutdown failed, profiles may be lost",
-				"path", cachePath, "error", err)
+				"path", cacheDir, "error", err)
 		}
 	}()
 
@@ -208,7 +208,7 @@ func run() int {
 		um,
 		userClientFn,
 		syncer,
-		func() error { return c.SaveTo(cachePath) },
+		func() error { return c.Save(cacheDir) },
 	)
 
 	// runtime-concurrency-p2: join on RefreshLoop + scheduler.Run at
@@ -237,7 +237,6 @@ func run() int {
 		syncer: syncer,
 		cfg:    &cfg,
 		users:  um,
-		admin:  admin,
 		client: client,
 		cache:  c,
 		ignore: ignorePolicy,
@@ -334,7 +333,7 @@ func connectAndResolveAdmin(ctx context.Context, client *plex.Client, marker *he
 
 // connectOnce performs a single connect + admin-resolve attempt.
 func connectOnce(ctx context.Context, client *plex.Client) (*plex.ServerIdentity, *plex.User, error) {
-	identity, err := client.ServerIdentity(ctx)
+	identity, err := client.Identity(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to plex server: %w", err)
 	}
@@ -413,7 +412,6 @@ type notifyAdapter struct {
 	syncer *syncpkg.Syncer
 	cfg    *config
 	users  *users.Manager
-	admin  *plex.User
 	client *plex.Client
 	cache  *cache.Cache
 	ignore api.IgnoreChecker
@@ -439,7 +437,10 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 		return
 	}
 
-	userID, username := n.resolvePlayEventUser(ctx, ev)
+	userID, username, ok := n.resolvePlayEventUser(ctx, ev)
+	if !ok {
+		return
+	}
 
 	userClient := n.users.ClientForUser(userID, n.client)
 	if userClient == nil {
@@ -470,21 +471,30 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 		"user", username,
 		"state", ev.State)
 
-	n.syncer.ChangeTracksForEpisode(ctx, userClient, userID, episode, "play")
+	n.syncer.ObserveAndPropagate(ctx, userClient, userID, episode, "play")
 }
 
 // resolvePlayEventUser resolves the user from a play event's client
-// identifier. Falls back to the admin user if the session cannot be
-// resolved.
-func (n notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.PlayEvent) (userID, username string) {
-	if ev.ClientIdentifier != "" {
-		if uid, uname, err := n.client.UserFromSession(ctx, ev.ClientIdentifier); err == nil {
-			return uid, uname
-		}
-		slog.Debug("could not resolve user from session, using admin",
-			"client", ev.ClientIdentifier)
+// identifier. Fails CLOSED: when the event carries no client identifier
+// or the session cannot be resolved, it returns ok=false and the caller
+// skips the event rather than misattributing it to the admin (the same
+// fail-closed rule as users.Manager.ClientForUser — a per-user stream
+// write under the wrong identity records the selection against the
+// wrong user, and a mis-learned profile poisons future seeding). The
+// scheduler's history replay recovers the episode later with an
+// authoritative AccountID.
+func (n notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.PlayEvent) (userID, username string, ok bool) {
+	if ev.ClientIdentifier == "" {
+		slog.Warn("play event: no client identifier, skipping", "key", ev.RatingKey)
+		return "", "", false
 	}
-	return n.admin.ID, n.admin.Name
+	uid, uname, err := n.client.UserFromSession(ctx, ev.ClientIdentifier)
+	if err != nil {
+		slog.Warn("play event: could not resolve user from session, skipping",
+			"client", ev.ClientIdentifier, "key", ev.RatingKey, "error", err)
+		return "", "", false
+	}
+	return uid, uname, true
 }
 
 func (n notifyAdapter) handleTimeline(ctx context.Context, entries []notify.TimelineEntry) {

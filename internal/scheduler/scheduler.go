@@ -26,9 +26,10 @@
 //     starting", "running initial deep analysis", "deep analysis
 //     completed", "scheduler: processing recently added episode",
 //     "scheduler stopped") identical.
-//   - /config/cache.json schema unchanged — LastSchedulerRun reads and
-//     writes go through api.Cache and are tagged by the concrete
-//     internal/cache package.
+//   - On-disk cache schema unchanged (LastSchedulerRun lives in
+//     state.json since the 2026-07 retention split) — reads and writes go
+//     through api.Cache and are tagged by the concrete internal/cache
+//     package.
 //
 // Consumer note: scheduler depends on api.PlexReader, api.Cache,
 // api.UserLookup, and a Syncer interface satisfied by *sync.Syncer
@@ -51,7 +52,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	schedlib "github.com/cplieger/scheduler"
+	schedlib "github.com/cplieger/scheduler/v2"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -99,7 +100,9 @@ type Config struct {
 type CacheSaver func() error
 
 // Syncer is the narrow interface the scheduler needs from the sync
-// package: a per-user track-apply call plus the multi-user fan-out.
+// package: the reconcile-plane per-user call (re-apply the user's
+// RECORDED intent — history replay never derives a user's choice from
+// a delayed metadata read) plus the multi-user new-episode fan-out.
 // The ignore-library/ignore-label skip checks live on
 // api.IgnoreChecker (injected via Config.Ignore) rather than on the
 // Syncer, so overlapping event/scheduler paths share one decision
@@ -108,7 +111,7 @@ type CacheSaver func() error
 // *sync.Syncer satisfies this. Declared here (rather than imported)
 // to keep scheduler independent of internal/sync for test ergonomics.
 type Syncer interface {
-	ChangeTracksForEpisode(ctx context.Context, userClient api.PlexReadWriter, userID string, reference *streams.Episode, trigger string)
+	ReconcileWithIntent(ctx context.Context, userClient api.PlexReadWriter, userID string, episode *streams.Episode, viewedAt int64, trigger string)
 	ProcessNewOrUpdatedEpisodeAllUsers(ctx context.Context, episode *streams.Episode, trigger string)
 }
 
@@ -290,8 +293,10 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 		"marker_advanced", complete)
 }
 
-// processRecentHistory replays language settings from the last window
-// of play history.
+// processRecentHistory reconciles the last window of play history:
+// for each replayed item the sync layer re-applies the user's RECORDED
+// intent (or skips — see ReconcileWithIntent); the replay never derives
+// a user's choice from the episode's current selection state.
 //
 // The prior implementation ran a single
 // sequential loop with a local counter tracking consecutive failures.
@@ -393,9 +398,12 @@ func (s *Scheduler) feedHistory(ctx context.Context, work chan<- plex.HistoryIte
 	return true
 }
 
-// processHistoryItem runs a single history replay: fetch the per-user
-// episode and delegate to the Syncer's ChangeTracksForEpisode. Success
-// resets the shared error counter; a fetch failure increments it.
+// processHistoryItem runs a single history-replay reconciliation: fetch
+// the per-user episode (to resolve its show and pass the ignore gate)
+// and delegate to the Syncer's ReconcileWithIntent, which re-applies the
+// user's recorded intent — or skips when none exists or the play is
+// newer than the observation. Success resets the shared error counter;
+// a fetch failure increments it.
 func (s *Scheduler) processHistoryItem(
 	ctx context.Context,
 	item plex.HistoryItem,
@@ -423,7 +431,7 @@ func (s *Scheduler) processHistoryItem(
 		return
 	}
 	consecutiveErrors.Store(0)
-	s.sync.ChangeTracksForEpisode(ctx, userClient, userID, ep, "scheduler")
+	s.sync.ReconcileWithIntent(ctx, userClient, userID, ep, int64(item.ViewedAt), "scheduler")
 }
 
 // processRecentlyAdded applies language settings to recently added

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -161,12 +164,21 @@ type fakePlexClient struct {
 
 func (f *fakePlexClient) BaseURL() *url.URL { return f.base }
 func (f *fakePlexClient) Token() string     { return f.token }
-func (f *fakePlexClient) HTTPClient() *http.Client {
-	if f.client == nil {
-		f.client = &http.Client{Timeout: 2 * time.Second}
+
+// RedirectPolicy mirrors the production accessor: the policy off the
+// fake's own client when one was supplied, nil otherwise (net/http's
+// default follow behavior — what an unset CheckRedirect meant before).
+func (f *fakePlexClient) RedirectPolicy() func(*http.Request, []*http.Request) error {
+	if f.client != nil {
+		return f.client.CheckRedirect
 	}
-	return f.client
+	return nil
 }
+
+// BaseTransport returns nil: the fake owns its http.Client (like any
+// WithHTTPClient-built plexapi client), so dialClient exercises its
+// DefaultTransport-clone fallback path.
+func (f *fakePlexClient) BaseTransport() *http.Transport { return nil }
 
 // TestNewListener_UsesProvidedConfig confirms the Config shrinkage
 // tests can pass without mutating globals.
@@ -556,5 +568,62 @@ func TestConnectAndListen_DispatchesReceivedMessage(t *testing.T) {
 	}
 	if len(h.timelines) != 0 {
 		t.Errorf("OnTimeline fired %d times, want 0", len(h.timelines))
+	}
+}
+
+// TestConnectAndListen_PinnedCAHandshake is the regression guard for the
+// CA-pin loss on the WebSocket dial: a production *plex.Client wraps its
+// base transport in a retry round-tripper, so the old dialClient (which
+// type-asserted HTTPClient().Transport to *http.Transport) silently fell
+// back to a DefaultTransport clone and DISCARDED a PLEX_CA_CERT_PATH pin —
+// TLS-pinned deployments could make synchronous API calls but never
+// connect the listener. dialClient now derives the dial transport from
+// PlexClient.BaseTransport (the hardened base under the retry wrapper),
+// so the pinned trust carries into the wss handshake.
+//
+// The server is a TLS httptest server whose self-signed certificate is
+// pinned as the client's sole trust anchor via plex.NewClient's caCertPath
+// — the exact production construction shape. With the fix the handshake
+// succeeds; with the old fallback it fails TLS verification and
+// connected=false.
+func TestConnectAndListen_PinnedCAHandshake(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("server accept: %v", err)
+			return
+		}
+		c.Close(websocket.StatusNormalClosure, "")
+	}))
+	srv.StartTLS()
+	defer srv.Close()
+
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	caPath := filepath.Join(t.TempDir(), "plex-ca.pem")
+	if err := os.WriteFile(caPath, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := plex.NewClient(srv.URL, "test-token", caPath)
+	if err != nil {
+		t.Fatalf("NewClient with pinned CA: %v", err)
+	}
+
+	cfg := DefaultConfig()
+	cfg.ReadIdleTimeout = 2 * time.Second
+	l := NewListener(client, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
+	if !connected {
+		t.Fatalf("wss handshake over the pinned CA failed (connected=false, err=%v); "+
+			"the dial transport dropped the CA pin", err)
+	}
+	if handshakeAt.IsZero() {
+		t.Error("handshakeAt is zero, want the post-handshake instant")
 	}
 }

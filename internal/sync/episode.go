@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	stdsync "sync"
 
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -50,14 +51,21 @@ const maxRefSearchDepth = 50
 // redundant ShowMetadata fetch here; a caller that skips it will
 // silently apply language to an ignored show, breaking the
 // documented "ignored show excluded from BOTH propagation AND
-// learning" policy. (Contrast ChangeTracksForEpisode, which
-// self-gates.)
+// learning" policy. (Contrast ObserveAndPropagate and
+// ReconcileWithIntent, which self-gate.)
 func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 	ctx context.Context,
 	episode *streams.Episode,
 	trigger string,
 ) {
-	ref := s.FindEpisodeReference(ctx, episode)
+	// The shared reference search is LAZY: users with a recorded intent
+	// for the show never need it (their intent is strictly better — it is
+	// their own observed choice, not the household-ambient selection), so
+	// the fetch chain runs only when the first intent-less user is
+	// reached, and not at all once every user has an intent.
+	refOnce := stdsync.OnceValue(func() *EpisodeRef {
+		return s.FindEpisodeReference(ctx, episode)
+	})
 
 	for _, u := range s.users.All() {
 		if ctx.Err() != nil {
@@ -68,7 +76,7 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 			slog.Warn("sync: no per-user client, skipping user", "user_id", u.ID)
 			continue
 		}
-		s.applyEpisodeForUser(ctx, userClient, u.ID, episode, ref, trigger)
+		s.applyEpisodeForUser(ctx, userClient, u.ID, episode, refOnce, trigger)
 	}
 }
 
@@ -151,14 +159,17 @@ func (s *Syncer) FindEpisodeReference(
 	return &EpisodeRef{Episode: ref, Audio: audio, Subtitle: sub}
 }
 
-// applyEpisodeForUser applies a previously-found reference (or the
-// learned language profile as a fallback) to a single episode for a
-// single user. The reference search that produces `ref` is shared
-// across all users for the same episode by the caller.
+// applyEpisodeForUser seeds a single new/updated episode for a single
+// user, trying the tiers most-attributable first:
 //
-// A nil `ref` means no reference episode was found (new show, or no
-// prior episode with selections) and the language-profile fallback
-// should be tried if enabled.
+//  1. The user's recorded INTENT for the show — their own observed
+//     choice, re-applied per-user (this is what makes a media-replaced
+//     episode recover each user's selection instead of imposing the
+//     household-ambient one).
+//  2. The shared reference episode (lazily searched once per episode
+//     across all users) — the show's established ambient selection.
+//  3. The learned language profile — cross-show generalization for a
+//     show the user has never touched.
 //
 // Writes via UpdateEpisodeStreams / ApplyLanguageProfile use the
 // per-user client because PUTs set per-user playback state.
@@ -167,11 +178,26 @@ func (s *Syncer) applyEpisodeForUser(
 	userClient api.PlexReadWriter,
 	userID string,
 	episode *streams.Episode,
-	ref *EpisodeRef,
+	refOnce func() *EpisodeRef,
 	trigger string,
 ) {
 	username := s.users.Name(userID)
 
+	if intent, ok := s.cache.IntentFor(userID, episode.GrandparentRatingKey); ok {
+		refAudio, refSub := intent.RefStreams()
+		if s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, refAudio, refSub) {
+			slog.Info("new/updated episode language set",
+				"trigger", trigger,
+				"user", username,
+				"episode", episode.ShortName(),
+				"source", "intent",
+				"audio", streams.Desc(refAudio),
+				"subtitle", streams.Desc(refSub))
+		}
+		return
+	}
+
+	ref := refOnce()
 	if ref == nil {
 		if s.cfg.LanguageProfiles {
 			if s.ApplyLanguageProfile(ctx, userClient, userID, episode, trigger) {

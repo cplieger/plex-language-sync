@@ -6,12 +6,6 @@ import (
 	"strconv"
 )
 
-// ServerIdentity returns the Plex server's identity (friendly name, machine
-// ID, version) from GET /. Delegates to the library's Identity.
-func (c *Client) ServerIdentity(ctx context.Context) (*ServerIdentity, error) {
-	return c.Identity(ctx)
-}
-
 // LoggedUser resolves the admin (server owner) user via the library's
 // AdminAccount — system account id 1, the same server-local id space that
 // sessions and watch history report — shaped into the app's User type.

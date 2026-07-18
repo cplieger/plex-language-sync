@@ -1,10 +1,9 @@
 package streams
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"strconv"
+
+	"github.com/cplieger/jsonx"
 )
 
 // FlexInt unmarshals a Plex JSON field that may arrive as a number OR
@@ -44,49 +43,25 @@ type FlexInt int
 // the previous json.Number-backed behaviour where an absent or null
 // field produced the zero-value int through strconv.Atoi("").
 //
-// Malformed inputs (non-numeric strings, floating-point numbers,
-// objects, arrays) return a parse error. The error phrasing
-// deliberately does NOT reuse the "invalid rating key" prefix owned
-// by plex.RatingKey.Validate — inviolate item 5 reserves that exact
-// string for rating-key validation, and conflating the two would
-// muddle Loki alerts keyed on rating-key failures.
+// The decode is a thin shim over jsonx.ParseInt64 under the
+// StrictAbsentZero policy, which was built to reproduce exactly this
+// type's pinned behaviour: bare or quoted decimal integers anywhere in
+// int64, null/absent/"" tolerated as 0, everything else — float forms,
+// non-numeric strings, objects, arrays — a parse error. The library
+// additionally hardens the string path: forms strconv would loosely
+// accept elsewhere (hex floats, "Inf"/"NaN", underscore separators)
+// stay rejected, and large integers never round-trip through float64.
+//
+// Malformed inputs return a parse error under the "flexint:" prefix.
+// The error phrasing deliberately does NOT reuse the "invalid rating
+// key" prefix owned by plex.RatingKey.Validate — inviolate item 5
+// reserves that exact string for rating-key validation, and conflating
+// the two would muddle Loki alerts keyed on rating-key failures.
 func (f *FlexInt) UnmarshalJSON(data []byte) error {
-	// Treat null / absent as zero, matching the pre-flex json.Number
-	// semantics where an empty Number string produced 0 via the
-	// strconv.Atoi fallback in SeasonNum/EpisodeNum.
-	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
-		*f = 0
-		return nil
-	}
-	// Quoted numeric string: strip the quotes, then Atoi the body.
-	// An empty quoted string ("") also decodes to zero to mirror the
-	// json.Number.String() == "" → 0 fallback.
-	if data[0] == '"' {
-		var s string
-		if err := json.Unmarshal(data, &s); err != nil {
-			return fmt.Errorf("flexint: decode string: %w", err)
-		}
-		if s == "" {
-			*f = 0
-			return nil
-		}
-		n, err := strconv.Atoi(s)
-		if err != nil {
-			return fmt.Errorf("flexint: parse %q: %w", s, err)
-		}
-		*f = FlexInt(n)
-		return nil
-	}
-	// Bare numeric token: decode via json.Number to tolerate whitespace
-	// and sign handling uniformly, then Atoi the textual form. Direct
-	// Atoi on the raw bytes would miss json's whitespace rules.
-	var num json.Number
-	if err := json.Unmarshal(data, &num); err != nil {
-		return fmt.Errorf("flexint: decode number: %w", err)
-	}
-	n, err := strconv.Atoi(num.String())
+	*f = 0
+	n, err := jsonx.ParseInt64(data, jsonx.StrictAbsentZero())
 	if err != nil {
-		return fmt.Errorf("flexint: parse %s: %w", num.String(), err)
+		return fmt.Errorf("flexint: %w", err)
 	}
 	*f = FlexInt(n)
 	return nil

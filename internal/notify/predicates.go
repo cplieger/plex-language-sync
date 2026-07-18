@@ -61,13 +61,13 @@ func TimelineAction(entry *TimelineEntry) string {
 // BuildStreamCacheKey builds a deduplication key from user, episode, and
 // current stream IDs so we only process when the selection actually
 // changes. The "streams:" prefix and colon-separated layout are part of
-// the on-disk cache.json schema.
+// the on-disk state.json schema.
 func BuildStreamCacheKey(userID, ratingKey string, audioID, subID int) string {
 	return fmt.Sprintf("%s%s:%s:%d:%d", cache.KeyPrefixStreams, userID, ratingKey, audioID, subID)
 }
 
 // BuildTimelineCacheKey builds the per-episode timeline (library-scan)
-// dedup key. The "timeline:" prefix is part of the on-disk cache.json
+// dedup key. The "timeline:" prefix is part of the on-disk state.json
 // schema.
 func BuildTimelineCacheKey(itemID string) string {
 	return cache.KeyPrefixTimeline + itemID

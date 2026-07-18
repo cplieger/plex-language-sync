@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/httpx/v2/certtest"
+	"github.com/cplieger/httpx/v3/certtest"
 	"github.com/cplieger/plexapi"
 )
 
@@ -72,33 +72,48 @@ func TestNewClient_BadScheme(t *testing.T) {
 	}
 }
 
-// --- Tests: NewClientForUser ---
+// --- Tests: ForToken ---
 
-func TestNewClientForUser(t *testing.T) {
-	parsed, _ := url.Parse("http://plex:32400")
-	c, err := NewClientForUser(parsed, "test-token", "")
+func TestForToken(t *testing.T) {
+	t.Parallel()
+	c, err := NewClient("http://plex:32400", "admin-token", "")
 	if err != nil {
-		t.Fatalf("NewClientForUser: %v", err)
+		t.Fatalf("NewClient: %v", err)
 	}
-	if c.Token() != "test-token" {
-		t.Errorf("token = %q, want test-token", c.Token())
+	u := c.ForToken("user-token")
+	if u.Token() != "user-token" {
+		t.Errorf("token = %q, want user-token", u.Token())
 	}
-	if c.BaseURL().String() != parsed.String() {
-		t.Error("baseURL should match")
+	if u.BaseURL().String() != c.BaseURL().String() {
+		t.Error("ForToken must keep the same server base URL")
+	}
+	// Pool sharing itself is the library's pinned ForToken contract
+	// (plexapi's own white-box test); observable here: the derivation
+	// keeps the hardened base transport.
+	if u.BaseTransport() == nil {
+		t.Error("ForToken derivation lost the hardened base transport")
+	}
+	if c.Token() != "admin-token" {
+		t.Error("ForToken must not mutate the source client's token")
 	}
 }
 
-// --- Tests: newHTTPClient ---
+// --- Tests: NewClient CA pinning ---
 
-func TestNewClientForUserCACert(t *testing.T) {
-	parsed, _ := url.Parse("https://plex:32400")
+func TestNewClient_CACert(t *testing.T) {
+	t.Parallel()
 	caPath := certtest.WriteSelfSignedCA(t)
-	c, err := NewClientForUser(parsed, "test-token", caPath)
+	c, err := NewClient("https://plex:32400", "test-token", caPath)
 	if err != nil {
-		t.Fatalf("NewClientForUser: %v", err)
+		t.Fatalf("NewClient with CA path: %v", err)
 	}
-	if c.HTTPClient().Transport == nil {
-		t.Fatal("expected custom transport when caCertPath set")
+	if c.BaseTransport() == nil {
+		t.Fatal("expected the hardened base transport when caCertPath set")
+	}
+	// The pinned base transport must survive into ForToken derivations —
+	// the per-user write path keeps the same trust anchors.
+	if c.ForToken("other").BaseTransport() == nil {
+		t.Error("ForToken derivation lost the hardened base transport")
 	}
 }
 
@@ -467,9 +482,13 @@ func TestUserFromSession_NoMatch(t *testing.T) {
 	}
 }
 
-// --- Tests: ServerIdentity ---
+// --- Tests: Identity (embedded library method) ---
 
-func TestServerIdentity_HappyPath(t *testing.T) {
+// TestIdentity_HappyPath pins the adapter wiring: the library's Identity
+// is reachable through the embedded client (the app's former
+// ServerIdentity pass-through was inlined away) and decodes into the
+// aliased ServerIdentity shape main consumes.
+func TestIdentity_HappyPath(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -477,9 +496,9 @@ func TestServerIdentity_HappyPath(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"MediaContainer":{"friendlyName":"Plex","machineIdentifier":"abc","version":"1.40"}}`))
 	})
-	id, err := c.ServerIdentity(context.Background())
+	id, err := c.Identity(context.Background())
 	if err != nil {
-		t.Fatalf("ServerIdentity() error = %v", err)
+		t.Fatalf("Identity() error = %v", err)
 	}
 	if id.FriendlyName != "Plex" || id.MachineIdentifier != "abc" || id.Version != "1.40" {
 		t.Errorf("identity = %+v", id)

@@ -12,6 +12,8 @@ package streams
 
 import (
 	"fmt"
+
+	"github.com/cplieger/runesafe"
 )
 
 // Label represents a label tag on a Plex metadata item.
@@ -22,21 +24,25 @@ type Label struct {
 // Episode is a Plex metadata item of type="episode" (and, by extension,
 // show or season metadata since /library/metadata/{key} is polymorphic).
 type Episode struct {
-	RatingKey            string  `json:"ratingKey"`
-	ParentRatingKey      string  `json:"parentRatingKey"`
-	GrandparentKey       string  `json:"grandparentKey"`
-	GrandparentTitle     string  `json:"grandparentTitle"`
-	ParentTitle          string  `json:"parentTitle"`
-	Title                string  `json:"title"`
-	Type                 string  `json:"type"`
-	LibraryTitle         string  `json:"librarySectionTitle"`
-	GrandparentRatingKey string  `json:"grandparentRatingKey"`
-	Label                []Label `json:"Label"`
-	Media                []Media `json:"Media"`
-	AddedAt              int64   `json:"addedAt"`
-	Index                FlexInt `json:"index"`
-	ParentIndex          FlexInt `json:"parentIndex"`
-	LibrarySectionID     FlexInt `json:"librarySectionID"`
+	RatingKey       string `json:"ratingKey"`
+	ParentRatingKey string `json:"parentRatingKey"`
+	GrandparentKey  string `json:"grandparentKey"`
+	// The four title fields are Plex metadata sourced from the wild (agents,
+	// filenames), tagged runesafe.Untrusted at this decode boundary: raw
+	// bytes in (matching, e.g. the ignore policy, reads Raw()), sanitized
+	// automatically at every slog/fmt emit.
+	GrandparentTitle     runesafe.Untrusted `json:"grandparentTitle"`
+	ParentTitle          runesafe.Untrusted `json:"parentTitle"`
+	Title                runesafe.Untrusted `json:"title"`
+	Type                 string             `json:"type"`
+	LibraryTitle         runesafe.Untrusted `json:"librarySectionTitle"`
+	GrandparentRatingKey string             `json:"grandparentRatingKey"`
+	Label                []Label            `json:"Label"`
+	Media                []Media            `json:"Media"`
+	AddedAt              int64              `json:"addedAt"`
+	Index                FlexInt            `json:"index"`
+	ParentIndex          FlexInt            `json:"parentIndex"`
+	LibrarySectionID     FlexInt            `json:"librarySectionID"`
 }
 
 // SeasonNum returns the parsed season index, or 0 when the ParentIndex
@@ -56,6 +62,10 @@ func (e *Episode) EpisodeNum() int {
 // ShortName returns a concise "'Show' (SxxEyy)" identifier useful for
 // structured log lines.
 func (e *Episode) ShortName() string {
+	// ShortName is log/display vocabulary (every call site is a slog attr).
+	// GrandparentTitle carries the runesafe.Untrusted tag, so %s renders its
+	// sanitized form here — control/bidi runes are neutralized without a
+	// per-site call.
 	return fmt.Sprintf("'%s' (S%02dE%02d)", e.GrandparentTitle, e.SeasonNum(), e.EpisodeNum())
 }
 
