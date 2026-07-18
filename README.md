@@ -34,7 +34,11 @@ It also learns your habits. If you always watch anime in Japanese with English s
 - Configurable scope: entire show or current season only
 - Configurable range: all episodes or future episodes only
 - Ignore specific shows via Plex labels or entire libraries
-- Scheduled daily deep analysis as a safety net
+- Scheduled daily deep analysis as a safety net: it re-applies
+  the per-show selections the app recorded from your playback
+  (its intent ledger), so a missed real-time event is repaired
+  without ever guessing a user's choice from the server's
+  current state
 - Persistent JSON cache survives container restarts
 - Multi-user support — automatically fetches shared user tokens
   from plex.tv, each user gets independent language preferences
@@ -82,7 +86,7 @@ services:
 | `UPDATE_LEVEL`            | Scope of language propagation. `show` applies to all episodes in the show. `season` applies only to the current season                                                                                                                                                                                                                                                                                                          | `show`                  | No       |
 | `UPDATE_STRATEGY`         | Which episodes to update. `all` updates every episode in scope. `next` updates only episodes after the one being played                                                                                                                                                                                                                                                                                                         | `all`                   | No       |
 | `TRIGGER_ON_PLAY`         | React to playback events — when you play an episode, propagate its language settings                                                                                                                                                                                                                                                                                                                                            | `true`                  | No       |
-| `TRIGGER_ON_SCAN`         | React to library scan events — when new episodes are added, apply language settings from the show's history                                                                                                                                                                                                                                                                                                                     | `true`                  | No       |
+| `TRIGGER_ON_SCAN`         | React to library scan events — when episodes are added or updated, apply each user's recorded selection for the show (falling back to the show's established selection, then to the user's learned profile)                                                                                                                                                                                                                     | `true`                  | No       |
 | `LANGUAGE_PROFILES`       | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history                                                                                                                                                                                                                                                                                                                  | `true`                  | No       |
 | `SCHEDULER_INTERVAL`      | Cadence of the daily deep-analysis safety net, a Go duration (e.g. `24h`, `12h`). `off`/`disabled`/`0` disables it (the app then runs WebSocket-only).                                                                                                                                                                                                                                                                          | `24h`                   | No       |
 | `PLEX_CA_CERT_PATH`       | Path to a PEM file containing your Plex server's CA certificate. When set, that CA is added to the TLS RootCAs pool — TLS verification stays **on**, pinned to your CA. Required only when (a) your `PLEX_URL` uses `https://` and (b) the cert isn't trusted by the OS bundle (i.e. you signed it yourself or with a private CA). Plain `http://` URLs and Plex's official `*.plex.direct` HTTPS URLs need **no** TLS env var. | unset                   | No       |
@@ -104,20 +108,20 @@ Pick the configuration that matches your Plex server:
 
 | Mount     | Description                                                                                                                                                                                                    |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/config` | Persistent cache storage. Contains `cache.json` with processed episode tracking, learned language profiles, and scheduler state. Mount a named volume or host path to preserve data across container restarts. |
+| `/config` | Persistent cache storage, split by retention class: `profiles.json` (learned language profiles), `tokens.json` (encrypted shared-user tokens), and `state.json` (processed-episode tracking + scheduler state). A corrupt file resets only its own section. A pre-split `cache.json` from an earlier version is migrated automatically on first start. Mount a named volume or host path to preserve data across container restarts. |
 
 ## Graceful shutdown
 
 On `SIGTERM`/`SIGINT` the container first drains its background loops
 (user-token refresh + daily scheduler) for up to 10 seconds, then writes
-`/config/cache.json` and exits. Give the container a stop grace period
+the cache files under `/config` and exits. Give the container a stop grace period
 comfortably longer than that drain window so the final save is never
 truncated by `SIGKILL` — for example `stop_grace_period: 20s` on the
 compose service (Docker's default is only 10s, which leaves no headroom
 for the save once the drain budget is spent). A truncated save is
-recoverable — the cache is rebuilt from Plex over time and the daily
-deep-analysis scheduler re-learns profiles — but a clean save preserves
-your latest preferences immediately.
+recoverable — profiles and per-show selections are re-learned from live
+playback as you watch — but a clean save preserves your latest
+preferences immediately.
 
 ## Alerting
 
@@ -145,10 +149,14 @@ groups:
           description: >
             plex-language-sync logged 3 or more ERROR lines in 15m
             (sustained 5m). At ERROR level the app reports only its hard
-            failures: an unreachable Plex server or a bad PLEX_TOKEN at
-            startup (it logs the error and exits, so a misconfigured
-            container crash-loops), and a WebSocket connection that keeps
-            failing to reconnect once the outage is sustained. The
+            failures: a fatal startup misconfiguration — a bad PLEX_TOKEN
+            (401/403), a wrong-server URL, or a TLS/certificate error —
+            logs the error and exits, so a misconfigured container
+            crash-loops; a WebSocket connection that keeps failing to
+            reconnect once the outage is sustained; and a failed cache
+            save on shutdown. A merely unreachable Plex server at startup
+            is transient: the container starts healthy in a degraded
+            state and retries at WARN, so it never fires this alert. The
             healthcheck deliberately ignores WebSocket state (the listener
             auto-reconnects with backoff), so this alert is the only
             signal that the container is up but silently processing
@@ -191,7 +199,7 @@ via `io.LimitReader`. WebSocket read limit 1 MB. Cache writes
 use atomic temp-file + rename. Rating keys validated as numeric
 before URL construction. Explicit `MinVersion: tls.VersionTLS12`
 set on TLS config. Shared user tokens are cached in
-`cache.json` for offline restart; protect the `/config` volume
+`tokens.json` for offline restart; protect the `/config` volume
 accordingly. Semgrep flags the `/tmp/.healthy` marker and the
 opt-in TLS skip (both intentional).
 

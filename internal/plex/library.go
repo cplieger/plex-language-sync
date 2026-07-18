@@ -2,14 +2,14 @@ package plex
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi"
 )
 
 // ShowSections returns the TV-show library sections.
 func (c *Client) ShowSections(ctx context.Context) ([]Section, error) {
-	sections, err := fetchDirectory[Section](ctx, c, "/library/sections")
+	sections, err := fetchDirectory[Section](ctx, c, plexapi.SectionsPath())
 	if err != nil {
 		return nil, err
 	}
@@ -26,10 +26,11 @@ func (c *Client) ShowSections(ctx context.Context) ([]Section, error) {
 // Returns ErrNotFound when the item is missing. /library/metadata/{key} is
 // type-agnostic; ShowMetadata wraps this variant for show-level lookups.
 func (c *Client) Episode(ctx context.Context, rk RatingKey) (*streams.Episode, error) {
-	if err := rk.Validate(); err != nil {
+	path, err := plexapi.MetadataPath(rk)
+	if err != nil {
 		return nil, err
 	}
-	eps, err := fetchMetadata[streams.Episode](ctx, c, "/library/metadata/"+rk.String())
+	eps, err := fetchMetadata[streams.Episode](ctx, c, path)
 	if err != nil {
 		return nil, err
 	}
@@ -41,18 +42,20 @@ func (c *Client) Episode(ctx context.Context, rk RatingKey) (*streams.Episode, e
 
 // ShowEpisodes returns every episode in a show (allLeaves).
 func (c *Client) ShowEpisodes(ctx context.Context, rk RatingKey) ([]streams.Episode, error) {
-	if err := rk.Validate(); err != nil {
+	path, err := plexapi.AllLeavesPath(rk)
+	if err != nil {
 		return nil, err
 	}
-	return fetchMetadata[streams.Episode](ctx, c, "/library/metadata/"+rk.String()+"/allLeaves")
+	return fetchMetadata[streams.Episode](ctx, c, path)
 }
 
 // SeasonEpisodes returns the episodes of a single season (children).
 func (c *Client) SeasonEpisodes(ctx context.Context, rk RatingKey) ([]streams.Episode, error) {
-	if err := rk.Validate(); err != nil {
+	path, err := plexapi.ChildrenPath(rk)
+	if err != nil {
 		return nil, err
 	}
-	return fetchMetadata[streams.Episode](ctx, c, "/library/metadata/"+rk.String()+"/children")
+	return fetchMetadata[streams.Episode](ctx, c, path)
 }
 
 // ShowMetadata fetches the show-level metadata (labels, library) for a show.
@@ -63,10 +66,11 @@ func (c *Client) SeasonEpisodes(ctx context.Context, rk RatingKey) ([]streams.Ep
 // the field set honest for callers (e.g. shouldIgnoreShow reads only
 // LibraryTitle + Label).
 func (c *Client) ShowMetadata(ctx context.Context, rk RatingKey) (*Show, error) {
-	if err := rk.Validate(); err != nil {
+	path, err := plexapi.MetadataPath(rk)
+	if err != nil {
 		return nil, err
 	}
-	shows, err := fetchMetadata[Show](ctx, c, "/library/metadata/"+rk.String())
+	shows, err := fetchMetadata[Show](ctx, c, path)
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +81,17 @@ func (c *Client) ShowMetadata(ctx context.Context, rk RatingKey) (*Show, error) 
 }
 
 // RecentlyAdded fetches recently added episodes from a library section,
-// filtered server-side by addedAt >= sinceUnix.
+// filtered server-side by addedAt >= sinceUnix. The path — including the
+// literal single-char `addedAt>=` operator — is the library's
+// RecentlyAddedPath builder; this app owns only the Episode decode shape.
+// The builder returns a ListPath, so the read rides the large-listing cap
+// like the library's own typed method (this call site once sat under the
+// 10 MB general cap while plexapi's RecentlyAdded used 40 MB — the
+// cap-class drift the typed builders now close at compile time).
 func (c *Client) RecentlyAdded(ctx context.Context, sectionKey RatingKey, sinceUnix int64) ([]streams.Episode, error) {
-	if err := sectionKey.Validate(); err != nil {
+	path, err := plexapi.RecentlyAddedPath(sectionKey, MetadataTypeEpisode, sinceUnix)
+	if err != nil {
 		return nil, err
 	}
-	path := fmt.Sprintf("/library/sections/%s/all?type=%d&sort=addedAt:desc&addedAt>=%d",
-		sectionKey.String(), MetadataTypeEpisode, sinceUnix)
-	return fetchMetadata[streams.Episode](ctx, c, path)
+	return fetchMetadataList[streams.Episode](ctx, c, path)
 }

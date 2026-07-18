@@ -3,20 +3,16 @@ package plex
 import (
 	"context"
 	"net/http"
-	"time"
 
-	"github.com/cplieger/httpx/v2"
 	"github.com/cplieger/plexapi"
 )
 
-// tvClient is the shared HTTP client for plex.tv API calls. Always uses
-// full TLS verification (there is no verification-skip option) and refuses
-// redirects, so the admin token can never be forwarded off plex.tv by a
-// compromised redirect or CDN front. Swappable for tests via SwapTVClient.
-var tvClient = &http.Client{
-	Timeout:       30 * time.Second,
-	CheckRedirect: httpx.RefuseAllRedirects,
-}
+// tvClient overrides the plex.tv HTTP client when non-nil — a test seam
+// (SwapTVClient) so shared-server lookups can be pointed at a local
+// httptest server. Production leaves it nil and uses the library's own
+// hardened default (30s timeout, refuse-all redirects, OS trust store,
+// no verification-skip option).
+var tvClient *http.Client
 
 // SwapTVClient replaces the package-level plex.tv HTTP client with the
 // supplied one and returns a function that restores the original. Intended
@@ -34,6 +30,10 @@ func SwapTVClient(replacement *http.Client) (restore func()) {
 // verification and never follows redirects — the admin token must not be
 // forwarded anywhere but plex.tv.
 func (c *Client) SharedUserTokens(ctx context.Context, machineIdentifier string) ([]SharedServerXML, error) {
-	tv := plexapi.NewTV(c.Token(), plexapi.WithTVHTTPClient(tvClient))
+	var opts []plexapi.TVOption
+	if tvClient != nil {
+		opts = append(opts, plexapi.WithTVHTTPClient(tvClient))
+	}
+	tv := plexapi.NewTV(c.Token(), opts...)
 	return tv.SharedServers(ctx, machineIdentifier)
 }

@@ -63,11 +63,17 @@ type Handler interface {
 // PlexClient is the subset of an HTTP-based Plex client the Listener
 // needs. Satisfied by *plex.Client; declared here to keep notify
 // decoupled from the plex package (no import cycle, easy to fake in
-// tests).
+// tests). BaseTransport supplies the hardened base transport (CA trust
+// included, retry wrapper excluded) for the WebSocket upgrade; nil means
+// the dialer falls back to a DefaultTransport clone. RedirectPolicy
+// supplies the policy half of that seam (refuse-all on a
+// library-constructed client) without exposing the live *http.Client;
+// nil means net/http's default follow behavior.
 type PlexClient interface {
 	BaseURL() *url.URL
 	Token() string
-	HTTPClient() *http.Client
+	RedirectPolicy() func(*http.Request, []*http.Request) error
+	BaseTransport() *http.Transport
 }
 
 // Listener dials Plex's /:/websockets/notifications endpoint, decodes
@@ -267,28 +273,23 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 }
 
 // dialClient returns the HTTP client used to perform the websocket
-// upgrade. Wraps the Plex client's Transport with a custom net.Dialer
-// that enables TCP keepalive (30s probe interval). Stdlib's
-// http.DefaultTransport sets KeepAlive: 30s by default, but the
-// Plex client may install a custom Transport (for skipTLS) that
-// inherits the zero-value Dialer with NO keepalive — overriding the
-// DialContext here is belt-and-suspenders so this listener works
-// regardless of how the Plex client built its transport.
+// upgrade. It starts from the Plex client's hardened base transport
+// (BaseTransport: the configured CA trust — a WithCACertPEM pin included —
+// and the per-attempt header timeout, WITHOUT the retry round-tripper;
+// already an independent clone, so mutating it never affects the shared
+// client's synchronous API calls). Production plexapi clients wrap their
+// base transport in a retry round-tripper, so cloning HTTPClient's
+// Transport is impossible and rebuilding one from scratch would silently
+// drop a pinned CA — the exact bug BaseTransport exists to prevent. A nil
+// BaseTransport (test fixtures owning their http.Client) falls back to a
+// DefaultTransport clone. A custom net.Dialer enables TCP keepalive (30s
+// probe interval) regardless of the transport's origin.
 func (l *Listener) dialClient() *http.Client {
-	src := l.client.HTTPClient()
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}
-	// Clone or build a transport with our DialContext so we don't
-	// mutate the shared Plex client's transport (which is also used
-	// for synchronous API calls with their own per-request timeouts).
-	var t *http.Transport
-	if src.Transport != nil {
-		if existing, ok := src.Transport.(*http.Transport); ok {
-			t = existing.Clone()
-		}
-	}
+	t := l.client.BaseTransport()
 	if t == nil {
 		if dt, ok := http.DefaultTransport.(*http.Transport); ok {
 			t = dt.Clone()
@@ -301,10 +302,11 @@ func (l *Listener) dialClient() *http.Client {
 	t.DialContext = dialer.DialContext
 	// Bound the WebSocket upgrade handshake. net.Dialer.Timeout above
 	// bounds only the TCP connect; ResponseHeaderTimeout / TLSHandshakeTimeout
-	// are zero on a http.DefaultTransport clone (and on a custom skipTLS
-	// transport), and websocket.Dial gets the parent ctx (no per-attempt
-	// deadline), so a peer that accepts the socket but stalls the HTTP 101
-	// upgrade response would hang the dial indefinitely. A transport-level
+	// are zero on a bare DefaultTransport-fallback clone, and websocket.Dial
+	// gets the parent ctx (no per-attempt deadline), so a peer that accepts
+	// the socket but stalls the HTTP 101 upgrade response would hang the
+	// dial indefinitely. BaseTransport already carries both bounds; the
+	// guards below only harden the fallback path. A transport-level
 	// timeout is NOT context.DeadlineExceeded, so ClassifyError still labels
 	// it dial_failed (no classify.go change, frozen reason set preserved).
 	if t.ResponseHeaderTimeout == 0 {
@@ -318,7 +320,7 @@ func (l *Listener) dialClient() *http.Client {
 		// No overall Timeout: it would apply to the upgrade response
 		// body which the websocket library hijacks. The dialer's own
 		// Timeout above bounds the connect phase.
-		CheckRedirect: src.CheckRedirect,
+		CheckRedirect: l.client.RedirectPolicy(),
 	}
 }
 

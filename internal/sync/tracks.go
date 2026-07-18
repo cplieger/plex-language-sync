@@ -1,12 +1,21 @@
 // Package sync holds the per-episode track-synchronization orchestrator.
 //
-// Responsibilities:
-//   - Apply a reference episode's language selections to other episodes
-//     in the same show/season (ChangeTracksForEpisode).
-//   - Discover a reference episode for a new/updated episode and fan it
-//     out across all users (ProcessNewOrUpdatedEpisodeAllUsers).
-//   - Fall back to learned language profiles when no reference is found
-//     (ApplyLanguageProfile).
+// The package is organized around two planes:
+//
+//   - EVENT PLANE (ObserveAndPropagate): a resolved play session is the
+//     only moment a selection read is attributable to a user. It learns
+//     profiles, records per-show intents, and propagates the observed
+//     selection. This is the only plane that creates knowledge.
+//   - RECONCILE PLANE (ReconcileWithIntent): the scheduler's history
+//     replay re-applies RECORDED intents. It never derives a user's
+//     choice from a delayed metadata read (whose per-user attribution
+//     is unreliable after the fact), never learns, never records.
+//
+// Additional responsibilities:
+//   - Seed a new/updated episode for all users
+//     (ProcessNewOrUpdatedEpisodeAllUsers): per-user intent first, then
+//     a lazily-searched shared reference episode, then the learned
+//     language profile (ApplyLanguageProfile).
 //
 // Inviolate contracts preserved (see refactor-agent-guide.md):
 //   - Plex HTTP URL paths and query parameters — the sync package never
@@ -30,6 +39,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -87,10 +97,17 @@ func NewSyncer(cfg Config, reader api.PlexReader, c api.Cache, lookup api.UserLo
 	}
 }
 
-// ChangeTracksForEpisode applies language preferences from a reference
-// episode to other episodes in the same show (or season, depending on
-// UpdateLevel), using a per-user client.
-func (s *Syncer) ChangeTracksForEpisode(
+// ObserveAndPropagate is the EVENT-PLANE entry point: it handles a
+// deliberately observed selection (a resolved play session, sampled
+// within seconds of the user's action — the only moment a server read
+// is attributable to a user). It learns the user's language profile,
+// records the per-show intent, and propagates the observed selection
+// across the show (or season).
+//
+// This is the ONLY path that creates knowledge (profiles, intents).
+// The reconcile plane (ReconcileWithIntent) and the new-episode seeding
+// path only re-apply what was recorded here.
+func (s *Syncer) ObserveAndPropagate(
 	ctx context.Context,
 	userClient api.PlexReadWriter,
 	userID string,
@@ -107,9 +124,10 @@ func (s *Syncer) ChangeTracksForEpisode(
 
 	// Check ignore rules first (admin client — labels/libraries are
 	// server-level). An ignored show is treated as if it does not exist:
-	// we return before learning a language profile from it AND before
-	// propagating to other episodes. Learning must come after this gate
-	// so an ignored show never contributes to the user's global profile.
+	// we return before learning a language profile from it, before
+	// recording an intent, AND before propagating to other episodes.
+	// Learning/recording must come after this gate so an ignored show
+	// never contributes to the user's global profile or intent ledger.
 	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, reference) {
 		return
 	}
@@ -117,10 +135,93 @@ func (s *Syncer) ChangeTracksForEpisode(
 	// Learn language profile from the user's active choice.
 	s.learnProfileFromReference(userID, refAudio, refSub)
 
-	showRatingKey := reference.GrandparentRatingKey
+	// Record the per-show intent — the app's own durable record of this
+	// user's choice, captured at the only moment it is attributable.
+	// Recorded before propagation because the observation is valid
+	// regardless of downstream write outcomes. (Unlike profile learning,
+	// commentary/descriptive tracks ARE recorded: an intent is per-show,
+	// not a cross-show generalization, so an atypical deliberate choice
+	// for THIS show is exactly what it should remember.)
+	if showKey := reference.GrandparentRatingKey; showKey != "" {
+		s.cache.RecordIntent(userID, showKey,
+			streams.NewIntent(refAudio, refSub, time.Now().Unix()))
+	}
+
+	s.propagate(ctx, userClient, username, reference, refAudio, refSub, trigger)
+}
+
+// ReconcileWithIntent is the RECONCILE-PLANE entry point (scheduler
+// history replay): it re-applies the user's RECORDED intent for the
+// episode's show, and deliberately never derives the user's choice from
+// the episode's current selection state. A delayed metadata read joins
+// a historical identity to an ambient current selection whose per-user
+// attribution is unreliable — the fabrication this design retires.
+//
+// viewedAt is the replayed play's unix timestamp (0 when unknown). A
+// play NEWER than the recorded intent means the app provably missed an
+// interaction it never observed; applying the older intent could revert
+// a manual change the user made during that unobserved window, so the
+// item is skipped. The user's next play re-establishes the intent via
+// the event plane.
+//
+// No intent recorded for the show → skip: the safety net only replays
+// knowledge, it never invents it.
+func (s *Syncer) ReconcileWithIntent(
+	ctx context.Context,
+	userClient api.PlexReadWriter,
+	userID string,
+	episode *streams.Episode,
+	viewedAt int64,
+	trigger string,
+) {
+	username := s.users.Name(userID)
+	showKey := episode.GrandparentRatingKey
+	if showKey == "" {
+		slog.Debug("no show rating key, skipping",
+			"episode", episode.ShortName(), "user", username)
+		return
+	}
+	intent, ok := s.cache.IntentFor(userID, showKey)
+	if !ok {
+		slog.Debug("reconcile: no intent recorded for show, skipping",
+			"episode", episode.ShortName(), "user", username)
+		return
+	}
+	if viewedAt > intent.ObservedAt {
+		slog.Debug("reconcile: play newer than recorded intent, skipping "+
+			"(unobserved interaction; will not re-apply stale state)",
+			"episode", episode.ShortName(), "user", username,
+			"viewed_at", viewedAt, "observed_at", intent.ObservedAt)
+		return
+	}
+	// Ignore gate after the cheap ledger checks (it costs a show-metadata
+	// fetch) but before any write, preserving "an ignored show is never
+	// propagated to".
+	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, episode) {
+		return
+	}
+
+	refAudio, refSub := intent.RefStreams()
+	s.propagate(ctx, userClient, username, episode, refAudio, refSub, trigger)
+}
+
+// propagate is the shared propagation core for both planes: it applies
+// the given reference selection (live streams on the event plane, an
+// intent's reconstructed streams on the reconcile plane) to the other
+// episodes of the anchor's show or season, honoring UpdateLevel and
+// UpdateStrategy relative to the anchor episode.
+func (s *Syncer) propagate(
+	ctx context.Context,
+	userClient api.PlexReadWriter,
+	username string,
+	anchor *streams.Episode,
+	refAudio, refSub *streams.Stream,
+	trigger string,
+) {
+	showRatingKey := anchor.GrandparentRatingKey
 	if showRatingKey == "" {
 		slog.Debug("no show rating key, skipping",
-			"episode", reference.ShortName(), "user", username)
+			"episode", anchor.ShortName(), "user", username)
 		return
 	}
 
@@ -128,19 +229,19 @@ func (s *Syncer) ChangeTracksForEpisode(
 	var episodes []streams.Episode
 	var err error
 	if s.cfg.UpdateLevel == LevelSeason {
-		episodes, err = userClient.SeasonEpisodes(ctx, plex.RatingKey(reference.ParentRatingKey))
+		episodes, err = userClient.SeasonEpisodes(ctx, plex.RatingKey(anchor.ParentRatingKey))
 	} else {
 		episodes, err = userClient.ShowEpisodes(ctx, plex.RatingKey(showRatingKey))
 	}
 	if err != nil {
 		slog.Warn("failed to fetch episodes for update",
-			"show", reference.GrandparentTitle, "user", username, "error", err)
+			"show", anchor.GrandparentTitle, "user", username, "error", err)
 		return
 	}
 
 	// Filter by strategy.
 	if s.cfg.UpdateStrategy == StrategyNext {
-		episodes = filterEpisodesAfter(episodes, reference)
+		episodes = filterEpisodesAfter(episodes, anchor)
 	}
 
 	changes := 0
@@ -158,8 +259,8 @@ func (s *Syncer) ChangeTracksForEpisode(
 		slog.Info("language update complete",
 			"trigger", trigger,
 			"user", username,
-			"show", reference.GrandparentTitle,
-			"reference", reference.ShortName(),
+			"show", anchor.GrandparentTitle,
+			"reference", anchor.ShortName(),
 			"audio", streams.Desc(refAudio),
 			"subtitle", streams.Desc(refSub),
 			"episodes_updated", changes,
@@ -268,7 +369,7 @@ func (s *Syncer) applySubtitleStream(
 // audio has a language code.
 //
 // Placed after the exported methods of *Syncer to satisfy funcorder
-// (ChangeTracksForEpisode is its only caller).
+// (ObserveAndPropagate is its only caller).
 func (s *Syncer) learnProfileFromReference(userID string, refAudio, refSub *streams.Stream) {
 	if !s.cfg.LanguageProfiles || refAudio == nil || refAudio.LanguageCode == "" {
 		return

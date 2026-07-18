@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/runesafe"
 )
 
 // ---------------------------------------------------------------------------
@@ -122,7 +123,7 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 				},
 			}
 			policy := ignore.NewPolicy(tc.ignoreLibs, tc.ignoreLabels)
-			ref := &streams.Episode{LibraryTitle: tc.episodeLibrary, GrandparentRatingKey: tc.episodeShowKey}
+			ref := &streams.Episode{LibraryTitle: runesafe.Untrusted(tc.episodeLibrary), GrandparentRatingKey: tc.episodeShowKey}
 			if got := policy.ShouldSkipEpisode(context.Background(), plx, ref); got != tc.want {
 				t.Errorf("policy.ShouldSkipEpisode = %v, want %v", got, tc.want)
 			}
@@ -740,7 +741,7 @@ func TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ChangeTracksForEpisode — show/season level, strategy, and skip branches
+// ObserveAndPropagate — show/season level, strategy, and skip branches
 // ---------------------------------------------------------------------------
 
 // refWithSelectedAudio builds the active reference episode: one part with a
@@ -772,7 +773,7 @@ func targetNeedingAudioSwitch(key string) *streams.Episode {
 	}
 }
 
-func TestChangeTracksForEpisode(t *testing.T) {
+func TestObserveAndPropagate(t *testing.T) {
 	t.Parallel()
 
 	t.Run("show level updates every episode via ShowEpisodes", func(t *testing.T) {
@@ -789,7 +790,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 1 {
 			t.Errorf("ShowEpisodes:42 called %d times, want 1", got)
@@ -812,7 +813,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelSeason, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 		if got := countCalls(plx.CallNames(), "SeasonEpisodes:7"); got != 1 {
 			t.Errorf("SeasonEpisodes:7 called %d times, want 1", got)
@@ -842,7 +843,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyNext}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 2) // S1E2
 
-		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 		// Only S1E3 (key "3") is strictly after the reference; earlier
 		// episodes must never be reloaded.
@@ -875,7 +876,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 			}}}}},
 		}
 
-		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 		if calls := plx.CallNames(); len(calls) != 0 {
 			t.Errorf("no Plex calls expected when the reference has no selected audio, got %v", calls)
@@ -888,7 +889,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "", "7", 1, 1) // no show rating key
 
-		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 		if calls := plx.CallNames(); len(calls) != 0 {
 			t.Errorf("no Plex calls expected when the show rating key is empty, got %v", calls)
@@ -907,7 +908,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-		s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
 			t.Errorf("ShowEpisodes must not be called when the show is ignored; calls=%v", plx.CallNames())
@@ -918,7 +919,7 @@ func TestChangeTracksForEpisode(t *testing.T) {
 	})
 }
 
-// TestChangeTracksForEpisode_IgnoredShowDoesNotLearnProfile pins the
+// TestObserveAndPropagate_IgnoredShowDoesNotLearnProfile pins the
 // learn-after-ignore ordering: an ignored show must be treated as if it
 // does not exist, so playing one of its episodes records NOTHING into the
 // user's language profile AND propagates to no other episode. This guards
@@ -928,10 +929,10 @@ func TestChangeTracksForEpisode(t *testing.T) {
 // assertion.
 //
 // given an ignored show (SKIP label) and LANGUAGE_PROFILES enabled
-// when ChangeTracksForEpisode runs on a jpn-audio reference of that show
+// when ObserveAndPropagate runs on a jpn-audio reference of that show
 // then the user's profile has no learned entry for jpn and no episodes are
 // fetched or written.
-func TestChangeTracksForEpisode_IgnoredShowDoesNotLearnProfile(t *testing.T) {
+func TestObserveAndPropagate_IgnoredShowDoesNotLearnProfile(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
 		ShowMetadataByKey: map[string]*plex.Show{
@@ -945,7 +946,7 @@ func TestChangeTracksForEpisode_IgnoredShowDoesNotLearnProfile(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 	// No profile was learned from the ignored show.
 	if got, ok := c.SubtitleLangForAudio("1", "jpn"); ok {
@@ -963,16 +964,16 @@ func TestChangeTracksForEpisode_IgnoredShowDoesNotLearnProfile(t *testing.T) {
 	}
 }
 
-// TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile is the
+// TestObserveAndPropagate_NonIgnoredShowStillLearnsProfile is the
 // companion to the ignore-suppression test: it pins that a NON-ignored show
 // still learns its profile (proving the reorder did not accidentally drop the
 // learn call). A mutant that always returned early before learnProfileFrom
 // Reference would pass the ignore test but fail this one.
 //
 // given a non-ignored show and LANGUAGE_PROFILES enabled
-// when ChangeTracksForEpisode runs on a jpn-audio reference
+// when ObserveAndPropagate runs on a jpn-audio reference
 // then the user's profile records jpn (subtitle empty, no sub on the ref).
-func TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile(t *testing.T) {
+func TestObserveAndPropagate_NonIgnoredShowStillLearnsProfile(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
@@ -983,7 +984,7 @@ func TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 	got, ok := c.SubtitleLangForAudio("1", "jpn")
 	if !ok {
@@ -994,8 +995,8 @@ func TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile(t *testing.T) {
 	}
 }
 
-// TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount pins the
-// episodes_updated tally and the completion-summary gate. ChangeTracksForEpisode
+// TestObserveAndPropagate_LogsCompletionWithUpdatedCount pins the
+// episodes_updated tally and the completion-summary gate. ObserveAndPropagate
 // increments a counter for each episode it changes and logs the inviolate
 // "language update complete" summary only when that count is positive; the
 // count is surfaced nowhere else, so the structured log is its sole
@@ -1005,7 +1006,7 @@ func TestChangeTracksForEpisode_NonIgnoredShowStillLearnsProfile(t *testing.T) {
 // a completion gate that rejected a positive count likewise.
 //
 // Not parallel: it swaps the process-global default slog logger.
-func TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount(t *testing.T) {
+func TestObserveAndPropagate_LogsCompletionWithUpdatedCount(t *testing.T) {
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{
 			"42": {{RatingKey: "2"}, {RatingKey: "3"}},
@@ -1023,7 +1024,7 @@ func TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 	out := buf.String()
 	if !strings.Contains(out, "language update complete") {
@@ -1034,7 +1035,7 @@ func TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount(t *testing.T) {
 	}
 }
 
-// TestChangeTracksForEpisode_SilentWhenNothingChanged pins the lower bound of
+// TestObserveAndPropagate_SilentWhenNothingChanged pins the lower bound of
 // the completion-summary gate: when no episode needs a change the tally stays
 // zero and the "language update complete" summary must NOT be logged (a
 // zero-update summary would be misleading noise). Every show episode here
@@ -1042,7 +1043,7 @@ func TestChangeTracksForEpisode_LogsCompletionWithUpdatedCount(t *testing.T) {
 // reports no change and the counter never leaves zero.
 //
 // Not parallel: it swaps the process-global default slog logger.
-func TestChangeTracksForEpisode_SilentWhenNothingChanged(t *testing.T) {
+func TestObserveAndPropagate_SilentWhenNothingChanged(t *testing.T) {
 	alreadyJpn := func(key string) *streams.Episode {
 		return &streams.Episode{
 			RatingKey: key,
@@ -1068,7 +1069,7 @@ func TestChangeTracksForEpisode_SilentWhenNothingChanged(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 	if out := buf.String(); strings.Contains(out, "language update complete") {
 		t.Errorf("'language update complete' must not be logged when no episode changed; log = %q", out)
@@ -1233,12 +1234,12 @@ func TestUpdateEpisodeStreams_SkipsSubtitleForCommentaryReference(t *testing.T) 
 	}
 }
 
-// TestChangeTracksForEpisode_logsEpisodeFetchError pins the inviolate
-// "failed to fetch episodes for update" WARN branch of ChangeTracksForEpisode:
+// TestObserveAndPropagate_logsEpisodeFetchError pins the inviolate
+// "failed to fetch episodes for update" WARN branch of ObserveAndPropagate:
 // when the per-user client's episode fetch errors, the update aborts with that
 // exact log key and writes nothing. This is the tracks.go counterpart of
 // TestFindEpisodeReference_logsShowEpisodesFetchError in episode.go.
-func TestChangeTracksForEpisode_logsEpisodeFetchError(t *testing.T) {
+func TestObserveAndPropagate_logsEpisodeFetchError(t *testing.T) {
 	plx := &fakeapi.Plex{ShowEpisodesErr: errors.New("plex 503")}
 	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
@@ -1248,7 +1249,7 @@ func TestChangeTracksForEpisode_logsEpisodeFetchError(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ChangeTracksForEpisode(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
 
 	out := buf.String()
 	if !strings.Contains(out, "failed to fetch episodes for update") {
@@ -1262,12 +1263,12 @@ func TestChangeTracksForEpisode_logsEpisodeFetchError(t *testing.T) {
 	}
 }
 
-// TestChangeTracksForEpisode_stopsOnCancelledContext pins the mid-loop context
-// guard in ChangeTracksForEpisode: once the update loop is entered, a cancelled
+// TestObserveAndPropagate_stopsOnCancelledContext pins the mid-loop context
+// guard in ObserveAndPropagate: once the update loop is entered, a cancelled
 // context breaks it before any further per-episode write. The fake reader
 // ignores the context, so the loop's own ctx.Err() break is the only thing that
 // stops the write; a negated guard would apply the reference audio via SetAudio.
-func TestChangeTracksForEpisode_stopsOnCancelledContext(t *testing.T) {
+func TestObserveAndPropagate_stopsOnCancelledContext(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
@@ -1279,7 +1280,7 @@ func TestChangeTracksForEpisode_stopsOnCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	s.ChangeTracksForEpisode(ctx, plx, "1", ref, "play")
+	s.ObserveAndPropagate(ctx, plx, "1", ref, "play")
 
 	if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 1 {
 		t.Errorf("ShowEpisodes:42 called %d times, want 1 (the fetch precedes the loop guard)", got)

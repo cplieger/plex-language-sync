@@ -95,7 +95,7 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 // shared-user map, skipping entries with no user id / token and the admin's
 // own id (matching LoadFromCache's guard -- otherwise the admin lands in
 // m.shared and All() emits it twice, double-processing the admin episode and
-// persisting the admin token into cache.json via tokensCopy). adminID is
+// persisting the admin token into tokens.json via tokensCopy). adminID is
 // passed by the caller, which holds m.mu.
 func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]Info {
 	newShared := make(map[ID]Info, len(servers))

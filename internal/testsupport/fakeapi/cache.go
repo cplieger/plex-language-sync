@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/api"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // Cache is a concurrency-safe in-memory implementation of api.Cache.
@@ -24,6 +25,7 @@ import (
 type Cache struct {
 	processed    map[string]time.Time
 	profiles     map[string]map[string]string
+	intents      map[string]map[string]streams.Intent
 	tokens       map[string]string
 	lastRun      time.Time
 	recentWindow time.Duration
@@ -37,6 +39,7 @@ func NewCache() *Cache {
 	return &Cache{
 		processed:    make(map[string]time.Time),
 		profiles:     make(map[string]map[string]string),
+		intents:      make(map[string]map[string]streams.Intent),
 		tokens:       make(map[string]string),
 		recentWindow: 5 * time.Minute,
 	}
@@ -106,6 +109,37 @@ func (c *Cache) SubtitleLangForAudio(userID, audioLang string) (string, bool) {
 	}
 	lang, ok := userProfiles[audioLang]
 	return lang, ok
+}
+
+// RecordIntent stores a user's observed track selection for a show,
+// mirroring internal/cache.Cache: deep-copied, keyed on (user, show),
+// nil intent and empty keys ignored.
+func (c *Cache) RecordIntent(userID, showKey string, intent *streams.Intent) {
+	if intent == nil || userID == "" || showKey == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.intents[userID] == nil {
+		c.intents[userID] = make(map[string]streams.Intent)
+	}
+	c.intents[userID][showKey] = intent.Clone()
+}
+
+// IntentFor returns the recorded intent for a (user, show) pair,
+// deep-copied.
+func (c *Cache) IntentFor(userID, showKey string) (streams.Intent, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	userIntents, ok := c.intents[userID]
+	if !ok {
+		return streams.Intent{}, false
+	}
+	intent, ok := userIntents[showKey]
+	if !ok {
+		return streams.Intent{}, false
+	}
+	return intent.Clone(), true
 }
 
 // UserTokens returns a defensive copy of the userID → accessToken map.

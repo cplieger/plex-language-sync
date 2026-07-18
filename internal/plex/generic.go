@@ -8,30 +8,30 @@ import (
 	"github.com/cplieger/plexapi"
 )
 
-// fetchMetadata issues GET <path> and decodes the response into the
-// {"MediaContainer":{"Metadata":[...]}} envelope with the app's own item
-// type T (the internal/streams domain model). The transport and its
-// hardening are the library's Get.
-func fetchMetadata[T any](ctx context.Context, c *Client, path string) ([]T, error) {
-	var resp plexapi.MC[struct {
-		Metadata []T `json:"Metadata"`
-	}]
-	if err := c.Get(ctx, path, &resp); err != nil {
-		return nil, warnIfOverCap(err, path)
-	}
-	return resp.MediaContainer.Metadata, nil
+// fetchMetadata decodes GET <path> through the library's exported
+// Metadata-envelope kernel into the app's own item type T (the
+// internal/streams domain model), attaching this app's over-cap WARN
+// contract. Transport, hardening, and the envelope decode are the
+// library's (plexapi.FetchMetadata); the builder-typed path carries the
+// endpoint's read-cap class, so a listing endpoint cannot land here.
+func fetchMetadata[T any](ctx context.Context, c *Client, path plexapi.Path) ([]T, error) {
+	items, err := plexapi.FetchMetadata[T](ctx, c.Client, path)
+	return items, warnIfOverCap(err, string(path))
+}
+
+// fetchMetadataList is fetchMetadata under the library's large-listing
+// read cap, for the ListPath builders (full section listings,
+// recently-added windows).
+func fetchMetadataList[T any](ctx context.Context, c *Client, path plexapi.ListPath) ([]T, error) {
+	items, err := plexapi.FetchMetadataList[T](ctx, c.Client, path)
+	return items, warnIfOverCap(err, string(path))
 }
 
 // fetchDirectory is fetchMetadata for responses whose container field is
 // named "Directory" (library sections).
-func fetchDirectory[T any](ctx context.Context, c *Client, path string) ([]T, error) {
-	var resp plexapi.MC[struct {
-		Directory []T `json:"Directory"`
-	}]
-	if err := c.Get(ctx, path, &resp); err != nil {
-		return nil, warnIfOverCap(err, path)
-	}
-	return resp.MediaContainer.Directory, nil
+func fetchDirectory[T any](ctx context.Context, c *Client, path plexapi.Path) ([]T, error) {
+	items, err := plexapi.FetchDirectory[T](ctx, c.Client, path)
+	return items, warnIfOverCap(err, string(path))
 }
 
 // warnIfOverCap emits this app's operator-facing WARN when a read blew the

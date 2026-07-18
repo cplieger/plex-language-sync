@@ -27,7 +27,8 @@ var ErrNotFound = plexapi.ErrNotFound
 type HTTPStatusError = plexapi.StatusError
 
 // Client is an HTTP client for a single Plex Media Server base URL + auth
-// token. Use NewClient, NewClientForUser, or NewClientFromHTTP.
+// token. Use NewClient or NewClientFromHTTP; derive per-user clients with
+// ForToken.
 type Client struct {
 	*plexapi.Client
 }
@@ -50,20 +51,14 @@ func NewClient(serverURL, token, caCertPath string) (*Client, error) {
 	return &Client{Client: api}, nil
 }
 
-// NewClientForUser creates a Client using a different (user-scoped) token
-// but the same server base URL and TLS settings. Plex records
-// stream-selection writes against the requesting token's user, so per-user
-// writes must go through a per-user client.
-func NewClientForUser(baseURL *url.URL, token, caCertPath string) (*Client, error) {
-	opts, err := caOptions(caCertPath)
-	if err != nil {
-		return nil, err
-	}
-	api, err := plexapi.New(baseURL.String(), token, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return &Client{Client: api}, nil
+// ForToken derives a same-server Client for a different (user-scoped)
+// token, sharing the underlying transport, trust settings, and connection
+// pool — the library's per-user write path. Plex records stream-selection
+// writes against the requesting token's user, so per-user writes must go
+// through a per-user client. Derivation is pure (no I/O, cannot fail):
+// the CA pin and transport were established once at NewClient time.
+func (c *Client) ForToken(token string) *Client {
+	return &Client{Client: c.Client.ForToken(token)}
 }
 
 // NewClientFromHTTP builds a Client from an already-parsed base URL and a

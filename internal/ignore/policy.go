@@ -89,7 +89,7 @@ func (p *Policy) ShouldSkipEpisode(ctx context.Context, reader api.PlexReader, r
 	if ref == nil {
 		return false
 	}
-	if p.IgnoreLibrary(ref.LibraryTitle) {
+	if p.IgnoreLibrary(ref.LibraryTitle.Raw()) {
 		slog.Debug("library ignored", "library", ref.LibraryTitle)
 		return true
 	}
