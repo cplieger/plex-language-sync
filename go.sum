@@ -8,8 +8,8 @@ github.com/cplieger/health v1.4.0 h1:MnLfSZNRnq7wYSMVi1s8Ox0kowk5iPzmqVKQ5JHHsoM
 github.com/cplieger/health v1.4.0/go.mod h1:15Lm3XhPMU3nCEDfIH2hVAz6TXH06Wwiz9tgBi71vEE=
 github.com/cplieger/httpx/v3 v3.1.0 h1:KXbVxn9+c/7UbnXKQgH+Qh75syqqYiV9UH0GzwO0YR8=
 github.com/cplieger/httpx/v3 v3.1.0/go.mod h1:aITrLHd0nPnJ5+Gu76xhRyOChC0KZEBCwslCELPHk+s=
-github.com/cplieger/jsonx v1.0.0 h1:JBtTt6RhoxzHRF1r5V+APOygnzLKXsDIHISyC/qYgmg=
-github.com/cplieger/jsonx v1.0.0/go.mod h1:6EoDR/SptVUcpEx+YyZcvGym6Je9vBPmhEwG/BwAVv8=
+github.com/cplieger/jsonx v1.1.0 h1:l3+o8QBLOfkXrAap7/0a0X0yHJ/SLoLAAa1qRxqdadA=
+github.com/cplieger/jsonx v1.1.0/go.mod h1:6EoDR/SptVUcpEx+YyZcvGym6Je9vBPmhEwG/BwAVv8=
 github.com/cplieger/plexapi v1.3.0 h1:ptWgdUk7whcsoMLFDVyiEYNGHl3OxT5wJwP5wk3igaA=
 github.com/cplieger/plexapi v1.3.0/go.mod h1:RWDKFtuWuN+KjwN1Xz/DgpZdtzVlSKcFg6sXkcKz+fg=
 github.com/cplieger/runesafe v1.1.0 h1:OAUE2GX9JSiUes+HR7hEgOHqA2w5FI/KsXkmZ0iZJW4=
