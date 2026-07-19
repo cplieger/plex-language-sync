@@ -10,8 +10,8 @@ github.com/cplieger/httpx/v3 v3.1.1 h1:e/5Gl8TQyP/80MwFQcZowJt4XG7L90kpY7v5pH/nU
 github.com/cplieger/httpx/v3 v3.1.1/go.mod h1:aITrLHd0nPnJ5+Gu76xhRyOChC0KZEBCwslCELPHk+s=
 github.com/cplieger/jsonx v1.1.0 h1:l3+o8QBLOfkXrAap7/0a0X0yHJ/SLoLAAa1qRxqdadA=
 github.com/cplieger/jsonx v1.1.0/go.mod h1:6EoDR/SptVUcpEx+YyZcvGym6Je9vBPmhEwG/BwAVv8=
-github.com/cplieger/plexapi v1.3.0 h1:ptWgdUk7whcsoMLFDVyiEYNGHl3OxT5wJwP5wk3igaA=
-github.com/cplieger/plexapi v1.3.0/go.mod h1:RWDKFtuWuN+KjwN1Xz/DgpZdtzVlSKcFg6sXkcKz+fg=
+github.com/cplieger/plexapi v1.3.1 h1:KxZMVy6RFLzfEZX29vQFAO6utXZl1qAYEFcjRFbclG8=
+github.com/cplieger/plexapi v1.3.1/go.mod h1:o8praObwWosOGma6KnPXQqF9a4rAiJtlLpDLtGZzT8A=
 github.com/cplieger/runesafe v1.1.0 h1:OAUE2GX9JSiUes+HR7hEgOHqA2w5FI/KsXkmZ0iZJW4=
 github.com/cplieger/runesafe v1.1.0/go.mod h1:37oz7JJVn1PIWv5UHrJhDhCabmqhMY+eRavwZ6Lp6NI=
 github.com/cplieger/scheduler/v2 v2.0.0 h1:SuMKuywcxAGdlBIvMEoGK7debBWnYwbpPlkw3n4QrMI=
