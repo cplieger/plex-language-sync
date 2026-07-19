@@ -106,8 +106,8 @@ Pick the configuration that matches your Plex server:
 
 ### Volumes
 
-| Mount     | Description                                                                                                                                                                                                    |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mount     | Description                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `/config` | Persistent cache storage, split by retention class: `profiles.json` (learned language profiles), `tokens.json` (encrypted shared-user tokens), and `state.json` (processed-episode tracking + scheduler state). A corrupt file resets only its own section. A pre-split `cache.json` from an earlier version is migrated automatically on first start. Mount a named volume or host path to preserve data across container restarts. |
 
 ## Graceful shutdown
