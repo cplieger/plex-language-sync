@@ -17,7 +17,7 @@ require github.com/cplieger/slogx v1.4.0
 
 require (
 	github.com/cplieger/envx v1.2.2
-	github.com/cplieger/plexapi v1.3.1
+	github.com/cplieger/plexapi v1.3.2
 	github.com/cplieger/scheduler/v2 v2.0.0
 )
 
@@ -25,5 +25,5 @@ require github.com/cplieger/httpx/v3 v3.2.0
 
 require (
 	github.com/cplieger/jsonx v1.2.0
-	github.com/cplieger/runesafe v1.1.1
+	github.com/cplieger/runesafe v1.2.0
 )
