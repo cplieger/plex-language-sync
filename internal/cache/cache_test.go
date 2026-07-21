@@ -3,6 +3,7 @@ package cache
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"pgregory.net/rapid"
@@ -147,6 +149,50 @@ func TestCacheSaveRejectsBadDir(t *testing.T) {
 	c := New()
 	if err := c.Save(filepath.Join(f, "subdir")); err == nil {
 		t.Fatal("Save() under a file should return error, got nil")
+	}
+}
+
+// TestCacheSaveRejectsOverCapSection pins the write-side mirror of the
+// loader's maxCacheSize bound: a section whose encoded payload exceeds the
+// cap fails Save loudly (atomicfile.ErrFileTooLarge through the per-file
+// joined error) and leaves the previously saved file intact, instead of
+// persisting a file the next boot's bounded read would refuse — silently
+// resetting learned profiles.
+func TestCacheSaveRejectsOverCapSection(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	orig := New()
+	orig.data.LanguageProfiles = map[string]map[string]string{"1": {"jpn": "eng"}}
+	if err := orig.Save(dir); err != nil {
+		t.Fatalf("seed Save() error = %v", err)
+	}
+
+	over := New()
+	// One value larger than the cap pushes the encoded profiles.json over
+	// maxCacheSize; tokens.json and state.json stay small and still write.
+	over.data.LanguageProfiles = map[string]map[string]string{
+		"1": {"jpn": strings.Repeat("a", maxCacheSize+1)},
+	}
+	err := over.Save(dir)
+	if err == nil {
+		t.Fatal("Save() with an over-cap section = nil, want error")
+	}
+	if !errors.Is(err, atomicfile.ErrFileTooLarge) {
+		t.Errorf("Save() error = %v, want errors.Is(..., atomicfile.ErrFileTooLarge)", err)
+	}
+	if !strings.Contains(err.Error(), profilesFile) {
+		t.Errorf("Save() error = %q, want it to name %s", err.Error(), profilesFile)
+	}
+
+	// The previous profiles.json is untouched: atomicfile rejects over-cap
+	// content before the temp file ever replaces the target.
+	loaded := &Cache{}
+	if err := loaded.Load(dir); err != nil {
+		t.Fatalf("Load() after failed Save error = %v", err)
+	}
+	if got := loaded.data.LanguageProfiles["1"]["jpn"]; got != "eng" {
+		t.Errorf("LanguageProfiles[1][jpn] after failed Save = %q, want eng (previous file intact)", got)
 	}
 }
 
