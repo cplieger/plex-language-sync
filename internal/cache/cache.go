@@ -40,7 +40,9 @@ var _ api.Cache = (*Cache)(nil)
 
 // maxCacheSize caps each cache file at 50 MB. A file at this size is almost
 // certainly corrupted or deliberately bloated; the loader warns and leaves
-// that section in its reset state rather than truncating the read.
+// that section in its reset state rather than truncating the read. Save
+// enforces the same cap on the write side (WithMaxBytes), so the app can
+// never persist a file its own next boot would refuse to load.
 const maxCacheSize = 50 << 20 // 50 MB
 
 // Split-layout file names. The names are part of the on-disk schema.
@@ -388,7 +390,11 @@ func fileExists(path string) bool {
 // writes then run lock-free so a concurrent MarkProcessed /
 // WasRecentlyProcessed (the listener goroutine) never blocks on the
 // scheduler goroutine's fsync. Write failures are per-file: the remaining
-// files are still attempted and the joined error is returned.
+// files are still attempted and the joined error is returned. Each write
+// is capped at maxCacheSize (the loader's read bound): an over-cap section
+// is refused with atomicfile.ErrFileTooLarge and the previous file stays
+// intact, instead of persisting a file the next boot's bounded read would
+// reject — silently resetting that section.
 func (c *Cache) Save(dir string) error {
 	profiles, tokens, state, err := c.encodeAllForSave()
 	if err != nil {
@@ -409,7 +415,8 @@ func (c *Cache) Save(dir string) error {
 	for _, f := range files {
 		path := filepath.Join(dir, f.name)
 		res, werr := atomicfile.WriteFile(context.Background(), path, f.data,
-			atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+			atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700),
+			atomicfile.WithMaxBytes(maxCacheSize))
 		if werr != nil {
 			// A non-nil error is unambiguously a real failure: the data did
 			// not reach its final path. Keep writing the other sections.
