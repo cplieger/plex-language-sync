@@ -14,8 +14,8 @@ github.com/cplieger/plexapi v1.3.2 h1:R74GeRNn3HKpd2zO5NOqi5vYakgnVfaHv/jk/Sqst1
 github.com/cplieger/plexapi v1.3.2/go.mod h1:fEY+1qaS+OPsh+5NE+7MPSsrjBQ/9izHqTNbbeJJE2o=
 github.com/cplieger/runesafe v1.2.1 h1:OXBQzu0PMGm5pe0Gn8zRl+MAmu9Iss1pLI3160pJBTw=
 github.com/cplieger/runesafe v1.2.1/go.mod h1:37oz7JJVn1PIWv5UHrJhDhCabmqhMY+eRavwZ6Lp6NI=
-github.com/cplieger/scheduler/v2 v2.1.0 h1:LXJS9he6g55sl3IIm/2e+1sSEjcG/2YPZFZITd/DQoQ=
-github.com/cplieger/scheduler/v2 v2.1.0/go.mod h1:+uGxZnD7/hftimflPJgOmNY3jqShKFhUZuBEpNgc1dA=
+github.com/cplieger/scheduler/v3 v3.0.0 h1:vka8qTY7q6yK6pOQyoi8YXB+4fW59RqUD1XaMNIx0ZU=
+github.com/cplieger/scheduler/v3 v3.0.0/go.mod h1:CHPRYuZ+C5HDH0hviAuXHMIOVD9WZyn39HIs0oeFA1k=
 github.com/cplieger/slogx v1.4.0 h1:VlT8gYxqrQHxyEd7VKLy+QCmm3Utut3DQ6Y0P09uv3Q=
 github.com/cplieger/slogx v1.4.0/go.mod h1:15KA2NVx725imQe/PYXUmd3oM2oMpYpqwU+hdHtz7Fc=
 golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=

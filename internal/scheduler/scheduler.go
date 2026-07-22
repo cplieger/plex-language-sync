@@ -52,7 +52,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	schedlib "github.com/cplieger/scheduler/v2"
+	schedlib "github.com/cplieger/scheduler/v3"
 	"golang.org/x/sync/singleflight"
 )
 
