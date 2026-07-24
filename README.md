@@ -9,13 +9,13 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/plex-language-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/plex-language-sync)
 [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/plex-language-sync/releases)
 
-Set your preferred audio and subtitle languages per show — Plex applies them to every new episode automatically.
+Set your preferred audio and subtitle languages per show, and Plex applies them to every new episode automatically.
 
 ## What it does
 
-Plex lets you choose which audio track and subtitle language to use when watching a show — but that choice only applies to the episode you're currently watching. If you start a series in Japanese audio with English subtitles, you have to manually set that on every single episode, and again when new episodes arrive.
+Plex lets you choose which audio track and subtitle language to use when watching a show, but that choice only applies to the episode you're currently watching. If you start a series in Japanese audio with English subtitles, you have to set that manually on every single episode, and again when new episodes arrive.
 
-plex-language-sync eliminates that friction. It watches your Plex playback in real time and automatically propagates your audio and subtitle language choices to every other episode in the same show. Set your preference once on any episode, and the rest of the series follows — like Netflix does natively.
+plex-language-sync eliminates that friction. It watches your Plex playback in real time and automatically propagates your audio and subtitle language choices to every other episode in the same show. Set your preference once on any episode, and the rest of the series follows, the way Netflix does natively.
 
 It also learns your habits. If you always watch anime in Japanese with English subtitles, brand new shows that arrive (via Sonarr or manual import) get those settings applied before you even press play.
 
@@ -25,33 +25,32 @@ It also learns your habits. If you always watch anime in Japanese with English s
 - Per-show language propagation with scored stream matching
   (language, codec, channel layout, title, forced, hearing
   impaired, visual impaired, descriptive track filtering)
-- Language profiles — learns your audio→subtitle preferences
+- Language profiles: learns your audio→subtitle preferences
   from playback and applies them to brand new shows that have
   no watch history yet
-- Subtitle codec preference — when multiple subtitle tracks
+- Subtitle codec preference: when multiple subtitle tracks
   match the same language, prefers ASS over image-based (PGS)
   over plain text (SRT)
 - Configurable scope: entire show or current season only
 - Configurable range: all episodes or future episodes only
 - Ignore specific shows via Plex labels or entire libraries
-- Scheduled daily deep analysis as a safety net: it re-applies
-  the per-show selections the app recorded from your playback
-  (its intent ledger), so a missed real-time event is repaired
-  without ever guessing a user's choice from the server's
-  current state
+- Scheduled daily deep analysis as a safety net: re-applies
+  the per-show selections recorded from your playback, so a
+  missed real-time event is repaired without guessing your
+  choice from the server's current state
 - Persistent JSON cache survives container restarts
-- Multi-user support — automatically fetches shared user tokens
-  from plex.tv, each user gets independent language preferences
+- Multi-user support: fetches shared user tokens from plex.tv
+  automatically; each user gets independent language preferences
 - Docker secrets support (`PLEX_TOKEN_FILE`)
 
 ### Why this design
 
-- **Single binary, one dependency.** Written in Go with only one external library (`coder/websocket`). No Python runtime, no YAML config files, no notification frameworks — just a distroless container that does one job well.
-- **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65534) on `gcr.io/distroless/static` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
+- **Single binary, small footprint.** Written in Go; the only third-party runtime libraries are `coder/websocket` and `golang.org/x/sync` (the rest are the project's own support modules). No Python runtime, no YAML config files, no notification frameworks; just a distroless container that does one job well.
+- **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65532) on `gcr.io/distroless/static` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
 
 ## Quick start
 
-Images are published to both `ghcr.io/cplieger/plex-language-sync` and `docker.io/cplieger/plex-language-sync` — use whichever registry you prefer.
+Images are published to both `ghcr.io/cplieger/plex-language-sync` and `docker.io/cplieger/plex-language-sync`; use whichever registry you prefer.
 
 ```yaml
 services:
@@ -79,49 +78,46 @@ services:
 
 ### Environment variables
 
-| Variable             | Description                                                                                                                                                                                                                                                                                                                                                                                                                     | Default                 | Required |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------- |
-| `PLEX_URL`           | Full URL of your Plex Media Server including scheme and port (e.g. `http://192.0.2.100:32400`)                                                                                                                                                                                                                                                                                                                                  | -                       | Yes      |
-| `PLEX_TOKEN`         | Plex authentication token for the server administrator. Get it from Plex Web → Settings → XML view → myPlexAccessToken. Also supports Docker secrets via `PLEX_TOKEN_FILE`                                                                                                                                                                                                                                                      | -                       | Yes      |
-| `UPDATE_LEVEL`       | Scope of language propagation. `show` applies to all episodes in the show. `season` applies only to the current season                                                                                                                                                                                                                                                                                                          | `show`                  | No       |
-| `UPDATE_STRATEGY`    | Which episodes to update. `all` updates every episode in scope. `next` updates only episodes after the one being played                                                                                                                                                                                                                                                                                                         | `all`                   | No       |
-| `TRIGGER_ON_PLAY`    | React to playback events — when you play an episode, propagate its language settings                                                                                                                                                                                                                                                                                                                                            | `true`                  | No       |
-| `TRIGGER_ON_SCAN`    | React to library scan events — when episodes are added or updated, apply each user's recorded selection for the show (falling back to the show's established selection, then to the user's learned profile)                                                                                                                                                                                                                     | `true`                  | No       |
-| `LANGUAGE_PROFILES`  | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history                                                                                                                                                                                                                                                                                                                  | `true`                  | No       |
-| `SCHEDULER_INTERVAL` | Cadence of the daily deep-analysis safety net, a Go duration (e.g. `24h`, `12h`). `off`/`disabled`/`0` disables it (the app then runs WebSocket-only).                                                                                                                                                                                                                                                                          | `24h`                   | No       |
-| `PLEX_CA_CERT_PATH`  | Path to a PEM file containing your Plex server's CA certificate. When set, that CA is added to the TLS RootCAs pool — TLS verification stays **on**, pinned to your CA. Required only when (a) your `PLEX_URL` uses `https://` and (b) the cert isn't trusted by the OS bundle (i.e. you signed it yourself or with a private CA). Plain `http://` URLs and Plex's official `*.plex.direct` HTTPS URLs need **no** TLS env var. | unset                   | No       |
-| `IGNORE_LABELS`      | Comma-separated Plex labels that exclude a show from language sync (a show carrying any listed label is skipped); label matching is exact and case-sensitive, and setting this replaces the built-in defaults                                                                                                                                                                                                                   | `PAL_IGNORE,PLS_IGNORE` | No       |
-| `IGNORE_LIBRARIES`   | Comma-separated Plex library names to exclude from language sync entirely (exact, case-sensitive name match)                                                                                                                                                                                                                                                                                                                    | unset                   | No       |
-| `DEBUG`              | Enable debug-level logging (`true`/`1`/`yes`/`on`). Raises log verbosity for troubleshooting; leave unset for normal INFO-level output                                                                                                                                                                                                                                                                                          | `false`                 | No       |
+| Variable | Description | Default | Required |
+| --- | --- | --- | --- |
+| `PLEX_URL` | Full URL of your Plex Media Server including scheme and port (e.g. `http://192.0.2.100:32400`) | - | Yes |
+| `PLEX_TOKEN` | Plex authentication token for the server administrator. Get it from Plex Web → Settings → XML view → myPlexAccessToken. Also supports Docker secrets via `PLEX_TOKEN_FILE` | - | Yes |
+| `UPDATE_LEVEL` | Scope of language propagation. `show` applies to all episodes in the show. `season` applies only to the current season | `show` | No |
+| `UPDATE_STRATEGY` | Which episodes to update. `all` updates every episode in scope. `next` updates only episodes after the one being played | `all` | No |
+| `TRIGGER_ON_PLAY` | React to playback events: when you play an episode, propagate its language settings | `true` | No |
+| `TRIGGER_ON_SCAN` | React to library scan events: when episodes are added or updated, apply each user's recorded selection for the show (falling back to the show's established selection, then to the user's learned profile) | `true` | No |
+| `LANGUAGE_PROFILES` | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history | `true` | No |
+| `SCHEDULER_INTERVAL` | Cadence of the daily deep-analysis safety net, a Go duration (e.g. `24h`, `12h`). `off`/`disabled`/`0` disables it (the app then runs WebSocket-only). | `24h` | No |
+| `PLEX_CA_CERT_PATH` | Path to a PEM file with the CA certificate that signed your Plex server's cert; TLS verification stays **on**, pinned to that CA. Needed only for self-signed or private-CA `https://` URLs (see [TLS / certificate setup](#tls--certificate-setup)) | unset | No |
+| `IGNORE_LABELS` | Comma-separated Plex labels that exclude a show from language sync (a show carrying any listed label is skipped); label matching is exact and case-sensitive, and setting this replaces the built-in defaults | `PAL_IGNORE,PLS_IGNORE` | No |
+| `IGNORE_LIBRARIES` | Comma-separated Plex library names to exclude from language sync entirely (exact, case-sensitive name match) | unset | No |
+| `DEBUG` | Enable debug-level logging (`true`/`1`/`yes`/`on`). Raises log verbosity for troubleshooting; leave unset for normal INFO-level output | `false` | No |
 
 ### TLS / certificate setup
 
 Pick the configuration that matches your Plex server:
 
-| Your `PLEX_URL` looks like                                                     | What to do                                                                                                                                                |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `http://plex:32400` (Docker network, LAN, etc.)                                | nothing — TLS isn't in use                                                                                                                                |
-| `https://<hash>.plex.direct:32400` (Plex's official cert)                      | nothing — Let's Encrypt is trusted by default                                                                                                             |
+| Your `PLEX_URL` looks like | What to do |
+| --- | --- |
+| `http://plex:32400` (Docker network, LAN, etc.) | nothing; TLS isn't in use |
+| `https://<hash>.plex.direct:32400` (Plex's official cert) | nothing; Let's Encrypt is trusted by default |
 | `https://192.0.2.100:32400` or `https://plex.local` (self-signed / private CA) | set `PLEX_CA_CERT_PATH` to the PEM file of the CA that signed your Plex cert. Mount it into the container and point the env var at the in-container path. |
 
 ### Volumes
 
-| Mount     | Description                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/config` | Persistent cache storage, split by retention class: `profiles.json` (learned language profiles), `tokens.json` (encrypted shared-user tokens), and `state.json` (processed-episode tracking + scheduler state). A corrupt file resets only its own section. A pre-split `cache.json` from an earlier version is migrated automatically on first start. Mount a named volume or host path to preserve data across container restarts. |
+| Mount | Description |
+| --- | --- |
+| `/config` | Persistent cache (`profiles.json` learned language profiles, `tokens.json` encrypted shared-user tokens, `state.json` sync state). Mount a named volume or host path to preserve data across restarts. A corrupt file resets only its own section; a `cache.json` from an earlier version migrates automatically on first start. |
 
 ## Graceful shutdown
 
-On `SIGTERM`/`SIGINT` the container first drains its background loops
-(user-token refresh + daily scheduler) for up to 10 seconds, then writes
-the cache files under `/config` and exits. Give the container a stop grace period
-comfortably longer than that drain window so the final save is never
-truncated by `SIGKILL` — for example `stop_grace_period: 20s` on the
-compose service (Docker's default is only 10s, which leaves no headroom
-for the save once the drain budget is spent). A truncated save is
-recoverable — profiles and per-show selections are re-learned from live
-playback as you watch — but a clean save preserves your latest
-preferences immediately.
+On `SIGTERM`/`SIGINT` the container drains its background loops for up
+to 10 seconds, then writes the cache files under `/config` and exits.
+Set a stop grace period comfortably longer than that drain window, for
+example `stop_grace_period: 20s` on the compose service; Docker's
+default of 10s leaves no headroom for the final save. A save truncated
+by `SIGKILL` is recoverable: profiles and per-show selections are
+re-learned from live playback as you watch.
 
 ## Alerting
 
@@ -148,21 +144,19 @@ groups:
           summary: "plex-language-sync emitting repeated ERROR logs"
           description: >
             plex-language-sync logged 3 or more ERROR lines in 15m
-            (sustained 5m). At ERROR level the app reports only its hard
-            failures: a fatal startup misconfiguration — a bad PLEX_TOKEN
-            (401/403), a wrong-server URL, or a TLS/certificate error —
-            logs the error and exits, so a misconfigured container
-            crash-loops; a WebSocket connection that keeps failing to
-            reconnect once the outage is sustained; and a failed cache
-            save on shutdown. A merely unreachable Plex server at startup
-            is transient: the container starts healthy in a degraded
-            state and retries at WARN, so it never fires this alert. The
-            healthcheck deliberately ignores WebSocket state (the listener
-            auto-reconnects with backoff), so this alert is the only
-            signal that the container is up but silently processing
-            nothing. The known-benign "failed to refresh shared user
-            tokens" is logged at WARN, so filtering on level=ERROR
-            excludes it.
+            (sustained 5m). ERROR covers only hard failures: a fatal
+            startup misconfiguration (a bad PLEX_TOKEN, a wrong-server
+            URL, or a TLS/certificate error, which logs and exits, so
+            the container crash-loops), a WebSocket connection that
+            keeps failing to reconnect, and a failed cache save on
+            shutdown. An unreachable Plex server at startup is
+            transient: the container starts healthy in a degraded state
+            and retries at WARN, so it never fires this alert. The
+            healthcheck deliberately ignores WebSocket state (the
+            listener auto-reconnects), so this alert is the only signal
+            that the container is up but processing nothing. The benign
+            "failed to refresh shared user tokens" logs at WARN and is
+            excluded by the level=ERROR filter.
 ```
 
 The threshold, window, and `severity` label are starting points; adjust
@@ -173,43 +167,31 @@ your Alertmanager uses.
 
 The container includes a built-in CLI health probe (`/plex-language-sync health`) that checks for a marker file written at `/tmp/.healthy`. It requires no shell, HTTP client, or open port.
 
-Startup distinguishes fatal from transient failures. A **fatal** misconfiguration — a bad `PLEX_TOKEN` (401/403), a wrong-server URL (404), or a TLS/certificate error — exits non-zero, so the container never goes healthy and the problem stays loud. A **transient** failure — Plex unreachable or still starting at boot (connection refused, DNS/timeout, or a 5xx) — starts the container **healthy in a degraded state** and keeps retrying the initial connection with capped exponential backoff (1s→30s) instead of crash-looping under the restart policy; the marker is set as soon as the failure is classified transient, and normal operation begins once Plex answers and the admin user is resolved. WebSocket disconnects after the initial connection never cause unhealthy status either — the listener reconnects with the same backoff.
+Startup distinguishes fatal from transient failures. A **fatal** misconfiguration (a bad `PLEX_TOKEN`, a wrong-server URL, or a TLS/certificate error) exits non-zero, so the container never goes healthy and the problem stays loud. A **transient** failure (Plex unreachable or still starting at boot) starts the container healthy in a degraded state and keeps retrying the initial connection with capped exponential backoff (1s→30s) instead of crash-looping; normal operation begins once Plex answers. WebSocket disconnects after the initial connection never cause unhealthy status either; the listener reconnects with the same backoff.
 
 ## Security
 
-**No vulnerabilities found.** All scans clean across all CI security tools.
+No inbound network listener; the only outbound connections are to your
+Plex server and plex.tv. Runs as `nonroot` on a distroless base image
+with no shell or package manager. The Plex token is never logged or
+written to the cache; Docker secrets are supported via
+`PLEX_TOKEN_FILE`. Shared user tokens are cached encrypted in
+`tokens.json` for offline restart; still protect the `/config` volume.
 
-| Tool                                                                | Result                              |
-| ------------------------------------------------------------------- | ----------------------------------- |
-| [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | No vulnerabilities in call graph    |
-| [golangci-lint](https://golangci-lint.run/) (gosec, gocritic)       | 0 issues                            |
-| [trivy](https://trivy.dev/)                                         | 0 vulnerabilities (distroless base) |
-| [grype](https://github.com/anchore/grype)                           | 0 vulnerabilities                   |
-| [gitleaks](https://github.com/gitleaks/gitleaks)                    | No secrets detected                 |
-| [semgrep](https://semgrep.dev/)                                     | 2 info (false positives)            |
-| [hadolint](https://github.com/hadolint/hadolint)                    | Clean                               |
-
-No inbound network listener; connects outbound to Plex and
-plex.tv only. Supports Docker secrets via `PLEX_TOKEN_FILE`.
-The Plex token is never logged or written to the cache file.
-Runs as `nonroot` on a distroless base image with no shell.
-
-**Details for advanced users:** Response bodies capped at 10 MB
-via `io.LimitReader`. WebSocket read limit 1 MB. Cache writes
-use atomic temp-file + rename. Rating keys validated as numeric
-before URL construction. Explicit `MinVersion: tls.VersionTLS12`
-set on TLS config. Shared user tokens are cached in
-`tokens.json` for offline restart; protect the `/config` volume
-accordingly. Semgrep flags the `/tmp/.healthy` marker and the
-opt-in TLS skip (both intentional).
+Response bodies are capped at 10 MB and WebSocket messages at 1 MB.
+Rating keys are validated as numeric before URL construction. Cache
+writes are atomic (temp file + rename). TLS connections require TLS 1.2
+or newer. Live scan results are on the repository's Security tab; the
+one accepted static-analysis finding is the `/tmp/.healthy` healthcheck
+marker, which is intentional (see [Healthcheck](#healthcheck)).
 
 ## Dependencies
 
 All dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate) and pinned by digest or version for reproducibility.
 
-| Dependency                       | Source                                                           |
-| -------------------------------- | ---------------------------------------------------------------- |
-| golang                           | [Go](https://hub.docker.com/_/golang)                            |
+| Dependency | Source |
+| --- | --- |
+| golang | [Go](https://hub.docker.com/_/golang) |
 | gcr.io/distroless/static:nonroot | [Distroless](https://github.com/GoogleContainerTools/distroless) |
 
 ## Credits
@@ -217,17 +199,17 @@ All dependencies are updated automatically via [Renovate](https://github.com/ren
 This is an original tool that builds upon [Plex-Auto-Languages](https://github.com/RemiRigal/Plex-Auto-Languages).
 
 - [Plex-Auto-Languages](https://github.com/RemiRigal/Plex-Auto-Languages)
-  by [@RemiRigal](https://github.com/RemiRigal) — the original
+  by [@RemiRigal](https://github.com/RemiRigal): the original
   Python project that pioneered per-show language automation for
   Plex. The stream matching algorithm and event-driven architecture
   in this rewrite are directly inspired by the original design.
 - [Plex-Auto-Languages](https://github.com/JourneyDocker/Plex-Auto-Languages)
-  by [@JourneyDocker](https://github.com/JourneyDocker) — the
+  by [@JourneyDocker](https://github.com/JourneyDocker): the
   actively maintained fork that added improved stream scoring,
   visual impaired track handling, and memory management fixes
-- [Plex Media Server API](https://developer.plex.tv/pms/) — the
+- [Plex Media Server API](https://developer.plex.tv/pms/): the
   official API documentation
-- [coder/websocket](https://github.com/coder/websocket) — Go
+- [coder/websocket](https://github.com/coder/websocket): Go
   WebSocket implementation
 
 ## Contributing
@@ -243,4 +225,4 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 ## License
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+GPL-3.0. See [LICENSE](LICENSE).
