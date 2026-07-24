@@ -7,9 +7,9 @@ bits that are specific to this repo; org-wide defaults still apply.
 
 A single Go binary that listens to Plex over a WebSocket and
 propagates your per-show audio/subtitle language choices to the rest
-of a series. It ships as a distroless image with one non-cplieger
-runtime dependency (`coder/websocket`). There is no HTTP server, no
-config file, and no inbound listener — everything is configured through
+of a series. It ships as a distroless image with two non-cplieger
+runtime dependencies (`coder/websocket` and `golang.org/x/sync`). There is no HTTP server, no
+config file, and no inbound listener; everything is configured through
 environment variables (see the README's configuration reference).
 
 ## Architecture
@@ -17,30 +17,31 @@ environment variables (see the README's configuration reference).
 The code is split between a composition root at the module root and
 business logic under `internal/`.
 
-- `main.go` — composition root. `run()` constructs the Plex client,
+- `main.go`: composition root. `run()` constructs the Plex client,
   cache, user manager, syncer, and scheduler, wires them together, and
   starts the WebSocket listener. `notifyAdapter` is the glue that gates
   events on `TRIGGER_ON_PLAY` / `TRIGGER_ON_SCAN` and forwards them to
   the syncer.
-- `config.go` — env-var parsing, defaults, `_FILE`-suffix Docker-secret
+- `config.go`: env-var parsing, defaults, `_FILE`-suffix Docker-secret
   handling, and `SCHEDULER_INTERVAL` (Go duration) parsing.
-- `internal/api/` — the cross-package interface spine (`PlexReadWriter`,
+- `internal/api/`: the cross-package interface spine (`PlexReadWriter`,
   `IgnoreChecker`, cache/user contracts). Concrete types in
   `internal/{plex,cache,users,...}` implement these; consumers
   (`internal/{sync,scheduler,notify}`) depend only on the interfaces.
   This keeps `main.go` the single wiring layer and lets tests substitute
   fakes without reaching into production packages. `internal/api` must
-  not import its implementers — that would reintroduce the import cycle
+  not import its implementers; that would reintroduce the import cycle
   the spine exists to break.
-- `internal/{plex,streams,cache,notify,users,sync,scheduler,ignore,timeutil}`
-  — the focused business-logic packages (Plex HTTP client, stream
+- `internal/{plex,streams,cache,notify,users,sync,scheduler,ignore}`:
+  the focused business-logic packages (Plex HTTP client, stream
   matching/scoring, persistent cache, WebSocket listener, multi-user
-  token management, propagation logic, daily scheduler, ignore policy,
-  time parsing).
+  token management, propagation logic, daily scheduler, ignore policy).
 
 A daily scheduler runs a deep analysis as a safety net for missed
 real-time events; the WebSocket listener reconnects with exponential
-backoff. The persistent cache (`/config/cache.json`) is written via
+backoff. The persistent cache lives under `/config`, split by retention
+class into `profiles.json`, `tokens.json`, and `state.json` (a legacy
+`cache.json` is migrated on first start); each file is written via
 atomic temp-file + rename.
 
 ## Frozen contracts
@@ -50,7 +51,9 @@ incidentally:
 
 - The env-var contract (names, defaults, boolean parsing, `_FILE` secret
   handling, `SCHEDULER_INTERVAL` parsing) in `config.go`.
-- The on-disk cache path `/config/cache.json` (`cachePath` in `main.go`).
+- The on-disk cache directory `/config` and its split-file layout
+  (`profiles.json`, `tokens.json`, `state.json`; `cacheDir` in
+  `main.go`), including migration of a legacy `cache.json`.
 
 The in-memory representation behind these may evolve freely; the
 external surface should not drift.
@@ -94,7 +97,7 @@ A few config choices worth knowing:
   unformatted files as issues, so run `fmt` first.
 - `sloglint` is `kv-only`: structured logs must use key/value pairs, not
   attribute helpers.
-- The Plex token must never be logged or written to the cache — log it
+- The Plex token must never be logged or written to the cache; log it
   as `"configured"`, the way `logConfig` does.
 - Logs are UTC: the `slogx` library (its `UTCTime` `ReplaceAttr`) forces every record's
   timestamp to UTC, so the container needs no `TZ` and the binary embeds
@@ -108,13 +111,13 @@ touching `internal/plex`:
 - Filter operators are single literal comparator chars: use
   `viewedAt>=12345`, never `>>=`. A double `>>` is silently ignored and
   Plex returns the full unfiltered history. Do not URL-encode operators
-  either — Plex ignores encoded ones too.
+  either; Plex ignores encoded ones too.
 - Some endpoints return an empty body instead of `{"MediaContainer":{}}`.
   Guard with `len(body) == 0` before unmarshalling.
 - `/library/metadata/<key>` **reads** are not user-scoped: a GET with an
   admin token and a GET with a user token return identical `Stream.selected`
   values, so re-fetching with a user token to "see their view" adds latency
-  with no information gain. **Writes, however, ARE per-user-scoped** — a
+  with no information gain. **Writes, however, ARE per-user-scoped**: a
   `PUT /library/parts/<id>?...&allParts=1` records the selection against the
   requesting token's user, not server-wide. So a
   per-user stream change must go out under that user's token; falling back to
