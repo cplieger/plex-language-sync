@@ -21,9 +21,11 @@ require (
 	github.com/cplieger/scheduler/v3 v3.0.0
 )
 
-require github.com/cplieger/httpx/v3 v3.2.0
+require github.com/cplieger/httpx/v4 v4.1.0
 
 require (
 	github.com/cplieger/jsonx v1.2.0
 	github.com/cplieger/runesafe v1.2.1
 )
+
+require github.com/cplieger/httpx/v3 v3.2.0 // indirect
