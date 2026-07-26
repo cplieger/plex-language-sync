@@ -836,17 +836,52 @@ func TestDoJSON_AcceptsResponseExactlyAtCap(t *testing.T) {
 	}
 }
 
+// xmlCommentPadding returns exactly n bytes of XML comment padding, split so no
+// single comment approaches plexapi's per-token bound (16 KiB for the plex.tv
+// shared-servers limits). Sizing is derived rather than hardcoded so a change to
+// the read cap does not silently reintroduce an over-long comment.
+func xmlCommentPadding(t *testing.T, n int) []byte {
+	t.Helper()
+	const payloadMax = 8 << 10 // comfortably under the 16 KiB token bound
+	overhead := len("<!--") + len("-->")
+	if n < overhead {
+		t.Fatalf("test setup: %d bytes cannot hold an XML comment (%d of overhead)", n, overhead)
+	}
+	blocks := (n + payloadMax + overhead - 1) / (payloadMax + overhead)
+	payload := n - blocks*overhead
+	out := make([]byte, 0, n)
+	// Spread the payload evenly; the divisor shrinks each pass so integer
+	// truncation lands the remainder in the final comments rather than dropping it.
+	for remaining := blocks; remaining > 0; remaining-- {
+		size := payload / remaining
+		payload -= size
+		out = append(out, "<!--"...)
+		out = append(out, bytes.Repeat([]byte("a"), size)...)
+		out = append(out, "-->"...)
+	}
+	if len(out) != n {
+		t.Fatalf("test setup: padding len = %d, want exactly %d", len(out), n)
+	}
+	return out
+}
+
 // TestSharedUserTokens_AcceptsResponseExactlyAtCap is the boundary companion to
 // TestSharedUserTokens_ResponseExceedingCapErrors. Like the JSON read path, the
 // plex.tv read cap is a strict > comparison, so a body of exactly
-// maxResponseBodyTest bytes must be parsed, not rejected. The body is valid XML (a
-// MediaContainer wrapping a comment) padded to the exact cap size.
+// maxResponseBodyTest bytes must be parsed, not rejected.
+//
+// The padding is split across many comments rather than one 10 MB comment:
+// plexapi runs an xmlx preflight over this response before encoding/xml sees it,
+// and that preflight bounds each token (16 KiB for the shared-servers limits).
+// A single cap-sized comment is valid XML but not a plausible plex.tv response,
+// and the preflight rightly refuses it — which would make this test assert the
+// preflight rather than the read cap it exists to pin.
 func TestSharedUserTokens_AcceptsResponseExactlyAtCap(t *testing.T) {
-	const prefix = `<MediaContainer><!--`
-	const suffix = `--></MediaContainer>`
+	const prefix = `<MediaContainer>`
+	const suffix = `</MediaContainer>`
 	body := make([]byte, 0, maxResponseBodyTest)
 	body = append(body, prefix...)
-	body = append(body, bytes.Repeat([]byte("a"), maxResponseBodyTest-len(prefix)-len(suffix))...)
+	body = append(body, xmlCommentPadding(t, maxResponseBodyTest-len(prefix)-len(suffix))...)
 	body = append(body, suffix...)
 	if len(body) != maxResponseBodyTest {
 		t.Fatalf("test setup: body len = %d, want exactly %d", len(body), maxResponseBodyTest)
