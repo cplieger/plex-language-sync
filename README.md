@@ -58,7 +58,8 @@ services:
     image: ghcr.io/cplieger/plex-language-sync:latest
     container_name: plex-language-sync
     restart: unless-stopped
-    user: "1000:1000"  # match your host user
+    # Override with PUID/PGID in .env; defaults to 1000:1000.
+    user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
 
     environment:
       PLEX_URL: "http://plex:32400"  # full URL including scheme and port
