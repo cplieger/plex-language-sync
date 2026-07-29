@@ -15,6 +15,25 @@ import (
 	"github.com/cplieger/plexapi"
 )
 
+// newClientFromHTTP builds a Client from an already-parsed base URL and a
+// caller-supplied http.Client. It is the in-package twin of
+// testsupport/plexclient.NewFromHTTP, duplicated here because this file is
+// `package plex`: importing the fixture package (which imports plex) would
+// be an import cycle. A nil hc gets the library's default hardened
+// transport.
+func newClientFromHTTP(t *testing.T, baseURL *url.URL, token string, hc *http.Client) *Client {
+	t.Helper()
+	var opts []plexapi.Option
+	if hc != nil {
+		opts = append(opts, plexapi.WithHTTPClient(hc))
+	}
+	api, err := plexapi.New(baseURL.String(), token, opts...)
+	if err != nil {
+		t.Fatalf("newClientFromHTTP(%s): %v", baseURL, err)
+	}
+	return &Client{Client: api}
+}
+
 // newTestClient builds a Client pointed at an httptest server running the
 // given handler. The server is torn down when the test ends. Shared across
 // all client tests in this package.
@@ -26,7 +45,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewClientFromHTTP(u, "test-token", srv.Client())
+	return newClientFromHTTP(t, u, "test-token", srv.Client())
 }
 
 // captureSlog redirects the default slog logger to a buffer for the duration
@@ -407,9 +426,13 @@ func TestShowSections_FiltersNonShow(t *testing.T) {
 
 // --- Tests: ShowMetadata (runtime-types-p1 split) ---
 
-// ShowMetadata returns *Show with Label + LibraryTitle. Before the split it
+// ShowMetadata returns *Show with the show's labels. Before the split it
 // delegated to Episode and returned *Episode; now it's its own library hit
 // but the wire behaviour (path, label decoding) is identical.
+//
+// The payload deliberately carries a field Show does NOT declare
+// (ratingKey) — real Plex sends it, and the non-strict decoder must ignore
+// it rather than fail.
 func TestShowMetadata_DecodesShowResponse(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -421,9 +444,6 @@ func TestShowMetadata_DecodesShowResponse(t *testing.T) {
 	show, err := c.ShowMetadata(context.Background(), RatingKey("42"))
 	if err != nil {
 		t.Fatalf("ShowMetadata() error = %v", err)
-	}
-	if show.RatingKey != "42" {
-		t.Errorf("show.RatingKey = %q, want 42", show.RatingKey)
 	}
 	if len(show.Label) != 1 || show.Label[0].Tag != "PLS_IGNORE" {
 		t.Errorf("show.Label = %+v, want [{Tag:PLS_IGNORE}]", show.Label)
@@ -707,7 +727,7 @@ func TestSharedUserTokens(t *testing.T) {
 		}
 		t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
 		base, _ := url.Parse("http://plex.local:32400")
-		return NewClientFromHTTP(base, "admin-token", nil)
+		return newClientFromHTTP(t, base, "admin-token", nil)
 	}
 
 	t.Run("happy path parses servers and sends auth", func(t *testing.T) {
@@ -769,7 +789,7 @@ func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
 	}
 	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
 	base, _ := url.Parse("http://plex.local:32400")
-	c := NewClientFromHTTP(base, "admin-token", nil)
+	c := newClientFromHTTP(t, base, "admin-token", nil)
 
 	_, stErr := c.SharedUserTokens(context.Background(), "machine-id")
 	if stErr == nil {
@@ -792,7 +812,7 @@ func TestSharedUserTokens_EmptyBodyReturnsNoServers(t *testing.T) {
 	}
 	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
 	base, _ := url.Parse("http://plex.local:32400")
-	c := NewClientFromHTTP(base, "admin-token", nil)
+	c := newClientFromHTTP(t, base, "admin-token", nil)
 
 	servers, stErr := c.SharedUserTokens(context.Background(), "machine-id")
 	if stErr != nil {
@@ -897,7 +917,7 @@ func TestSharedUserTokens_AcceptsResponseExactlyAtCap(t *testing.T) {
 	}
 	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
 	base, _ := url.Parse("http://plex.local:32400")
-	c := NewClientFromHTTP(base, "admin-token", nil)
+	c := newClientFromHTTP(t, base, "admin-token", nil)
 
 	servers, stErr := c.SharedUserTokens(context.Background(), "machine-id")
 	if stErr != nil {

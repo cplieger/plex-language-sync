@@ -11,8 +11,6 @@ package plex
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/plexapi"
@@ -27,8 +25,7 @@ var ErrNotFound = plexapi.ErrNotFound
 type HTTPStatusError = plexapi.StatusError
 
 // Client is an HTTP client for a single Plex Media Server base URL + auth
-// token. Use NewClient or NewClientFromHTTP; derive per-user clients with
-// ForToken.
+// token. Build one with NewClient; derive per-user clients with ForToken.
 type Client struct {
 	*plexapi.Client
 }
@@ -59,24 +56,6 @@ func NewClient(serverURL, token, caCertPath string) (*Client, error) {
 // the CA pin and transport were established once at NewClient time.
 func (c *Client) ForToken(token string) *Client {
 	return &Client{Client: c.Client.ForToken(token)}
-}
-
-// NewClientFromHTTP builds a Client from an already-parsed base URL and a
-// caller-supplied http.Client. Intended for tests that point a Client at an
-// httptest.Server — production code uses NewClient. A nil hc gets the
-// library's default hardened transport.
-func NewClientFromHTTP(baseURL *url.URL, token string, hc *http.Client) *Client {
-	var opts []plexapi.Option
-	if hc != nil {
-		opts = append(opts, plexapi.WithHTTPClient(hc))
-	}
-	api, err := plexapi.New(baseURL.String(), token, opts...)
-	if err != nil {
-		// The URL was already parsed by the caller; construction can only
-		// fail on a non-http(s) scheme, which is a test-fixture bug.
-		panic(fmt.Sprintf("plex.NewClientFromHTTP: %v", err))
-	}
-	return &Client{Client: api}
 }
 
 // caOptions loads the CA-pinning option set for caCertPath. The bounded

@@ -8,7 +8,6 @@ package fakeapi
 
 import (
 	"maps"
-	"slices"
 	"sync"
 	"time"
 
@@ -20,8 +19,9 @@ import (
 // Every accessor takes a short-held lock; consumers can share one Cache
 // across goroutines without additional synchronization.
 //
-// Beyond api.Cache, Cache exposes the Processed helper reader (NOT part
-// of api.Cache) that tests use to inspect the fake's state after a run.
+// The surface is exactly api.Cache: consumers assert on the fake through
+// the same readers production code uses (WasRecentlyProcessed, IntentFor,
+// UserTokens, LastSchedulerRun) rather than through fake-only inspectors.
 type Cache struct {
 	processed    map[string]time.Time
 	profiles     map[string]map[string]string
@@ -174,17 +174,4 @@ func (c *Cache) SetLastSchedulerRun(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lastRun = t
-}
-
-// ---------------------------------------------------------------------------
-// Test helpers (NOT part of api.Cache)
-// ---------------------------------------------------------------------------
-
-// Processed returns a deterministically-ordered copy of the processed
-// keys. Useful for asserting "the sync pass marked exactly these
-// episodes as processed" without relying on Go's map-iteration order.
-func (c *Cache) Processed() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return slices.Sorted(maps.Keys(c.processed))
 }

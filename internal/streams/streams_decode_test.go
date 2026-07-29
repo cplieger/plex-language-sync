@@ -13,6 +13,10 @@ import (
 // tests use a standalone wrap struct, so no test currently proves the tags
 // on Episode/Media/Part/Stream map the real Plex field names or that
 // FlexInt works when embedded in Episode.
+//
+// The payload deliberately carries fields the structs do NOT declare
+// (librarySectionID, the Media id) — real Plex sends them, and the
+// non-strict decoder must ignore them rather than fail.
 func TestEpisode_JSONDecodeContract(t *testing.T) {
 	t.Parallel()
 
@@ -51,9 +55,6 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 	}
 	if got := ep.SeasonNum(); got != 2 {
 		t.Errorf("SeasonNum() = %d, want 2 (quoted-string FlexInt in situ)", got)
-	}
-	if got := int(ep.LibrarySectionID); got != 3 {
-		t.Errorf("LibrarySectionID = %d, want 3 (quoted-string FlexInt in situ)", got)
 	}
 	if got := FirstPartID(&ep); got != 42 {
 		t.Errorf("FirstPartID() = %d, want 42 (Media[0].Part[0].id)", got)

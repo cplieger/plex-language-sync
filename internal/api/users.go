@@ -5,10 +5,15 @@ package api
 // the api package stays at the bottom of the import graph — importing
 // internal/users here would introduce a cycle because users depends on
 // api.Cache.
+//
+// Deliberately carries no token field: a per-user Plex client comes from
+// api.UserClientFunc (backed by users.Manager.ClientForUser, which looks
+// the token up internally), so nothing across the spine needs one. With
+// no field to populate, leaking a token through this struct is
+// structurally impossible rather than merely discouraged.
 type UserInfo struct {
-	ID    string
-	Name  string
-	Token string
+	ID   string
+	Name string
 }
 
 // UserLookup resolves user IDs to display names and the full list of

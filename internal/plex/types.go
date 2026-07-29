@@ -50,23 +50,15 @@ type User struct {
 // when the key points to a TV show. Split off from Episode so callers
 // asking "what are the show's labels?" don't receive an Episode-typed
 // value.
+//
+// Labels are the only thing the one consumer needs (ignore.Policy's
+// ShouldSkipEpisode reads Label; see internal/ignore/policy.go). Plex
+// also sends ratingKey, title, librarySectionTitle and the rest, but the
+// caller already holds the rating key it asked for, and the decoder is
+// non-strict, so those fields are ignored on the wire rather than
+// decoded into unread struct members.
 type Show struct {
-	RatingKey        string          `json:"ratingKey"`
-	Title            string          `json:"title"`
-	LibraryTitle     string          `json:"librarySectionTitle"`
-	Label            []streams.Label `json:"Label"`
-	LibrarySectionID streams.FlexInt `json:"librarySectionID"`
-}
-
-// Season is the season-level metadata returned by GET
-// /library/metadata/{key} when the key points to a season: the
-// navigational spine (parent key, season index) without the whole
-// media/part/stream graph.
-type Season struct {
-	RatingKey       string          `json:"ratingKey"`
-	ParentRatingKey string          `json:"parentRatingKey"`
-	Title           string          `json:"title"`
-	Index           streams.FlexInt `json:"index"`
+	Label []streams.Label `json:"Label"`
 }
 
 // Session represents a single active session from GET /status/sessions.
@@ -82,11 +74,10 @@ type Session struct {
 
 // HistoryItem is one entry from GET /status/sessions/history/all.
 type HistoryItem struct {
-	RatingKey        string          `json:"ratingKey"`
-	Type             string          `json:"type"`
-	LibraryTitle     string          `json:"librarySectionTitle"`
-	AccountID        streams.FlexInt `json:"accountID"`
-	LibrarySectionID streams.FlexInt `json:"librarySectionID"`
+	RatingKey    string          `json:"ratingKey"`
+	Type         string          `json:"type"`
+	LibraryTitle string          `json:"librarySectionTitle"`
+	AccountID    streams.FlexInt `json:"accountID"`
 	// ViewedAt is the play's unix timestamp — the same field the History
 	// fetch filters on server-side (viewedAt>=N). Consumed by the
 	// reconcile plane's freshness guard; 0 when absent from the response.

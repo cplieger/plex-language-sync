@@ -6,6 +6,13 @@ import (
 	"pgregory.net/rapid"
 )
 
+// streamTypeVideo is the Plex wire value for a video stream. Production
+// code never names it (see the StreamType const block: the app only asks
+// is-audio / is-subtitle), but the tests need a third kind to prove the
+// predicates and filters REJECT everything that is not audio or subtitle
+// — so the value lives with its only consumer.
+const streamTypeVideo StreamType = 1
+
 func TestContainsDescriptive(t *testing.T) {
 	tests := []struct {
 		title string
@@ -60,7 +67,7 @@ func TestEpisodeMethodsZero(t *testing.T) {
 func TestStreamIsAudioIsSubtitle(t *testing.T) {
 	audio := Stream{StreamType: StreamTypeAudio}
 	sub := Stream{StreamType: StreamTypeSubtitle}
-	video := Stream{StreamType: StreamTypeVideo}
+	video := Stream{StreamType: streamTypeVideo}
 
 	if !audio.IsAudio() {
 		t.Error("expected isAudio() true for StreamTypeAudio")

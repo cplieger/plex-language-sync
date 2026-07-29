@@ -58,13 +58,13 @@ func (c *Client) SeasonEpisodes(ctx context.Context, rk RatingKey) ([]streams.Ep
 	return fetchMetadata[streams.Episode](ctx, c, path)
 }
 
-// ShowMetadata fetches the show-level metadata (labels, library) for a show.
+// ShowMetadata fetches the show-level metadata (labels) for a show.
 // /library/metadata/{key} returns whatever type the key points to, so this
 // delegates to the same endpoint as Episode but decodes into *Show.
 // Split off from Episode: a show response does not
 // have Media/Part/Stream, so typing it as *Show instead of *Episode keeps
-// the field set honest for callers (e.g. shouldIgnoreShow reads only
-// LibraryTitle + Label).
+// the field set honest for callers (the one consumer, ignore.Policy's
+// ShouldSkipEpisode, reads only Label).
 func (c *Client) ShowMetadata(ctx context.Context, rk RatingKey) (*Show, error) {
 	path, err := plexapi.MetadataPath(rk)
 	if err != nil {

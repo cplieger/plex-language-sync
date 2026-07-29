@@ -21,17 +21,15 @@ import (
 // previous json.Number behaviour where an absent field produced the
 // empty-string "" that strconv.Atoi rejected and callers treated as 0.
 //
-// Exported (capital F) because non-streams packages (internal/plex for
-// Show.LibrarySectionID, Season.Index, HistoryItem.AccountID and
-// HistoryItem.LibrarySectionID) now embed FlexInt in their struct
-// definitions. Keeping it unexported would force those packages to
+// Exported (capital F) because a non-streams package (internal/plex, for
+// HistoryItem.AccountID and HistoryItem.ViewedAt) embeds FlexInt in its
+// struct definitions. Keeping it unexported would force that package to
 // redeclare a mirror type or reach through a getter, both of which
 // defeat the "one primitive, one place" design.
 //
 // Wire-origin string fields (streams.Episode.RatingKey,
-// plex.Section.Key, plex.HistoryItem.RatingKey, plex.Show.RatingKey,
-// plex.Season.RatingKey) deliberately stay typed as string — the Plex
-// JSON wire format for rating keys is a string and inviolate item 9
+// plex.HistoryItem.RatingKey) deliberately stay typed as string — the
+// Plex JSON wire format for rating keys is a string and inviolate item 9
 // requires that representation be preserved on the wire. FlexInt only
 // replaces json.Number fields whose semantic intent was always "an
 // integer".

@@ -170,12 +170,10 @@ func (m *Manager) SharedCount() int {
 }
 
 // All returns the admin plus all shared users as api.UserInfo values.
-// Every returned entry (admin and shared alike) has an empty Token
-// field; All() never threads tokens through this slice. Callers that
-// need an HTTP client for any user must use ClientForUser (which falls
-// back to the admin client for the admin ID and looks up a shared
-// user's token internally) rather than reading UserInfo.Token. Keeping
-// tokens out narrows the in-memory surface that holds them.
+// api.UserInfo has no token field, so this slice cannot carry one.
+// Callers that need an HTTP client for any user must use ClientForUser
+// (which falls back to the admin client for the admin ID and looks up a
+// shared user's token internally).
 //
 // The return type is api.UserInfo (not internal Info) so *Manager
 // satisfies api.UserLookup and consumers (sync, scheduler) can depend
@@ -211,12 +209,4 @@ func (m *Manager) Name(userID string) string {
 		return info.Name
 	}
 	return "unknown-" + userID
-}
-
-// Admin returns the admin UserInfo. Primarily for tests that need to
-// assert the manager was initialized with the expected admin identity.
-func (m *Manager) Admin() api.UserInfo {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return api.UserInfo{ID: m.admin.ID.String(), Name: m.admin.Name}
 }

@@ -61,6 +61,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
@@ -415,7 +416,7 @@ func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) notifyAdapt
 	t.Helper()
 	parsed, _ := url.Parse("http://example.test")
 	c := cache.New()
-	client := plex.NewClientFromHTTP(parsed, "test-token", nil)
+	client := plexclient.NewFromHTTP(parsed, "test-token", nil)
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	return notifyAdapter{
@@ -550,7 +551,7 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 		return notifyAdapter{
 			cfg:    &config{triggerOnPlay: play, triggerOnScan: scan},
 			users:  mgr,
-			client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+			client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
 			cache:  c,
 		}
 	}
@@ -599,7 +600,7 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 	adapter := notifyAdapter{
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
-		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
 		cache:  c,
 	}
 
@@ -668,7 +669,7 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
+	client := plexclient.NewFromHTTP(base, "test-token", srv.Client())
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
@@ -707,7 +708,7 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
+	client := plexclient.NewFromHTTP(base, "test-token", srv.Client())
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
@@ -743,7 +744,7 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	client := plex.NewClientFromHTTP(base, "test-token", srv.Client())
+	client := plexclient.NewFromHTTP(base, "test-token", srv.Client())
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
@@ -778,7 +779,7 @@ func TestResolvePlayEventUser_sessionResolvesNonAdmin(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 	adapter := notifyAdapter{
 		cfg:    &config{},
-		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
 	}
 
 	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(),
@@ -798,7 +799,7 @@ func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 	adapter := notifyAdapter{
 		cfg:    &config{},
-		client: plex.NewClientFromHTTP(base, "test-token", srv.Client()),
+		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
 	}
 
 	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(),
