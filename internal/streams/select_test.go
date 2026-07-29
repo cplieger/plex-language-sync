@@ -9,7 +9,7 @@ func TestSelectedStreams(t *testing.T) {
 		Media: []Media{{
 			Part: []Part{{
 				Stream: []Stream{
-					{ID: 1, StreamType: StreamTypeVideo, Selected: true},
+					{ID: 1, StreamType: streamTypeVideo, Selected: true},
 					{ID: 2, StreamType: StreamTypeAudio, Selected: false, LanguageCode: "eng"},
 					{ID: 3, StreamType: StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
 					{ID: 4, StreamType: StreamTypeSubtitle, Selected: true, LanguageCode: "eng"},
@@ -58,7 +58,7 @@ func TestFirstPartID(t *testing.T) {
 func TestAudioStreams(t *testing.T) {
 	ep := &Episode{
 		Media: []Media{{Part: []Part{{Stream: []Stream{
-			{ID: 1, StreamType: StreamTypeVideo},
+			{ID: 1, StreamType: streamTypeVideo},
 			{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng"},
 			{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 			{ID: 4, StreamType: StreamTypeAudio, LanguageCode: "jpn"},

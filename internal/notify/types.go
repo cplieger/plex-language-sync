@@ -29,22 +29,22 @@ type Notification struct {
 }
 
 // PlayEvent represents a single play-session state notification from Plex.
+// Only the fields the event plane consumes are declared: the decoder is
+// non-strict, so Plex's other PlaySessionStateNotification fields
+// (sessionKey, viewOffset, …) are ignored on the wire rather than
+// decoded into unread struct members.
 type PlayEvent struct {
-	SessionKey       string `json:"sessionKey"`
 	ClientIdentifier string `json:"clientIdentifier"`
 	RatingKey        string `json:"ratingKey"`
 	State            string `json:"state"`
-	ViewOffset       int64  `json:"viewOffset"`
 }
 
 // TimelineEntry represents a library scan timeline event from Plex.
+// Only the fields the scan predicates consume are declared; see PlayEvent
+// for the non-strict-decode rationale.
 type TimelineEntry struct {
 	ItemID        string `json:"itemID"`
-	Identifier    string `json:"identifier"`
-	SectionID     string `json:"sectionID"`
 	MetadataState string `json:"metadataState"`
 	MediaState    string `json:"mediaState"`
 	Type          int    `json:"type"`
-	State         int    `json:"state"`
-	UpdatedAt     int64  `json:"updatedAt"`
 }

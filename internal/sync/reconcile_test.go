@@ -54,7 +54,7 @@ func TestObserveAndPropagate_IgnoredShowRecordsNoIntent(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
 		ShowMetadataByKey: map[string]*plex.Show{
-			"42": {RatingKey: "42", Label: []streams.Label{{Tag: "SKIP"}}},
+			"42": {Label: []streams.Label{{Tag: "SKIP"}}},
 		},
 	}
 	c := fakeapi.NewCache()
@@ -243,7 +243,7 @@ func TestReconcileWithIntent_IgnoredShowSkips(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
 		ShowMetadataByKey: map[string]*plex.Show{
-			"42": {RatingKey: "42", Label: []streams.Label{{Tag: "SKIP"}}},
+			"42": {Label: []streams.Label{{Tag: "SKIP"}}},
 		},
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
 	}

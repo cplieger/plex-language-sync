@@ -119,7 +119,7 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 			t.Parallel()
 			plx := &fakeapi.Plex{
 				ShowMetadataByKey: map[string]*plex.Show{
-					tc.episodeShowKey: {RatingKey: tc.episodeShowKey, Label: tc.showLabels},
+					tc.episodeShowKey: {Label: tc.showLabels},
 				},
 			}
 			policy := ignore.NewPolicy(tc.ignoreLibs, tc.ignoreLabels)
@@ -900,7 +900,7 @@ func TestObserveAndPropagate(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{
 			ShowMetadataByKey: map[string]*plex.Show{
-				"42": {RatingKey: "42", Label: []streams.Label{{Tag: "SKIP"}}},
+				"42": {Label: []streams.Label{{Tag: "SKIP"}}},
 			},
 			ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
 		}
@@ -936,7 +936,7 @@ func TestObserveAndPropagate_IgnoredShowDoesNotLearnProfile(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
 		ShowMetadataByKey: map[string]*plex.Show{
-			"42": {RatingKey: "42", Label: []streams.Label{{Tag: "SKIP"}}},
+			"42": {Label: []streams.Label{{Tag: "SKIP"}}},
 		},
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
 		EpisodeByKey:       map[string]*streams.Episode{"2": targetNeedingAudioSwitch("2")},

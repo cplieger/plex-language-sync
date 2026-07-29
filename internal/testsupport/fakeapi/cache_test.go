@@ -60,15 +60,4 @@ func TestCacheRoundTrip(t *testing.T) {
 	if !c.LastSchedulerRun().Equal(now) {
 		t.Errorf("LastSchedulerRun = %v, want %v", c.LastSchedulerRun(), now)
 	}
-
-	// Processed() is sorted.
-	c.MarkProcessed("a")
-	c.MarkProcessed("z")
-	c.MarkProcessed("m")
-	list := c.Processed()
-	for i := 1; i < len(list); i++ {
-		if list[i-1] > list[i] {
-			t.Errorf("Processed() not sorted at index %d: %v", i, list)
-		}
-	}
 }

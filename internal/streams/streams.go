@@ -23,26 +23,23 @@ type Label struct {
 
 // Episode is a Plex metadata item of type="episode" (and, by extension,
 // show or season metadata since /library/metadata/{key} is polymorphic).
+// Only the fields the app consumes are declared: the plexapi decoder is
+// non-strict, so Plex's other metadata fields are ignored on the wire
+// rather than decoded into unread struct members.
 type Episode struct {
 	RatingKey       string `json:"ratingKey"`
 	ParentRatingKey string `json:"parentRatingKey"`
-	GrandparentKey  string `json:"grandparentKey"`
-	// The four title fields are Plex metadata sourced from the wild (agents,
+	// The two title fields are Plex metadata sourced from the wild (agents,
 	// filenames), tagged runesafe.Untrusted at this decode boundary: raw
 	// bytes in (matching, e.g. the ignore policy, reads Raw()), sanitized
 	// automatically at every slog/fmt emit.
 	GrandparentTitle     runesafe.Untrusted `json:"grandparentTitle"`
-	ParentTitle          runesafe.Untrusted `json:"parentTitle"`
-	Title                runesafe.Untrusted `json:"title"`
-	Type                 string             `json:"type"`
 	LibraryTitle         runesafe.Untrusted `json:"librarySectionTitle"`
+	Type                 string             `json:"type"`
 	GrandparentRatingKey string             `json:"grandparentRatingKey"`
-	Label                []Label            `json:"Label"`
 	Media                []Media            `json:"Media"`
-	AddedAt              int64              `json:"addedAt"`
 	Index                FlexInt            `json:"index"`
 	ParentIndex          FlexInt            `json:"parentIndex"`
-	LibrarySectionID     FlexInt            `json:"librarySectionID"`
 }
 
 // SeasonNum returns the parsed season index, or 0 when the ParentIndex
@@ -69,10 +66,11 @@ func (e *Episode) ShortName() string {
 	return fmt.Sprintf("'%s' (S%02dE%02d)", e.GrandparentTitle, e.SeasonNum(), e.EpisodeNum())
 }
 
-// Media wraps a list of Parts for an Episode.
+// Media wraps a list of Parts for an Episode. Plex also sends a numeric
+// media `id`, but the per-user stream-selection write is keyed on the
+// PART id (see FirstPartID), so it is not decoded.
 type Media struct {
 	Part []Part `json:"Part"`
-	ID   int    `json:"id"`
 }
 
 // Part wraps a list of Streams for a Media.
@@ -86,10 +84,12 @@ type Part struct {
 // unmarshal directly from JSON integers without a custom decoder.
 type StreamType int
 
-// StreamTypeVideo, StreamTypeAudio, and StreamTypeSubtitle enumerate the
-// stream-type integer values used in the Plex API wire format.
+// StreamTypeAudio and StreamTypeSubtitle enumerate the stream-type
+// integer values the app acts on. Plex also uses 1 for video, but the
+// app only ever asks "is this audio?" / "is this a subtitle?" (see
+// IsAudio, IsSubtitle, Audio, Subtitle) — a video stream is simply
+// whatever answers no to both, so nothing here needs to name it.
 const (
-	StreamTypeVideo    StreamType = 1
 	StreamTypeAudio    StreamType = 2
 	StreamTypeSubtitle StreamType = 3
 )
@@ -97,7 +97,6 @@ const (
 // Stream is a single audio / subtitle / video stream on a Part.
 type Stream struct {
 	LanguageCode         string     `json:"languageCode"`
-	LanguageTag          string     `json:"languageTag"`
 	DisplayTitle         string     `json:"displayTitle"`
 	ExtendedDisplayTitle string     `json:"extendedDisplayTitle"`
 	Title                string     `json:"title"`

@@ -33,11 +33,9 @@ func DefaultRefreshConfig() RefreshConfig {
 // periodicRefreshInterval is the cadence for the background token
 // refresh loop. Preserved from the pre-extraction package-level const
 // userTokenRefreshInterval so the operational behavior is unchanged.
+// RefreshLoop both logs it at startup and drives its ticker from it, so
+// the value needs no accessor outside this package.
 const periodicRefreshInterval = 12 * time.Hour
-
-// PeriodicRefreshInterval returns the background refresh cadence. The
-// composition root uses this to log the interval at startup.
-func PeriodicRefreshInterval() time.Duration { return periodicRefreshInterval }
 
 // RefreshTokens fetches shared user tokens from plex.tv and updates the
 // cache. The plex.tv response is the source of truth: shared users
@@ -131,7 +129,7 @@ func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]Inf
 // multi-minute outages, and local Plex can be up while plex.tv is
 // unreachable. Without retry, a fresh install during such an outage
 // would leave the shared-users map empty for up to
-// PeriodicRefreshInterval() (12h). The retry bounds the degraded
+// periodicRefreshInterval (12h). The retry bounds the degraded
 // window to tens of seconds in the common case.
 //
 // Cached tokens from a previous run short-circuit this entirely: if
@@ -183,7 +181,7 @@ func (m *Manager) InitialRefreshWithRetry(ctx context.Context, adminClient *plex
 }
 
 // RefreshLoop periodically refreshes shared user tokens from plex.tv on
-// the PeriodicRefreshInterval cadence. Exits on context cancellation.
+// the periodicRefreshInterval cadence. Exits on context cancellation.
 // The initial synchronous refresh is not the responsibility of this
 // loop — run InitialRefreshWithRetry before starting the loop.
 func (m *Manager) RefreshLoop(ctx context.Context, adminClient *plex.Client, machineID string) {

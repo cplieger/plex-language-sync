@@ -1,0 +1,111 @@
+# .punused-ignore — adjudicated punused findings.
+#
+# Format: one literal substring per line, matched against a punused finding
+# line ("<file>:<line>:<col> <kind> <name> is <verdict> (EUxxxx)"). Full-line
+# "#" comments carry the reason. Patterns deliberately omit the file:line:col
+# prefix: an unrelated edit above a symbol shifts its line number, which would
+# silently stale the entry and fail the gate on a finding already adjudicated.
+#
+# What punused (github.com/bep/punused) can and cannot see, since every entry
+# below turns on it: it asks gopls for the references of each exported symbol
+# declared in a NON-test file (symbols declared in _test.go files are never
+# reported, and gopls is asked with IncludeDeclaration:false), then reports
+# EU1002 when there are no references at all and EU1001 when every reference
+# sits in a _test.go file. Its README names the blind spots — it does not see
+# references via reflect, and interfaces produce surprises — and its own golden
+# test shows an interface method reported unused while an implementation of it
+# is being called. Each entry names which blind spot, or which structural
+# constraint, applies.
+#
+# Not in this file, because they were resolved instead: api.UserInfo.Token and
+# plex.Show.RatingKey (deleted, no production reader), streams.StreamTypeVideo
+# (deleted from production; the wire value now lives in the test that needs a
+# third stream kind), plex.NewClientFromHTTP (moved to
+# internal/testsupport/plexclient).
+
+# ---------------------------------------------------------------------------
+# json.Unmarshaler reached reflectively by encoding/json.
+# Blind spot: "It does not detect references via reflect."
+#
+# streams.FlexInt is the Plex number-or-quoted-number wire primitive. Nothing
+# calls UnmarshalJSON by name; encoding/json finds it through the
+# json.Unmarshaler interface while decoding the production structs that embed
+# FlexInt — streams.Episode.Index and .ParentIndex
+# (internal/streams/streams.go:41-42), plex.HistoryItem.AccountID and .ViewedAt
+# (internal/plex/types.go:74,78). Those decode on the production fetch path
+# (internal/plex/library.go, fetchMetadata[streams.Episode]) and production
+# reads the results: Episode.SeasonNum/EpisodeNum (streams.go:49-56) feed the
+# season/episode comparison in internal/sync/tracks.go:393-399. Delete the
+# method and every quoted Plex index ("14") starts failing to decode.
+method (*FlexInt).UnmarshalJSON is used in test only
+
+# ---------------------------------------------------------------------------
+# internal/testsupport/** — fixture packages.
+# Structural: every export here is EU1001 by construction, not by accident.
+#
+# These are ordinary .go files, so punused enumerates their symbols, but every
+# legitimate consumer is a _test.go file in a DIFFERENT package, so every
+# reference is test-only. Ordinary .go files are not a mistake: a _test.go file
+# is visible only to its own package's test binary, so a fixture shared across
+# packages cannot live in one. Entries are per-symbol rather than one
+# directory-wide pattern, so a fixture that becomes genuinely unreferenced
+# still fails the gate.
+
+# fakeapi.NewCache — the in-memory api.Cache fake. 113 call sites across three
+# other packages' tests (internal/sync, internal/scheduler, internal/users).
+function NewCache is used in test only
+
+# fakeapi.RunCacheContract — the shared api.Cache contract, run against BOTH
+# implementations: the REAL cache at internal/cache/cache_test.go:554
+# (RunCacheContract(t, New())) and the fake at
+# internal/testsupport/fakeapi/cache_contract_test.go:7. Deleting it deletes
+# the production cache's contract coverage, not just the fake's.
+function RunCacheContract is used in test only
+
+# fakeapi.(*Plex).CallNames — reader for the fake's ordered call log; 73
+# assertion sites in internal/sync and internal/scheduler tests pin "the pass
+# made exactly these Plex calls, in this order" (the shared-reference
+# cost-collapse invariant among them).
+method (*Plex).CallNames is used in test only
+
+# plexclient.NewFromHTTP — builds a real *plex.Client aimed at an
+# httptest.Server. It lives here exactly so internal/plex exports only
+# plex.NewClient; 26 call sites (main_test.go, internal/users/manager_test.go)
+# are in packages that cannot see an internal/plex test helper.
+function NewFromHTTP is used in test only
+
+# ---------------------------------------------------------------------------
+# Interface satisfaction.
+# Blind spot: "Some possible surprises when it comes to interfaces."
+#
+# EU1002 (zero references) is literally accurate — nothing calls this method on
+# the fake by name — but it cannot be deleted: api.PlexReader requires
+# UserFromSession (internal/api/plex.go:39) and
+# internal/testsupport/fakeapi/plex.go:141 asserts
+# `var _ api.PlexReadWriter = (*Plex)(nil)`, so removing it breaks compilation
+# everywhere the fake is passed as a PlexReader/PlexReadWriter. Satisfying an
+# interface is not a reference gopls reports, which is why the count is zero.
+# Production reaches the real implementation through the same interface
+# (main.go:491 -> internal/plex/history.go:22).
+method (*Plex).UserFromSession is unused
+
+# ---------------------------------------------------------------------------
+# Test seam that cannot leave its package.
+# Structural: Go visibility, not a punused blind spot.
+#
+# plex.SwapTVClient swaps the package-level `tvClient` (internal/plex/
+# shared.go:14) that SharedUserTokens hands to plexapi.NewTV, so plex.tv
+# lookups can be aimed at a local httptest server; production leaves it nil and
+# gets the library's hardened default (30s timeout, refuse-all redirects, OS
+# trust store). EU1001 is accurate — only tests call it — but the remedy used
+# for NewClientFromHTTP above does not apply here: `tvClient` is unexported, so
+# no other package can write it, and the seam has 4 in-package call sites
+# (internal/plex/client_test.go) plus a cross-package one
+# (internal/users/manager_test.go:239, wrapped as swapPlexTVClient and used by
+# 10 tests), so it must stay exported for the latter to compile. The only way
+# to remove the export is to widen RefreshTokens, InitialRefreshWithRetry and
+# RefreshLoop to take a shared-token-fetcher interface instead of *plex.Client
+# — three production signatures changed to relocate test plumbing, which also
+# happens to be the change that would let those 10 tests run in parallel. Left
+# as a human call rather than done under a dead-code sweep.
+function SwapTVClient is used in test only

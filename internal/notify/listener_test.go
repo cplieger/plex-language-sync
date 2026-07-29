@@ -115,6 +115,9 @@ func TestDispatch_UnknownTypeIgnored(t *testing.T) {
 // TestNotificationRoundTripJSON pins the wire-format JSON tags: a
 // Notification marshals to the Plex field names Plex sends, and
 // unmarshal of a realistic Plex payload populates the expected fields.
+// The payload deliberately carries fields the structs do NOT declare
+// (sessionKey, viewOffset) — real Plex sends them, and the non-strict
+// decoder must ignore them rather than fail.
 func TestNotificationRoundTripJSON(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{
@@ -140,7 +143,7 @@ func TestNotificationRoundTripJSON(t *testing.T) {
 		t.Fatalf("plays len = %d, want 1", len(n.NotificationContainer.PlaySessionStateNotification))
 	}
 	ev := n.NotificationContainer.PlaySessionStateNotification[0]
-	if ev.SessionKey != "7" || ev.RatingKey != "42" || ev.ViewOffset != 100 {
+	if ev.RatingKey != "42" || ev.State != "playing" {
 		t.Errorf("play event round-trip = %+v", ev)
 	}
 	if len(n.NotificationContainer.TimelineEntry) != 1 {
