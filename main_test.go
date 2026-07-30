@@ -397,6 +397,104 @@ func TestRequireEnvFromFile(t *testing.T) {
 	}
 }
 
+// TestRequireEnvTrimsFileWhitespace pins the trimming split of
+// responsibility against envx >= v1.5.0: envx removes at most ONE trailing
+// line ending from a KEY_FILE value and returns every other byte as
+// written (a secret may legitimately contain whitespace), so requireEnv
+// itself must trim for the two values it reads — a Plex URL and a Plex
+// token, where padding means a malformed URL or a 401. Every shape below
+// reaches envx with whitespace still attached; the app must see none of
+// it. Interior whitespace is left alone: TrimSpace trims edges, and a
+// value with a space in the middle is a broken secret the operator should
+// see verbatim rather than have silently rewritten.
+func TestRequireEnvTrimsFileWhitespace(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"trailing newline only", "plain-value\n", "plain-value"},
+		{"no trailing newline", "plain-value", "plain-value"},
+		{"surrounding spaces", "  padded-value  \n", "padded-value"},
+		{"surrounding tabs", "\tpadded-value\t\n", "padded-value"},
+		{"crlf line ending", "crlf-value\r\n", "crlf-value"},
+		{"second trailing newline", "double-nl-value\n\n", "double-nl-value"},
+		{"leading newline", "\nleading-nl-value\n", "leading-nl-value"},
+		{"trailing spaces after newline", "trailing-ws-value\n  ", "trailing-ws-value"},
+		{"interior space preserved", "  interior value  \n", "interior value"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secretFile := filepath.Join(t.TempDir(), "secret.txt")
+			if err := os.WriteFile(secretFile, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("TEST_SECRET", "")
+			t.Setenv("TEST_SECRET_FILE", secretFile)
+
+			got := requireEnv("TEST_SECRET")
+			if got != tt.want {
+				t.Errorf("requireEnv via _FILE with content %q = %q, want %q", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRequireEnvTrimsEnvWhitespace pins the same trim on the KEY channel,
+// which envx has always returned verbatim. Both channels must resolve to
+// the same secret for the same key, so a padded PLEX_TOKEN cannot become a
+// different token than the identical value delivered through a file.
+func TestRequireEnvTrimsEnvWhitespace(t *testing.T) {
+	t.Setenv("TEST_SECRET_FILE", "")
+	t.Setenv("TEST_SECRET", "  padded-value\t")
+
+	got := requireEnv("TEST_SECRET")
+	if got != "padded-value" {
+		t.Errorf("requireEnv via env = %q, want %q", got, "padded-value")
+	}
+}
+
+// TestLoadConfigTrimsFileSecrets pins the trim end-to-end through
+// loadConfig: a PLEX_URL_FILE / PLEX_TOKEN_FILE mount whose content
+// carries surrounding whitespace must reach the config as the bare URL and
+// token, because cfg.plexURL is concatenated into request URLs and
+// cfg.plexToken goes out as the auth header.
+func TestLoadConfigTrimsFileSecrets(t *testing.T) {
+	dir := t.TempDir()
+	urlFile := filepath.Join(dir, "plex_url.txt")
+	tokenFile := filepath.Join(dir, "plex_token.txt")
+	if err := os.WriteFile(urlFile, []byte("  http://plex:32400  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenFile, []byte("\tsecret-token \n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PLEX_URL", "")
+	t.Setenv("PLEX_TOKEN", "")
+	t.Setenv("PLEX_URL_FILE", urlFile)
+	t.Setenv("PLEX_TOKEN_FILE", tokenFile)
+	t.Setenv("UPDATE_LEVEL", "")
+	t.Setenv("UPDATE_STRATEGY", "")
+	t.Setenv("TRIGGER_ON_PLAY", "")
+	t.Setenv("TRIGGER_ON_SCAN", "")
+	t.Setenv("LANGUAGE_PROFILES", "")
+	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("IGNORE_LABELS", "")
+	t.Setenv("IGNORE_LIBRARIES", "")
+	t.Setenv("DEBUG", "")
+
+	cfg := loadConfig()
+
+	if cfg.plexURL != "http://plex:32400" {
+		t.Errorf("plexURL = %q, want http://plex:32400", cfg.plexURL)
+	}
+	if cfg.plexToken != "secret-token" {
+		t.Errorf("plexToken = %q, want secret-token", cfg.plexToken)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // readSecretFile bounds
 // ---------------------------------------------------------------------------
