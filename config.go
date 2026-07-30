@@ -132,13 +132,35 @@ func logConfig(cfg *config) {
 
 // requireEnv reads a required env var via envx.Secret, which also supports
 // the Docker-secrets convention (KEY_FILE pointing at a mounted file,
-// size-bounded, trimmed). Missing or unreadable values are fatal: the
+// size-bounded), and then trims the result.
+//
+// envx returns a KEY_FILE value with at most ONE trailing line ending
+// removed and every other byte as written — interior whitespace, edge
+// spaces and tabs, a second trailing newline — because a secret MAY
+// legitimately contain whitespace and envx will not guess which. The KEY
+// channel is verbatim for the same reason. That contract is right for a
+// generic getter, so the trimming belongs here instead: both values this
+// app reads through requireEnv (PLEX_URL, PLEX_TOKEN) are values where
+// whitespace is meaningless, and passing it through would produce a
+// malformed URL or a token Plex answers 401 to. Trimming at this boundary
+// covers both channels, so KEY and KEY_FILE cannot resolve to different
+// secrets for the same key.
+//
+// Missing, unreadable, and whitespace-only values are all fatal: the
 // process cannot work without them, and exiting through the configured
-// slog handler keeps the failure loud and greppable.
+// slog handler keeps the failure loud and greppable. The blank check is
+// what keeps that true across the trim — envx already rejects a blank
+// secret FILE, but a padded KEY would otherwise trim down to an empty
+// string and start the app with no URL or token at all.
 func requireEnv(key string) string {
 	v, err := envx.Secret(key)
 	if err != nil {
 		slog.Error("required environment variable is missing or unreadable", "key", key, "error", err)
+		os.Exit(1)
+	}
+	v = strings.TrimSpace(v)
+	if v == "" {
+		slog.Error("required environment variable is blank", "key", key)
 		os.Exit(1)
 	}
 	return v
