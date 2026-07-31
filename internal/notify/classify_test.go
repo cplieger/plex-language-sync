@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
+	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
+	"pgregory.net/rapid"
 )
 
 // TestClassifyError covers the substring-free, typed-sentinel
@@ -286,4 +288,172 @@ func TestTimelineAction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// legacyStreamCacheKey is the exact pre-keyenc expression BuildStreamCacheKey
+// used: a plain fmt.Sprintf concatenation with no escaping. Kept here as the
+// oracle for the byte-identity tests below, so "the persisted state.json
+// schema did not change" is pinned against the real former bytes rather than
+// against a re-derivation of them.
+func legacyStreamCacheKey(userID, ratingKey string, audioID, subID int) string {
+	return fmt.Sprintf("%s%s:%s:%d:%d", cache.KeyPrefixStreams, userID, ratingKey, audioID, subID)
+}
+
+// TestBuildStreamCacheKeyByteIdenticalToLegacyFormat pins that adopting keyenc
+// did NOT change the key bytes for ordinary Plex input. This key is PERSISTED
+// (the cache's ProcessedEpisodes map in state.json), so a byte change would
+// orphan every entry written by a previous version and cost a round of
+// redundant re-propagation on upgrade.
+//
+// Byte-identity holds because keyenc.Join emits a component containing neither
+// ':' nor '\' verbatim, and because the leading component is always "streams":
+// the escaped join therefore never begins with keyenc's hashed-identity
+// prefix, which is the one in-bound case that would route an ordinary set
+// through the hash instead. Scoped to in-bound sizes; a component set over
+// keyenc.MaxComponentBytes hashes by design and no Plex ID approaches 8 KiB.
+func TestBuildStreamCacheKeyByteIdenticalToLegacyFormat(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		userID    string
+		ratingKey string
+		audioID   int
+		subID     int
+	}{
+		{name: "typical", userID: "42", ratingKey: "1234", audioID: 100, subID: 200},
+		{name: "zero IDs", userID: "1", ratingKey: "999", audioID: 0, subID: 0},
+		{name: "large IDs", userID: "100", ratingKey: "99999", audioID: 65535, subID: 32768},
+		{name: "negative IDs", userID: "7", ratingKey: "8", audioID: -1, subID: -2},
+		{name: "empty userID", userID: "", ratingKey: "1234", audioID: 1, subID: 2},
+		{name: "empty ratingKey", userID: "42", ratingKey: "", audioID: 1, subID: 2},
+		{name: "both string fields empty", userID: "", ratingKey: "", audioID: 0, subID: 0},
+		{name: "non-numeric but separator-free", userID: "user-a_1", ratingKey: "rk.9", audioID: 3, subID: 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			want := legacyStreamCacheKey(tt.userID, tt.ratingKey, tt.audioID, tt.subID)
+			got := BuildStreamCacheKey(tt.userID, tt.ratingKey, tt.audioID, tt.subID)
+			if got != want {
+				t.Errorf("BuildStreamCacheKey(%q, %q, %d, %d) = %q, want %q (byte-identity with the persisted state.json schema is broken)",
+					tt.userID, tt.ratingKey, tt.audioID, tt.subID, got, want)
+			}
+		})
+	}
+}
+
+// TestBuildStreamCacheKeySeparatorFieldCannotCollide pins the bug the adoption
+// fixes. userID (resolved from Plex's sessions response) and ratingKey (read
+// off the WebSocket notification) are both upstream strings that may contain a
+// literal ':'. Under the old concatenation, moving a ':' from the end of
+// userID to the front of ratingKey produced the SAME key, so two distinct
+// (user, episode) identities shared one dedup marker: CheckAndMark reported
+// "already processed" for a selection change it had never seen and the
+// propagation was silently skipped.
+//
+// The test asserts both halves — that the legacy form really did collapse
+// these tuples (otherwise it proves nothing) and that the keyenc form keeps
+// them apart.
+func TestBuildStreamCacheKeySeparatorFieldCannotCollide(t *testing.T) {
+	t.Parallel()
+	const (
+		audioID = 100
+		subID   = 200
+	)
+	tests := []struct {
+		name       string
+		userA, rkA string
+		userB, rkB string
+	}{
+		{
+			name:  "colon at end of userID vs start of ratingKey",
+			userA: "42:1234", rkA: "5",
+			userB: "42", rkB: "1234:5",
+		},
+		{
+			name:  "two colons shifted across the field boundary",
+			userA: "42:1234:5", rkA: "6",
+			userB: "42", rkB: "1234:5:6",
+		},
+		{
+			name:  "colon shifting a numeric ID into ratingKey",
+			userA: "7:99", rkA: "8",
+			userB: "7", rkB: "99:8",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if legacyA, legacyB := legacyStreamCacheKey(tt.userA, tt.rkA, audioID, subID),
+				legacyStreamCacheKey(tt.userB, tt.rkB, audioID, subID); legacyA != legacyB {
+				t.Fatalf("premise broken: the legacy form was expected to collide, got %q and %q", legacyA, legacyB)
+			}
+			gotA := BuildStreamCacheKey(tt.userA, tt.rkA, audioID, subID)
+			gotB := BuildStreamCacheKey(tt.userB, tt.rkB, audioID, subID)
+			if gotA == gotB {
+				t.Errorf("(userID %q, ratingKey %q) and (userID %q, ratingKey %q) must not share a dedup key, both = %q",
+					tt.userA, tt.rkA, tt.userB, tt.rkB, gotA)
+			}
+		})
+	}
+}
+
+// TestBuildStreamCacheKeyDistinctTuplesDistinctKeys sweeps a set of adversarial
+// tuples — separator-bearing, escape-bearing, and empty fields — and requires
+// every distinct tuple to map to a distinct key. This catches aliasing that a
+// pairwise test would miss, in particular a field spelling an escape sequence
+// colliding with the encoding of a field that genuinely contains a separator.
+func TestBuildStreamCacheKeyDistinctTuplesDistinctKeys(t *testing.T) {
+	t.Parallel()
+	type tuple struct {
+		userID    string
+		ratingKey string
+		audioID   int
+		subID     int
+	}
+	tuples := []tuple{
+		{"42", "1234", 100, 200},
+		{"42:1234", "5", 100, 200},
+		{"42", "1234:5", 100, 200},
+		{"42:1234:5", "", 100, 200},
+		{"", "42:1234:5", 100, 200},
+		{`42\`, "1234", 100, 200},
+		{"42", `\1234`, 100, 200},
+		{`42\:1234`, "5", 100, 200},
+		{`42\\`, ":1234", 100, 200},
+		{"42", "1234", 200, 100},
+		{"", "", 0, 0},
+	}
+	seen := make(map[string]tuple, len(tuples))
+	for _, tp := range tuples {
+		key := BuildStreamCacheKey(tp.userID, tp.ratingKey, tp.audioID, tp.subID)
+		if prev, dup := seen[key]; dup {
+			t.Errorf("distinct tuples %+v and %+v collapsed to the same key %q", prev, tp, key)
+			continue
+		}
+		seen[key] = tp
+	}
+}
+
+// TestBuildStreamCacheKeyLegacyIdentityProperty is the randomized half of the
+// byte-identity guarantee: over any separator-free and escape-free field
+// content, keyenc.Join must reproduce the legacy concatenation exactly. The
+// table above fixes the cases that matter by name; this covers the alphabet.
+func TestBuildStreamCacheKeyLegacyIdentityProperty(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		// Any byte except the two keyenc reserves (':' and '\'), which are
+		// exactly the inputs whose bytes are ALLOWED to change.
+		safe := `[^:\\]*`
+		userID := rapid.StringMatching(safe).Draw(t, "userID")
+		ratingKey := rapid.StringMatching(safe).Draw(t, "ratingKey")
+		audioID := rapid.Int().Draw(t, "audioID")
+		subID := rapid.Int().Draw(t, "subID")
+
+		want := legacyStreamCacheKey(userID, ratingKey, audioID, subID)
+		got := BuildStreamCacheKey(userID, ratingKey, audioID, subID)
+		if got != want {
+			t.Fatalf("BuildStreamCacheKey(%q, %q, %d, %d) = %q, want legacy %q",
+				userID, ratingKey, audioID, subID, got, want)
+		}
+	})
 }
