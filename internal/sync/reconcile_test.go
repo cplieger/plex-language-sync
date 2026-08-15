@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/api"
@@ -30,7 +29,7 @@ func TestObserveAndPropagate_RecordsIntent(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	intent, ok := c.IntentFor("1", "42")
 	if !ok {
@@ -62,7 +61,7 @@ func TestObserveAndPropagate_IgnoredShowRecordsNoIntent(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, c, &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	if _, ok := c.IntentFor("1", "42"); ok {
 		t.Error("intent recorded for an ignored show; the ignore gate must precede intent recording")
@@ -94,7 +93,7 @@ func TestObserveAndPropagate_CommentaryAudioStillRecordsIntent(t *testing.T) {
 		}}}}},
 	}
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	if _, ok := c.SubtitleLangForAudio("1", "eng"); ok {
 		t.Error("commentary track was learned into the cross-show profile; learning must skip descriptive tracks")
@@ -157,7 +156,7 @@ func TestReconcileWithIntent_AppliesRecordedIntentNotCurrentSelection(t *testing
 	seedIntent(c, 1000)
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
 
-	s.ReconcileWithIntent(context.Background(), plx, "1", replayedEpisode(), 500, "scheduler")
+	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 500, "scheduler")
 
 	// The target (eng selected, jpn available) must be switched to jpn —
 	// the intent — proving the eng current selection of the replayed
@@ -186,7 +185,7 @@ func TestReconcileWithIntent_NoIntentSkips(t *testing.T) {
 	}
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 
-	s.ReconcileWithIntent(context.Background(), plx, "1", replayedEpisode(), 500, "scheduler")
+	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 500, "scheduler")
 
 	if calls := plx.CallNames(); len(calls) != 0 {
 		t.Errorf("no Plex calls expected when no intent is recorded, got %v", calls)
@@ -207,7 +206,7 @@ func TestReconcileWithIntent_NewerPlaySkips(t *testing.T) {
 	seedIntent(c, 1000)
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
 
-	s.ReconcileWithIntent(context.Background(), plx, "1", replayedEpisode(), 2000, "scheduler")
+	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 2000, "scheduler")
 
 	if calls := plx.CallNames(); len(calls) != 0 {
 		t.Errorf("no Plex calls expected for a play newer than the intent (viewedAt 2000 > observedAt 1000), got %v", calls)
@@ -228,7 +227,7 @@ func TestReconcileWithIntent_EqualTimestampApplies(t *testing.T) {
 	seedIntent(c, 1000)
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
 
-	s.ReconcileWithIntent(context.Background(), plx, "1", replayedEpisode(), 1000, "scheduler")
+	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 1000, "scheduler")
 
 	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
 		t.Errorf("SetAudio called %d times, want 1 (equal timestamps must reconcile); calls=%v",
@@ -252,7 +251,7 @@ func TestReconcileWithIntent_IgnoredShowSkips(t *testing.T) {
 	policy := ignore.NewPolicy(nil, []string{"SKIP"})
 	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, c, &fakeapi.Users{})
 
-	s.ReconcileWithIntent(context.Background(), plx, "1", replayedEpisode(), 500, "scheduler")
+	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 500, "scheduler")
 
 	if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
 		t.Errorf("ShowEpisodes called for an ignored show; calls=%v", plx.CallNames())
@@ -282,7 +281,7 @@ func TestProcessNewOrUpdatedEpisode_IntentTierBeatsSharedReference(t *testing.T)
 	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "one"}}}
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, users)
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), newEp, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), newEp, "scan_new")
 
 	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
 		t.Errorf("SetAudio to the intent's jpn stream called %d times, want 1; calls=%v",
@@ -316,7 +315,7 @@ func TestProcessNewOrUpdatedEpisode_IntentlessUserFallsToReference(t *testing.T)
 	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "one"}}}
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, users)
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), newEp, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), newEp, "scan_new")
 
 	if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 1 {
 		t.Errorf("shared reference search ran %d times, want 1 (intent-less user must fall back to it); calls=%v",

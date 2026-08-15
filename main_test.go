@@ -530,7 +530,7 @@ func TestResolvePlayEventUser_noClientIdentifier_failsClosed(t *testing.T) {
 	adapter := newTestAdapter(t, true, false)
 	ev := notify.PlayEvent{State: "playing", RatingKey: "100"}
 
-	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(), ev)
+	uid, uname, ok := adapter.resolvePlayEventUser(t.Context(), ev)
 
 	if ok {
 		t.Errorf("resolvePlayEventUser ok = true for an event with no client identifier, got (%q, %q); the fail-closed skip regressed (the event would be misattributed)", uid, uname)
@@ -656,7 +656,7 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 
 	relevantPlay := notify.PlayEvent{State: "playing", RatingKey: "1", ClientIdentifier: "mac-A"}
 	relevantTimeline := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Gates disabled: neither dispatch path may reach the Plex client.
 	off := build(false, false)
@@ -702,7 +702,7 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 		cache:  c,
 	}
 
-	adapter.OnTimeline(context.Background(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
+	adapter.OnTimeline(t.Context(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
 
 	if hits.Load() == 0 {
 		t.Fatal("handleTimeline never fetched the item; it bailed before the type check, so the not-marked assertion is vacuous")
@@ -780,7 +780,7 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 		ignore: fakeIgnoreChecker{skip: true},
 	}
 
-	adapter.OnTimeline(context.Background(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
+	adapter.OnTimeline(t.Context(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
 
 	if hits.Load() == 0 {
 		t.Fatal("handleTimeline never fetched the item; it bailed before the ignore check, so the not-marked assertion is vacuous")
@@ -820,7 +820,7 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 		// episode reaches the success tail (TimelineAction + MarkProcessed + dispatch).
 	}
 
-	adapter.OnTimeline(context.Background(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
+	adapter.OnTimeline(t.Context(), []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}})
 
 	if hits.Load() == 0 {
 		t.Fatal("handleTimeline never fetched the item; it bailed before the success tail, so the marked assertion is vacuous")
@@ -855,13 +855,13 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	}
 	entries := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
 
-	adapter.OnTimeline(context.Background(), entries)
+	adapter.OnTimeline(t.Context(), entries)
 	first := hits.Load()
 	if first == 0 {
 		t.Fatal("first timeline event never fetched the item; positive control broken, the dedup-skip assertion would be vacuous")
 	}
 
-	adapter.OnTimeline(context.Background(), entries)
+	adapter.OnTimeline(t.Context(), entries)
 	if hits.Load() != first {
 		t.Errorf("re-fired timeline event for an already-processed ItemID hit Plex again (%d -> %d); the WasRecentlyProcessed dedup guard in handleTimeline regressed (a repeat event would re-run ProcessNewOrUpdatedEpisodeAllUsers)", first, hits.Load())
 	}
@@ -880,7 +880,7 @@ func TestResolvePlayEventUser_sessionResolvesNonAdmin(t *testing.T) {
 		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
 	}
 
-	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(),
+	uid, uname, ok := adapter.resolvePlayEventUser(t.Context(),
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-B"})
 
 	if !ok || uid != "9" || uname != "bob" {
@@ -900,7 +900,7 @@ func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
 	}
 
-	uid, uname, ok := adapter.resolvePlayEventUser(context.Background(),
+	uid, uname, ok := adapter.resolvePlayEventUser(t.Context(),
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-missing"})
 
 	if ok {

@@ -38,7 +38,7 @@ func FuzzNotificationUnmarshal(f *testing.F) {
 			return
 		}
 		var rec countingHandler
-		dispatch(context.Background(), &rec, &n)
+		dispatch(t.Context(), &rec, &n)
 
 		wantPlays := 0
 		if n.NotificationContainer.Type == wsTypePlaying {

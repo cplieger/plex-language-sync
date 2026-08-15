@@ -2,7 +2,6 @@ package plex
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -160,7 +159,7 @@ func TestDoJSON_HappyPath(t *testing.T) {
 	var out struct {
 		OK bool `json:"ok"`
 	}
-	if err := c.Get(context.Background(), "/some/path", &out); err != nil {
+	if err := c.Get(t.Context(), "/some/path", &out); err != nil {
 		t.Fatalf("get() error = %v", err)
 	}
 	if !out.OK {
@@ -175,7 +174,7 @@ func TestDoJSON_Returns404AsErrNotFound(t *testing.T) {
 		_, _ = w.Write([]byte("not found"))
 	})
 	var out struct{}
-	err := c.Get(context.Background(), "/missing", &out)
+	err := c.Get(t.Context(), "/missing", &out)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("get() error = %v, want ErrNotFound", err)
 	}
@@ -187,7 +186,7 @@ func TestDoJSON_NonOKStatusReturnsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	var out struct{}
-	err := c.Get(context.Background(), "/boom", &out)
+	err := c.Get(t.Context(), "/boom", &out)
 	if err == nil || errors.Is(err, ErrNotFound) {
 		t.Errorf("get() error = %v, want non-nil non-ErrNotFound", err)
 	}
@@ -199,7 +198,7 @@ func TestDoJSON_EmptyBodyOK(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	var out map[string]string
-	if err := c.Get(context.Background(), "/", &out); err != nil {
+	if err := c.Get(t.Context(), "/", &out); err != nil {
 		t.Errorf("get() on empty 200 body = %v, want nil", err)
 	}
 }
@@ -210,7 +209,7 @@ func TestDoJSON_NilResultSkipsUnmarshal(t *testing.T) {
 		// Body is invalid JSON but result is nil so it must not be decoded.
 		_, _ = w.Write([]byte("not json"))
 	})
-	if err := c.Get(context.Background(), "/do-something", nil); err != nil {
+	if err := c.Get(t.Context(), "/do-something", nil); err != nil {
 		t.Errorf("put() should ignore body when result is nil, got err = %v", err)
 	}
 }
@@ -223,7 +222,7 @@ func TestDoJSON_ResponseExceedingCapErrors(t *testing.T) {
 	})
 	var err error
 	log := captureSlog(t, func() {
-		_, err = c.Episode(context.Background(), "1")
+		_, err = c.Episode(t.Context(), "1")
 	})
 	if err == nil {
 		t.Fatal("get() on an over-cap response must return an error, not silently truncate")
@@ -246,7 +245,7 @@ func TestEpisode_InvalidRatingKey(t *testing.T) {
 	c := newTestClient(t, func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("handler should not be called for invalid rating key, got %s", r.URL.Path)
 	})
-	_, err := c.Episode(context.Background(), RatingKey("../etc/passwd"))
+	_, err := c.Episode(t.Context(), RatingKey("../etc/passwd"))
 	if err == nil {
 		t.Fatal("Episode() with non-numeric key should return error")
 	}
@@ -257,7 +256,7 @@ func TestEpisode_NotFound(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
 	})
-	_, err := c.Episode(context.Background(), RatingKey("123"))
+	_, err := c.Episode(t.Context(), RatingKey("123"))
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Episode() on empty Metadata = %v, want ErrNotFound", err)
 	}
@@ -273,7 +272,7 @@ func TestEpisode_HappyPath(t *testing.T) {
 			`{"ratingKey":"456","grandparentTitle":"Show","parentIndex":"2","index":"3","type":"episode"}` +
 			`]}}`))
 	})
-	ep, err := c.Episode(context.Background(), RatingKey("456"))
+	ep, err := c.Episode(t.Context(), RatingKey("456"))
 	if err != nil {
 		t.Fatalf("Episode() error = %v", err)
 	}
@@ -287,7 +286,7 @@ func TestShowEpisodes_InvalidKey(t *testing.T) {
 	c := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Errorf("handler should not be called for invalid show key")
 	})
-	_, err := c.ShowEpisodes(context.Background(), RatingKey("abc"))
+	_, err := c.ShowEpisodes(t.Context(), RatingKey("abc"))
 	if err == nil {
 		t.Fatal("ShowEpisodes() with non-numeric key should return error")
 	}
@@ -304,7 +303,7 @@ func TestShowEpisodes_HappyPath(t *testing.T) {
 			`{"ratingKey":"2","parentIndex":"1","index":"2"}` +
 			`]}}`))
 	})
-	eps, err := c.ShowEpisodes(context.Background(), RatingKey("42"))
+	eps, err := c.ShowEpisodes(t.Context(), RatingKey("42"))
 	if err != nil {
 		t.Fatalf("ShowEpisodes() error = %v", err)
 	}
@@ -324,7 +323,7 @@ func TestSeasonEpisodes_HappyPath(t *testing.T) {
 			`{"ratingKey":"102","parentIndex":"2","index":"2"}` +
 			`]}}`))
 	})
-	eps, err := c.SeasonEpisodes(context.Background(), RatingKey("10"))
+	eps, err := c.SeasonEpisodes(t.Context(), RatingKey("10"))
 	if err != nil {
 		t.Fatalf("SeasonEpisodes() error = %v", err)
 	}
@@ -338,7 +337,7 @@ func TestSeasonEpisodes_InvalidKey(t *testing.T) {
 	c := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called for invalid season key")
 	})
-	_, err := c.SeasonEpisodes(context.Background(), RatingKey("abc"))
+	_, err := c.SeasonEpisodes(t.Context(), RatingKey("abc"))
 	if err == nil {
 		t.Fatal("SeasonEpisodes() with non-numeric key should return error")
 	}
@@ -361,7 +360,7 @@ func TestRecentlyAdded_HappyPath(t *testing.T) {
 			`{"ratingKey":"200","parentIndex":"1","index":"1","type":"episode"}` +
 			`]}}`))
 	})
-	eps, err := c.RecentlyAdded(context.Background(), RatingKey("5"), 1700000000)
+	eps, err := c.RecentlyAdded(t.Context(), RatingKey("5"), 1700000000)
 	if err != nil {
 		t.Fatalf("RecentlyAdded() error = %v", err)
 	}
@@ -375,7 +374,7 @@ func TestRecentlyAdded_InvalidSectionKey(t *testing.T) {
 	c := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called for invalid section key")
 	})
-	_, err := c.RecentlyAdded(context.Background(), RatingKey("abc"), 0)
+	_, err := c.RecentlyAdded(t.Context(), RatingKey("abc"), 0)
 	if err == nil {
 		t.Fatal("RecentlyAdded() with non-numeric key should return error")
 	}
@@ -393,7 +392,7 @@ func TestRecentlyAdded_FilterUsesSingleGTEOperator(t *testing.T) {
 		gotQuery = r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
 	})
-	if _, err := c.RecentlyAdded(context.Background(), RatingKey("5"), 1700000000); err != nil {
+	if _, err := c.RecentlyAdded(t.Context(), RatingKey("5"), 1700000000); err != nil {
 		t.Fatalf("RecentlyAdded() error = %v", err)
 	}
 	if !strings.Contains(gotQuery, "addedAt>=1700000000") {
@@ -415,7 +414,7 @@ func TestShowSections_FiltersNonShow(t *testing.T) {
 			`{"key":"3","title":"Music","type":"artist"}` +
 			`]}}`))
 	})
-	got, err := c.ShowSections(context.Background())
+	got, err := c.ShowSections(t.Context())
 	if err != nil {
 		t.Fatalf("ShowSections() error = %v", err)
 	}
@@ -441,7 +440,7 @@ func TestShowMetadata_DecodesShowResponse(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"42","Label":[{"tag":"PLS_IGNORE"}]}]}}`))
 	})
-	show, err := c.ShowMetadata(context.Background(), RatingKey("42"))
+	show, err := c.ShowMetadata(t.Context(), RatingKey("42"))
 	if err != nil {
 		t.Fatalf("ShowMetadata() error = %v", err)
 	}
@@ -455,7 +454,7 @@ func TestShowMetadata_InvalidKey(t *testing.T) {
 	c := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called for invalid key")
 	})
-	_, err := c.ShowMetadata(context.Background(), RatingKey("abc"))
+	_, err := c.ShowMetadata(t.Context(), RatingKey("abc"))
 	if err == nil {
 		t.Fatal("ShowMetadata() with non-numeric key should return error")
 	}
@@ -466,7 +465,7 @@ func TestShowMetadata_NotFound(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
 	})
-	_, err := c.ShowMetadata(context.Background(), RatingKey("42"))
+	_, err := c.ShowMetadata(t.Context(), RatingKey("42"))
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("ShowMetadata() on empty Metadata = %v, want ErrNotFound", err)
 	}
@@ -482,7 +481,7 @@ func TestUserFromSession_Match(t *testing.T) {
 			`{"User":{"id":"9","title":"bob"},"Player":{"machineIdentifier":"mac-B"}}` +
 			`]}}`))
 	})
-	uid, uname, err := c.UserFromSession(context.Background(), "mac-B")
+	uid, uname, err := c.UserFromSession(t.Context(), "mac-B")
 	if err != nil {
 		t.Fatalf("UserFromSession() error = %v", err)
 	}
@@ -496,7 +495,7 @@ func TestUserFromSession_NoMatch(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
 	})
-	_, _, err := c.UserFromSession(context.Background(), "mac-X")
+	_, _, err := c.UserFromSession(t.Context(), "mac-X")
 	if err == nil {
 		t.Fatal("UserFromSession() on no match should return error")
 	}
@@ -516,7 +515,7 @@ func TestIdentity_HappyPath(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"MediaContainer":{"friendlyName":"Plex","machineIdentifier":"abc","version":"1.40"}}`))
 	})
-	id, err := c.Identity(context.Background())
+	id, err := c.Identity(t.Context())
 	if err != nil {
 		t.Fatalf("Identity() error = %v", err)
 	}
@@ -542,7 +541,7 @@ func TestLoggedUser_HappyPath(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 	})
-	user, err := c.LoggedUser(context.Background())
+	user, err := c.LoggedUser(t.Context())
 	if err != nil {
 		t.Fatalf("LoggedUser() error = %v", err)
 	}
@@ -563,7 +562,7 @@ func TestLoggedUser_AdminNotFound(t *testing.T) {
 				`]}}`))
 		}
 	})
-	_, err := c.LoggedUser(context.Background())
+	_, err := c.LoggedUser(t.Context())
 	if err == nil {
 		t.Fatal("LoggedUser() should fail when admin not in system accounts")
 	}
@@ -577,7 +576,7 @@ func TestLoggedUser_AccountFetchError(t *testing.T) {
 			return
 		}
 	})
-	_, err := c.LoggedUser(context.Background())
+	_, err := c.LoggedUser(t.Context())
 	if err == nil {
 		t.Fatal("LoggedUser() should fail on account fetch error")
 	}
@@ -593,7 +592,7 @@ func TestLoggedUser_SystemAccountsFetchError(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	})
-	_, err := c.LoggedUser(context.Background())
+	_, err := c.LoggedUser(t.Context())
 	if err == nil {
 		t.Fatal("LoggedUser() should fail on system accounts fetch error")
 	}
@@ -618,7 +617,7 @@ func TestHistory_HappyPath(t *testing.T) {
 			`{"ratingKey":"300","type":"episode","accountID":"1","librarySectionID":"2","librarySectionTitle":"TV"}` +
 			`]}}`))
 	})
-	items, err := c.History(context.Background(), 1700000000)
+	items, err := c.History(t.Context(), 1700000000)
 	if err != nil {
 		t.Fatalf("History() error = %v", err)
 	}
@@ -632,7 +631,7 @@ func TestHistory_EmptyResult(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
 	})
-	items, err := c.History(context.Background(), 1700000000)
+	items, err := c.History(t.Context(), 1700000000)
 	if err != nil {
 		t.Fatalf("History() error = %v", err)
 	}
@@ -650,7 +649,7 @@ func TestSetAudioStream_PUTPath(t *testing.T) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 		gotMethod = r.Method
 	})
-	if err := c.SetAudioStream(context.Background(), 100, 200); err != nil {
+	if err := c.SetAudioStream(t.Context(), 100, 200); err != nil {
 		t.Fatalf("SetAudioStream() error = %v", err)
 	}
 	if gotMethod != http.MethodPut {
@@ -672,7 +671,7 @@ func TestSetSubtitleStream_PUTPath(t *testing.T) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 		gotMethod = r.Method
 	})
-	if err := c.SetSubtitleStream(context.Background(), 100, 200); err != nil {
+	if err := c.SetSubtitleStream(t.Context(), 100, 200); err != nil {
 		t.Fatalf("SetSubtitleStream() error = %v", err)
 	}
 	if gotMethod != http.MethodPut {
@@ -690,7 +689,7 @@ func TestDisableSubtitles_UsesStreamID0(t *testing.T) {
 	c := newTestClient(t, func(_ http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 	})
-	if err := c.DisableSubtitles(context.Background(), 100); err != nil {
+	if err := c.DisableSubtitles(t.Context(), 100); err != nil {
 		t.Fatalf("DisableSubtitles() error = %v", err)
 	}
 	want := "/library/parts/100?subtitleStreamID=0&allParts=1"
@@ -741,7 +740,7 @@ func TestSharedUserTokens(t *testing.T) {
 				`<SharedServer userID="2" username="bob" accessToken="tok-b"/>` +
 				`</MediaContainer>`))
 		})
-		servers, err := c.SharedUserTokens(context.Background(), "machine/../id")
+		servers, err := c.SharedUserTokens(t.Context(), "machine/../id")
 		if err != nil {
 			t.Fatalf("SharedUserTokens() error = %v", err)
 		}
@@ -763,7 +762,7 @@ func TestSharedUserTokens(t *testing.T) {
 		c := newTVClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 		})
-		if _, err := c.SharedUserTokens(context.Background(), "abc"); err == nil {
+		if _, err := c.SharedUserTokens(t.Context(), "abc"); err == nil {
 			t.Error("SharedUserTokens() on 502 should return error")
 		}
 	})
@@ -772,7 +771,7 @@ func TestSharedUserTokens(t *testing.T) {
 		c := newTVClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`<MediaContainer><SharedServer`))
 		})
-		if _, err := c.SharedUserTokens(context.Background(), "abc"); err == nil {
+		if _, err := c.SharedUserTokens(t.Context(), "abc"); err == nil {
 			t.Error("SharedUserTokens() on malformed XML should return error")
 		}
 	})
@@ -791,7 +790,7 @@ func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
 	base, _ := url.Parse("http://plex.local:32400")
 	c := newClientFromHTTP(t, base, "admin-token", nil)
 
-	_, stErr := c.SharedUserTokens(context.Background(), "machine-id")
+	_, stErr := c.SharedUserTokens(t.Context(), "machine-id")
 	if stErr == nil {
 		t.Fatal("SharedUserTokens() on an over-cap response must return an error")
 	}
@@ -814,7 +813,7 @@ func TestSharedUserTokens_EmptyBodyReturnsNoServers(t *testing.T) {
 	base, _ := url.Parse("http://plex.local:32400")
 	c := newClientFromHTTP(t, base, "admin-token", nil)
 
-	servers, stErr := c.SharedUserTokens(context.Background(), "machine-id")
+	servers, stErr := c.SharedUserTokens(t.Context(), "machine-id")
 	if stErr != nil {
 		t.Fatalf("SharedUserTokens() on an empty body must not error, got %v", stErr)
 	}
@@ -847,7 +846,7 @@ func TestDoJSON_AcceptsResponseExactlyAtCap(t *testing.T) {
 	var out struct {
 		X string `json:"x"`
 	}
-	if err := c.Get(context.Background(), "/library/metadata/1", &out); err != nil {
+	if err := c.Get(t.Context(), "/library/metadata/1", &out); err != nil {
 		t.Fatalf("get() on a body exactly at the cap = %v, want nil (exact-cap must be accepted)", err)
 	}
 	if len(out.X) != maxResponseBodyTest-len(wrapper) {
@@ -919,7 +918,7 @@ func TestSharedUserTokens_AcceptsResponseExactlyAtCap(t *testing.T) {
 	base, _ := url.Parse("http://plex.local:32400")
 	c := newClientFromHTTP(t, base, "admin-token", nil)
 
-	servers, stErr := c.SharedUserTokens(context.Background(), "machine-id")
+	servers, stErr := c.SharedUserTokens(t.Context(), "machine-id")
 	if stErr != nil {
 		t.Fatalf("SharedUserTokens() on a body exactly at the cap = %v, want nil (exact-cap must be accepted)", stErr)
 	}

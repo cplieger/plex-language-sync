@@ -124,7 +124,7 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 			}
 			policy := ignore.NewPolicy(tc.ignoreLibs, tc.ignoreLabels)
 			ref := &streams.Episode{LibraryTitle: runesafe.Untrusted(tc.episodeLibrary), GrandparentRatingKey: tc.episodeShowKey}
-			if got := policy.ShouldSkipEpisode(context.Background(), plx, ref); got != tc.want {
+			if got := policy.ShouldSkipEpisode(t.Context(), plx, ref); got != tc.want {
 				t.Errorf("policy.ShouldSkipEpisode = %v, want %v", got, tc.want)
 			}
 		})
@@ -201,7 +201,7 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 		plx := &fakeapi.Plex{} // no episodes → ErrNotFound from Episode()
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := &streams.Stream{ID: 1, StreamType: streams.StreamTypeAudio, LanguageCode: "eng"}
-		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", ref, nil)
+		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", ref, nil)
 		if changed {
 			t.Error("UpdateEpisodeStreams = true on fetch error, want false")
 		}
@@ -216,7 +216,7 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := &streams.Stream{ID: 1, StreamType: streams.StreamTypeAudio, LanguageCode: "eng"}
-		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", ref, nil)
+		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", ref, nil)
 		if changed {
 			t.Error("UpdateEpisodeStreams = true with no parts, want false")
 		}
@@ -234,7 +234,7 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
 		refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
-		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, refSub)
 		if !changed {
 			t.Error("UpdateEpisodeStreams = false, want true")
 		}
@@ -264,7 +264,7 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
-		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, nil)
+		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, nil)
 		if changed {
 			t.Error("UpdateEpisodeStreams = true after PUT error, want false")
 		}
@@ -285,7 +285,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 		c.LearnLanguageProfile("1", "jpn", "eng")
 		s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeapi.Users{})
 		ep := &streams.Episode{RatingKey: "100"}
-		if s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+		if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
 			t.Error("ApplyLanguageProfile = true with no audio, want false")
 		}
 	})
@@ -300,7 +300,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 				{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
 			}}}}},
 		}
-		if s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+		if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
 			t.Error("ApplyLanguageProfile = true with no profile, want false")
 		}
 	})
@@ -317,7 +317,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 				{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
 			}}}}},
 		}
-		if s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+		if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
 			t.Error("ApplyLanguageProfile = true with zero partID, want false")
 		}
 	})
@@ -335,7 +335,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 				{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			}}}}},
 		}
-		if !s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+		if !s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
 			t.Error("ApplyLanguageProfile = false, want true")
 		}
 		foundSet := false
@@ -362,7 +362,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 				{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
 			}}}}},
 		}
-		if !s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+		if !s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
 			t.Error("ApplyLanguageProfile = false, want true (should disable)")
 		}
 		foundDisable := false
@@ -401,7 +401,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ReferenceSearchedOnce(t *testing.T) 
 	}
 	s := newSyncer(Config{LanguageProfiles: false}, plx, c, users)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	var showEpisodesCalls int
 	for _, call := range plx.CallNames() {
@@ -426,7 +426,7 @@ func TestFindEpisodeReference(t *testing.T) {
 		plx := &fakeapi.Plex{}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: ""}
-		if ref := s.FindEpisodeReference(context.Background(), ep); ref != nil {
+		if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
 			t.Errorf("FindEpisodeReference(empty grandparent) = %+v, want nil", ref)
 		}
 		if len(plx.CallNames()) != 0 {
@@ -447,7 +447,7 @@ func TestFindEpisodeReference(t *testing.T) {
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
-		if ref := s.FindEpisodeReference(context.Background(), ep); ref != nil {
+		if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
 			t.Errorf("FindEpisodeReference(no selected audio) = %+v, want nil", ref)
 		}
 	})
@@ -470,7 +470,7 @@ func TestFindEpisodeReference(t *testing.T) {
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
-		ref := s.FindEpisodeReference(context.Background(), ep)
+		ref := s.FindEpisodeReference(t.Context(), ep)
 		if ref == nil {
 			t.Fatal("FindEpisodeReference returned nil, want non-nil")
 		}
@@ -510,7 +510,7 @@ func TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected(t *testing.T) {
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 	refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, nil)
+	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, nil)
 
 	if !changed {
 		t.Error("UpdateEpisodeStreams = false, want true (audio applied when none selected)")
@@ -544,7 +544,7 @@ func TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect(t *testing.T) {
 	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
 	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, refSub)
 
 	if changed {
 		t.Error("UpdateEpisodeStreams = true, want false (subtitle already correct, nothing to change)")
@@ -582,7 +582,7 @@ func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T)
 	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
 	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, refSub)
 
 	if !changed {
 		t.Error("UpdateEpisodeStreams = false, want true (subtitle write succeeded)")
@@ -623,7 +623,7 @@ func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
 		plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 
-		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, nil)
+		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, nil)
 
 		if !changed {
 			t.Error("UpdateEpisodeStreams = false, want true (no-subtitle policy must disable the target's subtitle)")
@@ -640,7 +640,7 @@ func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "fre"}
 
-		changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, refSub)
 
 		if changed {
 			t.Error("UpdateEpisodeStreams = true, want false (no matching subtitle on target — leave selection alone)")
@@ -678,7 +678,7 @@ func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.
 		}}}}},
 	}
 
-	changed := s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test")
+	changed := s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test")
 
 	if changed {
 		t.Error("ApplyLanguageProfile = true, want false (selected subtitle already matches profile)")
@@ -727,7 +727,7 @@ func TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable(t *testing.T) {
 			c.LearnLanguageProfile("1", "jpn", tc.profileSub)
 			s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeapi.Users{})
 
-			if s.ApplyLanguageProfile(context.Background(), plx, "1", ep, "test") {
+			if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
 				t.Error("ApplyLanguageProfile = true, want false (no applicable subtitle change)")
 			}
 			if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
@@ -790,7 +790,7 @@ func TestObserveAndPropagate(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 1 {
 			t.Errorf("ShowEpisodes:42 called %d times, want 1", got)
@@ -813,7 +813,7 @@ func TestObserveAndPropagate(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelSeason, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 		if got := countCalls(plx.CallNames(), "SeasonEpisodes:7"); got != 1 {
 			t.Errorf("SeasonEpisodes:7 called %d times, want 1", got)
@@ -843,7 +843,7 @@ func TestObserveAndPropagate(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyNext}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 2) // S1E2
 
-		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 		// Only S1E3 (key "3") is strictly after the reference; earlier
 		// episodes must never be reloaded.
@@ -876,7 +876,7 @@ func TestObserveAndPropagate(t *testing.T) {
 			}}}}},
 		}
 
-		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 		if calls := plx.CallNames(); len(calls) != 0 {
 			t.Errorf("no Plex calls expected when the reference has no selected audio, got %v", calls)
@@ -889,7 +889,7 @@ func TestObserveAndPropagate(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "", "7", 1, 1) // no show rating key
 
-		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 		if calls := plx.CallNames(); len(calls) != 0 {
 			t.Errorf("no Plex calls expected when the show rating key is empty, got %v", calls)
@@ -908,7 +908,7 @@ func TestObserveAndPropagate(t *testing.T) {
 		s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 		ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-		s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+		s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 		if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
 			t.Errorf("ShowEpisodes must not be called when the show is ignored; calls=%v", plx.CallNames())
@@ -946,7 +946,7 @@ func TestObserveAndPropagate_IgnoredShowDoesNotLearnProfile(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	// No profile was learned from the ignored show.
 	if got, ok := c.SubtitleLangForAudio("1", "jpn"); ok {
@@ -984,7 +984,7 @@ func TestObserveAndPropagate_NonIgnoredShowStillLearnsProfile(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	got, ok := c.SubtitleLangForAudio("1", "jpn")
 	if !ok {
@@ -1024,7 +1024,7 @@ func TestObserveAndPropagate_LogsCompletionWithUpdatedCount(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	out := buf.String()
 	if !strings.Contains(out, "language update complete") {
@@ -1069,7 +1069,7 @@ func TestObserveAndPropagate_SilentWhenNothingChanged(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	if out := buf.String(); strings.Contains(out, "language update complete") {
 		t.Errorf("'language update complete' must not be logged when no episode changed; log = %q", out)
@@ -1119,7 +1119,7 @@ func TestApplyLanguageProfile_PUTErrorReturnsFalse(t *testing.T) {
 				Media:     []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{audioJpnSelected, tc.subStream}}}}},
 			}
 
-			if s.ApplyLanguageProfile(context.Background(), tc.plex, "1", ep, "test") {
+			if s.ApplyLanguageProfile(t.Context(), tc.plex, "1", ep, "test") {
 				t.Error("ApplyLanguageProfile = true after a failed PUT, want false (a failed write must not report a change)")
 			}
 			if got := countCalls(tc.plex.CallNames(), tc.wantCall); got != 1 {
@@ -1175,7 +1175,7 @@ func TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse(t *testing.T) {
 			tc.setErr(plx)
 			s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 
-			changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, tc.refSub)
+			changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, tc.refSub)
 
 			if changed {
 				t.Error("UpdateEpisodeStreams = true after a failed subtitle PUT, want false")
@@ -1221,7 +1221,7 @@ func TestUpdateEpisodeStreams_SkipsSubtitleForCommentaryReference(t *testing.T) 
 	refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"}
 	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(context.Background(), plx, "user", "123", refAudio, refSub)
+	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", refAudio, refSub)
 
 	if changed {
 		t.Error("UpdateEpisodeStreams = true, want false (commentary reference with no target-language audio must skip the subtitle change)")
@@ -1249,7 +1249,7 @@ func TestObserveAndPropagate_logsEpisodeFetchError(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ObserveAndPropagate(context.Background(), plx, "1", ref, "play")
+	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
 	out := buf.String()
 	if !strings.Contains(out, "failed to fetch episodes for update") {
@@ -1278,7 +1278,7 @@ func TestObserveAndPropagate_stopsOnCancelledContext(t *testing.T) {
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	cancel() // pre-cancelled on purpose; Background, not t.Context()
 
 	s.ObserveAndPropagate(ctx, plx, "1", ref, "play")
 

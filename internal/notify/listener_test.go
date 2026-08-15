@@ -57,7 +57,7 @@ func TestDispatch_Playing(t *testing.T) {
 	}
 
 	h := &fakeHandler{}
-	dispatch(context.Background(), h, &notif)
+	dispatch(t.Context(), h, &notif)
 
 	if len(h.plays) != 2 {
 		t.Fatalf("dispatch delivered %d plays, want 2", len(h.plays))
@@ -82,7 +82,7 @@ func TestDispatch_Timeline(t *testing.T) {
 	}
 
 	h := &fakeHandler{}
-	dispatch(context.Background(), h, &notif)
+	dispatch(t.Context(), h, &notif)
 
 	if len(h.timelines) != 1 {
 		t.Fatalf("dispatch delivered %d timelines, want 1", len(h.timelines))
@@ -104,7 +104,7 @@ func TestDispatch_UnknownTypeIgnored(t *testing.T) {
 	notif.NotificationContainer.Type = "activity"
 
 	h := &fakeHandler{}
-	dispatch(context.Background(), h, &notif)
+	dispatch(t.Context(), h, &notif)
 
 	if len(h.plays)+len(h.timelines) != 0 {
 		t.Errorf("unknown type produced %d plays + %d timelines, want 0 total",
@@ -216,7 +216,7 @@ func TestListen_ReturnsOnCancelledContext(t *testing.T) {
 	}
 	l := NewListener(&fakePlexClient{base: base, token: "t"}, cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	done := make(chan struct{})
@@ -309,7 +309,7 @@ func TestConnectAndListen_SlowDialNotStable(t *testing.T) {
 	cfg.StableThreshold = dialDelay / 2
 	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
@@ -376,7 +376,7 @@ func TestConnectAndListen_ReadIdleTimeoutFires(t *testing.T) {
 	cfg.ReadIdleTimeout = 100 * time.Millisecond
 	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	start := time.Now()
@@ -457,7 +457,7 @@ func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	l := NewListener(&fakePlexClient{}, DefaultConfig())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// server_close is INFO; no escalation below the threshold.
 	buf.Reset()
@@ -548,7 +548,7 @@ func TestConnectAndListen_DispatchesReceivedMessage(t *testing.T) {
 	cfg.ReadIdleTimeout = 2 * time.Second
 	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	h := &fakeHandler{}
@@ -618,7 +618,7 @@ func TestConnectAndListen_PinnedCAHandshake(t *testing.T) {
 	cfg.ReadIdleTimeout = 2 * time.Second
 	l := NewListener(client, cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
