@@ -170,7 +170,7 @@ func TestPolicyShouldSkipEpisode(t *testing.T) {
 			if tc.reader != nil {
 				rdr = tc.reader
 			}
-			if got := p.ShouldSkipEpisode(context.Background(), rdr, tc.ref); got != tc.want {
+			if got := p.ShouldSkipEpisode(t.Context(), rdr, tc.ref); got != tc.want {
 				t.Errorf("ShouldSkipEpisode = %v, want %v", got, tc.want)
 			}
 		})
@@ -216,7 +216,7 @@ func TestPolicyShouldSkipEpisodeEmptyGrandparentSkipsLabelFetch(t *testing.T) {
 	p := NewPolicy(nil, []string{"SKIP"})
 	reader := &stubReader{show: &plex.Show{Label: []streams.Label{{Tag: "SKIP"}}}}
 	ref := &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: ""}
-	if p.ShouldSkipEpisode(context.Background(), reader, ref) {
+	if p.ShouldSkipEpisode(t.Context(), reader, ref) {
 		t.Error("ShouldSkipEpisode with empty GrandparentRatingKey = true, want false " +
 			"(the empty-grandparent guard must short-circuit before the show-label fetch)")
 	}

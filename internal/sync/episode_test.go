@@ -62,7 +62,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testin
 	s := newSyncer(Config{LanguageProfiles: false}, plx, fakeapi.NewCache(), users)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	got := countCalls(plx.CallNames(), "Episode:100")
 	if got != 2 {
@@ -90,7 +90,7 @@ func TestFindReferenceEpisode_CapsSearchAtMaxDepth(t *testing.T) {
 	// search never finds a candidate and runs until the depth cap.
 	plx := &fakeapi.Plex{}
 
-	ref, searched, _ := findReferenceEpisode(context.Background(), plx, episodes, "exclude-none", maxDepth)
+	ref, searched, _ := findReferenceEpisode(t.Context(), plx, episodes, "exclude-none", maxDepth)
 
 	if ref != nil {
 		t.Errorf("findReferenceEpisode ref = %+v, want nil (no selected audio anywhere)", ref)
@@ -121,7 +121,7 @@ func TestFindReferenceEpisode_SkipsTriggeringEpisode(t *testing.T) {
 		},
 	}
 
-	ref, _, _ := findReferenceEpisode(context.Background(), plx, episodes, "100", maxRefSearchDepth)
+	ref, _, _ := findReferenceEpisode(t.Context(), plx, episodes, "100", maxRefSearchDepth)
 
 	if ref == nil || ref.RatingKey != "2" {
 		t.Fatalf("findReferenceEpisode ref = %+v, want episode 2 (triggering episode 100 must be excluded)", ref)
@@ -166,7 +166,7 @@ func TestFindReferenceEpisode_CountsFetchErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ref, searched, fetchErrors := findReferenceEpisode(
-				context.Background(), tc.plex, episodes, "exclude-none", maxRefSearchDepth)
+				t.Context(), tc.plex, episodes, "exclude-none", maxRefSearchDepth)
 			if ref != nil {
 				t.Errorf("ref = %+v, want nil (no candidate has selected audio)", ref)
 			}
@@ -223,7 +223,7 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 			s := newSyncer(Config{}, tc.plex, fakeapi.NewCache(), &fakeapi.Users{})
 			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
-			if ref := s.FindEpisodeReference(context.Background(), ep); ref != nil {
+			if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
 				t.Fatalf("FindEpisodeReference = %+v, want nil (no usable reference)", ref)
 			}
 			out := buf.String()
@@ -256,7 +256,7 @@ func TestFindEpisodeReference_logsShowEpisodesFetchError(t *testing.T) {
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
 
-	if ref := s.FindEpisodeReference(context.Background(), ep); ref != nil {
+	if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
 		t.Fatalf("FindEpisodeReference = %+v, want nil when ShowEpisodes errors", ref)
 	}
 	out := buf.String()
@@ -308,7 +308,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T)
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	if got := countCalls(plx.CallNames(), "Episode:100"); got != 1 {
 		t.Errorf("target episode reloaded %d times; want 1 (user 2 has a nil client and must be skipped, not processed under admin)", got)
@@ -344,7 +344,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testin
 		}}}}},
 	}
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 1 {
 		t.Errorf("SetSubtitle called %d times; want 1 (language-profile fallback must apply the learned eng subtitle when no reference exists)", got)
@@ -379,7 +379,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *te
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(context.Background(), ep, "scan_new")
+	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
 		t.Errorf("SetAudio called %d times; want 1 (reference jpn audio applied to the target for the one user)", got)
@@ -405,7 +405,7 @@ func TestFindReferenceEpisode_StopsOnCancelledContext(t *testing.T) {
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	cancel() // pre-cancelled on purpose; Background, not t.Context()
 
 	ref, searched, fetchErrors := findReferenceEpisode(ctx, plx, episodes, "exclude-none", maxRefSearchDepth)
 
@@ -449,7 +449,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	cancel() // pre-cancelled on purpose; Background, not t.Context()
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(ctx, ep, "scan_new")
 

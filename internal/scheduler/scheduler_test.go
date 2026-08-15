@@ -94,7 +94,7 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 		nil,
 	)
 
-	sched.processRecentHistory(context.Background(), time.Now().Unix())
+	sched.processRecentHistory(t.Context(), time.Now().Unix())
 
 	if syncer.changeCalls.Load() != 0 {
 		t.Errorf("ChangeTracks called %d times on all-fail history; want 0", syncer.changeCalls.Load())
@@ -150,7 +150,7 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	)
 	sched.workers = 1 // serial run -> deterministic breaker-reset semantics
 
-	sched.processRecentHistory(context.Background(), time.Now().Unix())
+	sched.processRecentHistory(t.Context(), time.Now().Unix())
 
 	// plx.Calls counts every fake Plex method call: the single History
 	// fetch at the top of processRecentHistory plus one Episode fetch
@@ -185,7 +185,7 @@ func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 		nil,
 	)
 	ep := &streams.Episode{RatingKey: "100"}
-	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	sched.processRecentlyAddedEpisode(t.Context(), ep)
 	// Dedup marks on success (after the fetch), so a fetch DOES occur on an
 	// already-deduped key (a redundant idempotent read); the guarantee is
 	// "not PROCESSED", not "not fetched". The CheckAndMark guard still skips
@@ -219,14 +219,14 @@ func TestProcessRecentlyAddedEpisode_TransientFetchFailureRetries(t *testing.T) 
 	ep := &streams.Episode{RatingKey: "100"}
 
 	// First pass: fetch fails transiently → not processed, key left unmarked.
-	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	sched.processRecentlyAddedEpisode(t.Context(), ep)
 	if syncer.processCalls.Load() != 0 {
 		t.Fatalf("processed despite a fetch failure; want 0")
 	}
 
 	// Recover: the key was never marked, so the retry processes the episode.
 	plx.EpisodeErr = nil
-	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	sched.processRecentlyAddedEpisode(t.Context(), ep)
 	if got := syncer.processCalls.Load(); got != 1 {
 		t.Errorf("retry after transient failure processed %d times; want 1 (key must not have been marked on failure)", got)
 	}
@@ -249,7 +249,7 @@ func TestProcessRecentlyAddedEpisode_SkipsIgnoredShow(t *testing.T) {
 		nil,
 	)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
-	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	sched.processRecentlyAddedEpisode(t.Context(), ep)
 	if syncer.processCalls.Load() != 0 {
 		t.Errorf("ProcessNewOrUpdated called when show should have been skipped")
 	}
@@ -272,7 +272,7 @@ func TestProcessRecentlyAddedEpisode_HappyPathDelegates(t *testing.T) {
 		nil,
 	)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
-	sched.processRecentlyAddedEpisode(context.Background(), ep)
+	sched.processRecentlyAddedEpisode(t.Context(), ep)
 	if syncer.processCalls.Load() != 1 {
 		t.Errorf("ProcessNewOrUpdated called %d times; want 1", syncer.processCalls.Load())
 	}
@@ -308,7 +308,7 @@ func TestProcessRecentlyAdded_FansOutAcrossSections(t *testing.T) {
 		syncer,
 		nil,
 	)
-	sched.processRecentlyAdded(context.Background(), time.Now().Unix())
+	sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 	if syncer.processCalls.Load() != 3 {
 		t.Errorf("ProcessNewOrUpdated called %d times; want 3 (one per episode)", syncer.processCalls.Load())
 	}
@@ -338,7 +338,7 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 		syncer,
 		nil,
 	)
-	sched.processRecentlyAdded(context.Background(), time.Now().Unix())
+	sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 	if syncer.processCalls.Load() != 1 {
 		t.Errorf("ProcessNewOrUpdated called %d times; want 1 (Kids section ignored)", syncer.processCalls.Load())
 	}
@@ -368,7 +368,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 		func() error { saveCalls.Add(1); return nil },
 	)
 
-	sched.deepAnalysisCore(context.Background())
+	sched.deepAnalysisCore(t.Context())
 
 	if c.LastSchedulerRun().IsZero() {
 		t.Error("deepAnalysisCore did not record the last-run marker")
@@ -385,7 +385,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 		&fakeSyncer{},
 		nil,
 	)
-	schedNilSave.deepAnalysisCore(context.Background())
+	schedNilSave.deepAnalysisCore(t.Context())
 }
 
 // ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 		&fakeSyncer{},
 		nil,
 	)
-	sched.Run(context.Background())
+	sched.Run(t.Context())
 	if plx.Calls.Load() != 0 {
 		t.Errorf("Run(disabled) made %d Plex calls; want 0", plx.Calls.Load())
 	}
@@ -476,7 +476,7 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 			nil,
 		)
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		cancel() // pre-cancelled on purpose; Background, not t.Context()
 		sched.Run(ctx)
 		if got := plx.Calls.Load(); got != 0 {
 			t.Errorf("Run made %d Plex calls with a recent last-run marker; want 0 (the cold-restart guard must skip the initial pass, not re-run a full sweep)", got)
@@ -495,7 +495,7 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 			nil,
 		)
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		cancel() // pre-cancelled on purpose; Background, not t.Context()
 		sched.Run(ctx)
 		names := plx.CallNames()
 		var sawHistory, sawSections bool
@@ -566,7 +566,7 @@ func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 		nil,
 	)
 	out := captureSlog(t, func() {
-		sched.processRecentHistory(context.Background(), time.Now().Unix())
+		sched.processRecentHistory(t.Context(), time.Now().Unix())
 	})
 	if !strings.Contains(out, "scheduler: failed to fetch history") {
 		t.Errorf("missing inviolate WARN key on history-fetch error; log: %q", out)
@@ -589,7 +589,7 @@ func TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts(t *testing.T) {
 		nil,
 	)
 	out := captureSlog(t, func() {
-		sched.processRecentlyAdded(context.Background(), time.Now().Unix())
+		sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 	})
 	if !strings.Contains(out, "scheduler: failed to fetch sections") {
 		t.Errorf("missing inviolate WARN key on sections-fetch error; log: %q", out)
@@ -614,7 +614,7 @@ func TestProcessRecentHistory_BreakerAbortLogsInviolateWarn(t *testing.T) {
 	)
 
 	out := captureSlog(t, func() {
-		sched.processRecentHistory(context.Background(), time.Now().Unix())
+		sched.processRecentHistory(t.Context(), time.Now().Unix())
 	})
 
 	if !strings.Contains(out, "scheduler: aborting history processing after consecutive failures") {
@@ -643,7 +643,7 @@ func TestProcessRecentlyAddedEpisode_GenericFetchErrorSkipsSync(t *testing.T) {
 	)
 	ep := &streams.Episode{RatingKey: "100"}
 	out := captureSlog(t, func() {
-		sched.processRecentlyAddedEpisode(context.Background(), ep)
+		sched.processRecentlyAddedEpisode(t.Context(), ep)
 	})
 	if syncer.processCalls.Load() != 0 {
 		t.Errorf("ProcessNewOrUpdated called %d times after fetch error; want 0", syncer.processCalls.Load())
@@ -672,7 +672,7 @@ func TestProcessRecentlyAddedEpisode_NotFoundSkipsSyncSilently(t *testing.T) {
 	)
 	ep := &streams.Episode{RatingKey: "404"}
 	out := captureSlog(t, func() {
-		sched.processRecentlyAddedEpisode(context.Background(), ep)
+		sched.processRecentlyAddedEpisode(t.Context(), ep)
 	})
 	if syncer.processCalls.Load() != 0 {
 		t.Errorf("ProcessNewOrUpdated called %d times after ErrNotFound; want 0", syncer.processCalls.Load())
@@ -739,7 +739,7 @@ func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
 	out := captureSlog(t, func() {
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			sched.deepAnalysis(context.Background()) // winner: blocks inside History
+			sched.deepAnalysis(t.Context()) // winner: blocks inside History
 		})
 
 		// Wait until the winner is inside the singleflight callback (blocked
@@ -749,8 +749,8 @@ func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
 
 		loserJoined := make(chan struct{})
 		wg.Go(func() {
-			close(loserJoined)                       // about to enter Do; hand the scheduler over below
-			sched.deepAnalysis(context.Background()) // loser: collapses, logs skip
+			close(loserJoined)              // about to enter Do; hand the scheduler over below
+			sched.deepAnalysis(t.Context()) // loser: collapses, logs skip
 		})
 
 		// Let the loser goroutine run far enough to register as a duplicate
@@ -822,7 +822,7 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 		nil,
 	)
 	out := captureSlog(t, func() {
-		sched.processRecentlyAdded(context.Background(), time.Now().Unix())
+		sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 	})
 	if !strings.Contains(out, "scheduler: recently-added sweep incomplete, some sections failed to fetch") {
 		t.Errorf("missing aggregate sweep-incomplete WARN on partial section failure; log: %q", out)
@@ -855,7 +855,7 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 		nil,
 	)
 	out := captureSlog(t, func() {
-		sched.processRecentHistory(context.Background(), time.Now().Unix())
+		sched.processRecentHistory(t.Context(), time.Now().Unix())
 	})
 	if syncer.changeCalls.Load() != 0 {
 		t.Errorf("ChangeTracks called %d times with a nil per-user client; want 0 (must skip, never fall back to admin)", syncer.changeCalls.Load())
@@ -884,7 +884,7 @@ func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 		func() error { return errors.New("disk full") },
 	)
 	out := captureSlog(t, func() {
-		sched.deepAnalysisCore(context.Background())
+		sched.deepAnalysisCore(t.Context())
 	})
 	if !strings.Contains(out, "cache save failed") {
 		t.Errorf("missing cache-save-failure WARN when saveCache errors; log: %q", out)
@@ -901,7 +901,7 @@ func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	cancel() // pre-cancelled on purpose; also Background because the parallel subtests below outlive this parent, and t.Context() would already be cancelled for a different reason
 	t.Run("history feeder", func(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{
@@ -964,7 +964,7 @@ func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
 		nil,
 	)
 
-	sched.processRecentHistory(context.Background(), time.Now().Unix())
+	sched.processRecentHistory(t.Context(), time.Now().Unix())
 
 	if got := syncer.changeCalls.Load(); got != 1 {
 		t.Errorf("ChangeTracks called %d times; want 1 (movie type and ignored-library episode must be filtered before dispatch)", got)
@@ -992,7 +992,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 			nil,
 		)
 		out := captureSlog(t, func() {
-			sched.processRecentHistory(context.Background(), time.Now().Unix())
+			sched.processRecentHistory(t.Context(), time.Now().Unix())
 		})
 		if strings.Contains(out, "scheduler: failed to fetch history") {
 			t.Errorf("context.Canceled must not emit the fetch-failure WARN; log: %q", out)
@@ -1011,7 +1011,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 			nil,
 		)
 		out := captureSlog(t, func() {
-			sched.processRecentlyAdded(context.Background(), time.Now().Unix())
+			sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 		})
 		if strings.Contains(out, "scheduler: failed to fetch sections") {
 			t.Errorf("context.Canceled must not emit the fetch-failure WARN; log: %q", out)
@@ -1048,7 +1048,7 @@ func TestProcessRecentHistory_PartialItemFailureWarnsWithCounts(t *testing.T) {
 	)
 	sched.workers = 1 // serial -> deterministic failed_items; 3 failures < breaker threshold (5)
 	out := captureSlog(t, func() {
-		sched.processRecentHistory(context.Background(), time.Now().Unix())
+		sched.processRecentHistory(t.Context(), time.Now().Unix())
 	})
 	if !strings.Contains(out, "scheduler: recent-history replay incomplete, some items failed to fetch") {
 		t.Errorf("missing aggregate replay-incomplete WARN on partial item failure; log: %q", out)
@@ -1104,7 +1104,7 @@ func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 		nil,
 	)
 
-	sched.deepAnalysisCore(context.Background())
+	sched.deepAnalysisCore(t.Context())
 	after := time.Now()
 
 	windowStart := time.Unix(plx.historySince.Load(), 0)
@@ -1186,7 +1186,7 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 		)
 		before := time.Now()
 
-		sched.deepAnalysisCore(context.Background())
+		sched.deepAnalysisCore(t.Context())
 
 		got := c.LastSchedulerRun()
 		if !got.After(prev) {
@@ -1232,7 +1232,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		c.SetLastSchedulerRun(prev)
 		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx }, c)
 
-		sched.deepAnalysisCore(context.Background())
+		sched.deepAnalysisCore(t.Context())
 
 		if got := c.LastSchedulerRun(); !got.Equal(prev) {
 			t.Errorf("breaker-abort pass advanced the marker to %v; want unchanged at %v (older window unswept)", got.UTC(), prev.UTC())
@@ -1249,7 +1249,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		c.SetLastSchedulerRun(prev)
 		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx.Plex }, c)
 
-		sched.deepAnalysisCore(context.Background())
+		sched.deepAnalysisCore(t.Context())
 
 		if got := c.LastSchedulerRun(); !got.Equal(prev) {
 			t.Errorf("history-error pass advanced the marker to %v; want unchanged at %v", got.UTC(), prev.UTC())
@@ -1267,7 +1267,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		c.SetLastSchedulerRun(prev)
 		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx.Plex }, c)
 
-		sched.deepAnalysisCore(context.Background())
+		sched.deepAnalysisCore(t.Context())
 
 		if got := c.LastSchedulerRun(); !got.Equal(prev) {
 			t.Errorf("section-failure pass advanced the marker to %v; want unchanged at %v", got.UTC(), prev.UTC())
@@ -1293,7 +1293,7 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 		nil,
 	)
 
-	sched.deepAnalysisCore(context.Background())
+	sched.deepAnalysisCore(t.Context())
 	after := time.Now()
 
 	windowStart := time.Unix(plx.historySince.Load(), 0)
@@ -1345,7 +1345,7 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 	)
 	sched.workers = 1 // serial -> 3 failures deterministic, below the breaker threshold
 
-	sched.deepAnalysisCore(context.Background())
+	sched.deepAnalysisCore(t.Context())
 
 	if got := c.LastSchedulerRun(); !got.After(prev) {
 		t.Errorf("pass with scattered below-breaker item failures did not advance the marker: got %v, still <= previous run %v (accepted-loss failures must not block completion)", got.UTC(), prev.UTC())

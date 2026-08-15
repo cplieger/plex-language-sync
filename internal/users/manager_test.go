@@ -261,7 +261,7 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	if m.SharedCount() != 2 {
 		t.Fatalf("SharedCount = %d, want 2", m.SharedCount())
@@ -301,7 +301,7 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 	_ = m.ClientForUser("100", adminClient)
 	_ = m.ClientForUser("200", adminClient)
 
-	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	if m.SharedCount() != 1 {
 		t.Errorf("SharedCount = %d, want 1 (user 200 revoked)", m.SharedCount())
@@ -344,7 +344,7 @@ func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	if m.SharedCount() != 1 {
 		t.Errorf("SharedCount = %d, want 1 (state preserved on plex.tv failure)", m.SharedCount())
@@ -373,7 +373,7 @@ func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	if m.SharedCount() != 1 {
 		t.Errorf("SharedCount = %d, want 1 (blanks filtered)", m.SharedCount())
@@ -409,7 +409,7 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 
 	cfg := testRefreshConfig(5, 10*time.Millisecond, 20*time.Millisecond)
 	start := time.Now()
-	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
+	m.InitialRefreshWithRetry(t.Context(), adminClient, "mid", cfg)
 	elapsed := time.Since(start)
 
 	if attempts != 1 {
@@ -443,7 +443,7 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	cfg := testRefreshConfig(5, 5*time.Millisecond, 20*time.Millisecond)
-	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
+	m.InitialRefreshWithRetry(t.Context(), adminClient, "mid", cfg)
 
 	if attempts != 2 {
 		t.Errorf("got %d plex.tv attempts, want 2 (retry after first 500)", attempts)
@@ -469,7 +469,7 @@ func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	cfg := testRefreshConfig(3, 5*time.Millisecond, 10*time.Millisecond)
-	m.InitialRefreshWithRetry(context.Background(), adminClient, "mid", cfg)
+	m.InitialRefreshWithRetry(t.Context(), adminClient, "mid", cfg)
 
 	if attempts != 3 {
 		t.Errorf("got %d plex.tv attempts, want 3 (exhaust max)", attempts)
@@ -496,7 +496,7 @@ func TestInitialRefreshWithRetry_context_cancellation(t *testing.T) {
 
 	// Long delays so the test must rely on context cancellation to exit.
 	cfg := testRefreshConfig(10, 5*time.Second, 10*time.Second)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
@@ -724,7 +724,7 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	if m.SharedCount() != 1 {
 		t.Errorf("SharedCount = %d, want 1 (admin ID 1 echoed by plex.tv must be skipped)", m.SharedCount())
@@ -756,7 +756,7 @@ func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		m.RefreshLoop(ctx, adminClient, "mid")
@@ -805,7 +805,7 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	m.RefreshTokens(context.Background(), adminClient, "machine-id-123")
+	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	out := buf.String()
 	if !strings.Contains(out, "shared users pruned") {
