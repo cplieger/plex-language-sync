@@ -59,12 +59,22 @@ func MatchAudio(ref *Stream, candidates []*Stream) *Stream {
 // Returns nil when no match applies, either because the reference had no
 // subtitle or because no candidate meets the derived criteria.
 //
-// The forced and hearing-impaired filters run BEFORE the language grading, and
-// the ordering is load-bearing. Grading first collapses the candidates to the
-// closest language tier reached; a hard forced-only filter applied afterwards
-// can then empty that set and return nil even though a forced track existed one
-// tier further out. Filtering first lets the language grading choose the best
-// tier available among the tracks that actually satisfy the flags.
+// The order of the three narrowing steps is load-bearing, and the forced flag
+// and the hearing-impaired flag sit on opposite sides of the language grading
+// for opposite reasons.
+//
+// Forced is a hard requirement, so it runs FIRST. Grading first would collapse
+// the candidates to the closest language tier reached, and a hard filter applied
+// afterwards could then empty that set and return no subtitle even though a
+// forced track existed one tier further out.
+//
+// Hearing-impaired is a preference, so it runs LAST. FilterByBoolPref falls back
+// to the whole set only when NOTHING in it matches, so applying it before the
+// grading lets a single hearing-impaired track in an unrelated language capture
+// the candidate set; the grading then finds nothing acceptable in it and returns
+// nil. That is a regression against plain string equality, which is what this
+// ordering exists to avoid: the preference belongs inside the language the
+// grading chose, not ahead of choosing it.
 func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream, floor langtag.Tier) *Stream {
 	criteria, ok := SubtitleCriteria(ref, refAudio)
 	if !ok {
@@ -83,17 +93,19 @@ func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream, floor langtag.Ti
 		}
 		streams = forced
 	}
-	if criteria.HearingImpairedOnly {
-		// Unlike forced, hearing-impaired is a soft preference: prefer an HI
-		// track but fall back to a non-HI one rather than returning no subtitle.
-		streams = FilterByBoolPref(streams, true,
-			func(s *Stream) bool { return s.HearingImpaired })
-	}
 
 	streams = candidatesInLanguage(ref, streams, floor)
 	if len(streams) == 0 {
 		return nil
 	}
+
+	if criteria.HearingImpairedOnly {
+		// Prefer a hearing-impaired track, but fall back to a non-HI track in
+		// the same language rather than returning no subtitle.
+		streams = FilterByBoolPref(streams, true,
+			func(s *Stream) bool { return s.HearingImpaired })
+	}
+
 	if len(streams) == 1 {
 		return streams[0]
 	}

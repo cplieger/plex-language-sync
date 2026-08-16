@@ -29,6 +29,7 @@ func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
 	if audioLang == "" {
 		return
 	}
+	rawLang := audioLang
 	audioLang = profileKey(audioLang)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -37,6 +38,13 @@ func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
 	}
 	if c.data.LanguageProfiles[userID] == nil {
 		c.data.LanguageProfiles[userID] = make(map[string]string)
+	}
+	// Remove any entry left under a non-canonical spelling of the same
+	// language. Without this a profiles.json written before canonicalization
+	// keeps a stale value that the read path would find first, so every later
+	// preference change would be silently discarded for an upgraded install.
+	if rawLang != audioLang {
+		delete(c.data.LanguageProfiles[userID], rawLang)
 	}
 	prev, exists := c.data.LanguageProfiles[userID][audioLang]
 	if !exists || prev != subtitleLang {
@@ -60,11 +68,14 @@ func (c *Cache) SubtitleLangForAudio(userID, audioLang string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if lang, found := userProfiles[audioLang]; found {
+	// The canonical key is authoritative, because that is what the write path
+	// records. Checking the raw spelling first would let a legacy entry shadow
+	// every value written after the upgrade.
+	if lang, found := userProfiles[profileKey(audioLang)]; found {
 		return lang, true
 	}
-	// Fall back to the canonical key so a profile learned under one spelling of
-	// a language answers a lookup made under another.
-	lang, ok := userProfiles[profileKey(audioLang)]
+	// Then the spelling as given, which is how an entry written by an older
+	// version is still found before it has been relearned.
+	lang, ok := userProfiles[audioLang]
 	return lang, ok
 }
