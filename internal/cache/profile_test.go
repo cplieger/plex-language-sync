@@ -298,3 +298,35 @@ func TestCacheLanguageProfileEmptyValueIsNotShadowed(t *testing.T) {
 			got)
 	}
 }
+
+// TestCacheLanguageProfileReadPrefersCanonicalKey pins the READ order, which the
+// sibling tests do not reach.
+//
+// The write path deletes the exact spelling it was handed, so a relearn arriving
+// under the same spelling as a legacy entry passes even if reads check the raw
+// spelling first. Plex reports the same language under more than one code, so the
+// relearn can arrive as "nor" while the legacy entry sits under "nob". Only a
+// canonical-first read answers correctly then, and without this test that order
+// could be reverted with the whole suite still green.
+func TestCacheLanguageProfileReadPrefersCanonicalKey(t *testing.T) {
+	c := New()
+	c.mu.Lock()
+	c.data.LanguageProfiles = map[string]map[string]string{"1": {"nob": "eng"}}
+	c.mu.Unlock()
+
+	// The relearn arrives under a different spelling of the same language, so it
+	// is written under the canonical key and cannot delete the legacy one.
+	c.LearnLanguageProfile("1", "nor", "fre")
+
+	for _, spelling := range []string{"nob", "nor", "nb", "no"} {
+		got, ok := c.SubtitleLangForAudio("1", spelling)
+		if !ok {
+			t.Errorf("SubtitleLangForAudio(1, %q) ok = false, want true", spelling)
+			continue
+		}
+		if got != "fre" {
+			t.Errorf("SubtitleLangForAudio(1, %q) = %q, want %q; the canonical key must be read before the spelling as given",
+				spelling, got, "fre")
+		}
+	}
+}
