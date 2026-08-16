@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/langtag"
 	"pgregory.net/rapid"
 )
 
@@ -139,8 +140,8 @@ func TestIntentReconstructedRefDrivesMatchers(t *testing.T) {
 		t.Errorf("audio winner differs: live=%v intent=%v", liveAudioWinner, intentAudioWinner)
 	}
 
-	liveSubWinner := MatchSubtitle(liveSub, liveAudio, subCandidates)
-	intentSubWinner := MatchSubtitle(refSub, refAudio, subCandidates)
+	liveSubWinner := MatchSubtitle(liveSub, liveAudio, subCandidates, langtag.TierIdentical)
+	intentSubWinner := MatchSubtitle(refSub, refAudio, subCandidates, langtag.TierIdentical)
 	if liveSubWinner == nil || intentSubWinner == nil || liveSubWinner.ID != intentSubWinner.ID {
 		t.Errorf("subtitle winner differs: live=%v intent=%v", liveSubWinner, intentSubWinner)
 	}

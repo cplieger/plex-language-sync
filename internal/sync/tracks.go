@@ -41,6 +41,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/langtag"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
@@ -51,10 +52,13 @@ import (
 // package boundary clean and lets tests construct a Syncer without
 // mimicking the app's full env-var surface.
 type Config struct {
-	Ignore           api.IgnoreChecker // library/label skip rules; nil means "never skip"
-	UpdateLevel      string            // "show" (default) or "season"
-	UpdateStrategy   string            // "all" (default) or "next"
-	LanguageProfiles bool              // enable learn/apply language profiles
+	Ignore         api.IgnoreChecker // library/label skip rules; nil means "never skip"
+	UpdateLevel    string            // "show" (default) or "season"
+	UpdateStrategy string            // "all" (default) or "next"
+	// SubtitleFloor is the furthest language distance a subtitle substitution
+	// may reach. Audio is not configurable and is fixed at streams.AudioFloor.
+	SubtitleFloor    langtag.Tier
+	LanguageProfiles bool // enable learn/apply language profiles
 }
 
 // UPDATE_LEVEL accepted values. Shared with the main/config package
@@ -313,6 +317,7 @@ func (s *Syncer) applyAudioStream(
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
 	}
+	logSubstitution(ep, username, "audio", ref, matched)
 	return true
 }
 
@@ -346,7 +351,7 @@ func (s *Syncer) applySubtitleStream(
 		return true
 	}
 
-	matched := streams.MatchSubtitle(refSub, refAudio, streams.Subtitle(ep))
+	matched := streams.MatchSubtitle(refSub, refAudio, streams.Subtitle(ep), s.cfg.SubtitleFloor)
 	if matched == nil {
 		// Reference has a subtitle selected but no matching sub on
 		// target. Leave the target's current selection alone — we have
@@ -361,7 +366,35 @@ func (s *Syncer) applySubtitleStream(
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
 	}
+	logSubstitution(ep, username, "subtitle", refSub, matched)
 	return true
+}
+
+// logSubstitution records a track change and the language distance it was
+// accepted at, so a surprising choice is diagnosable from logs without
+// reproducing it. An exact or same-language match is routine and logs at debug;
+// anything further is a substitution a user may want to know happened, and
+// carries the recorded justification when the table supplied one.
+func logSubstitution(ep *streams.Episode, username, kind string, ref, matched *streams.Stream) {
+	tier := streams.MatchTier(ref, matched)
+	attrs := []any{
+		"episode", ep.ShortName(),
+		"user", username,
+		"kind", kind,
+		"from", ref.LanguageCode,
+		"to", matched.LanguageCode,
+		"from_tag", ref.LanguageTag,
+		"to_tag", matched.LanguageTag,
+		"match_tier", tier.String(),
+	}
+	if tier <= langtag.TierSameLanguage {
+		slog.Debug("track language matched", attrs...)
+		return
+	}
+	if reason, ok := langtag.Reason(ref.Lang(), matched.Lang()); ok {
+		attrs = append(attrs, "reason", reason)
+	}
+	slog.Info("track language substituted", attrs...)
 }
 
 // learnProfileFromReference records the user's active audio→subtitle

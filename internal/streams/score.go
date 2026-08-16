@@ -1,6 +1,10 @@
 package streams
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/cplieger/langtag"
+)
 
 // scoreRule defines a single scoring criterion: a named predicate that
 // contributes weight points when it returns true for a (ref, candidate) pair.
@@ -165,11 +169,28 @@ func SubtitleCodecScore(codec string) int {
 	return subtitleCodecScores[strings.ToLower(codec)]
 }
 
-// FilterByLanguage returns streams whose LanguageCode equals langCode.
-func FilterByLanguage(streams []*Stream, langCode string) []*Stream {
+// FilterByLanguage returns the streams whose language is an acceptable stand-in
+// for langCode, within floor. Every returned stream sits at the same language
+// distance.
+//
+// An empty langCode selects streams that carry no language either, preserving
+// this app's long-standing behavior for untagged media. A non-empty langCode
+// that names no known language selects streams whose raw code matches it
+// exactly, which is also what the old string comparison did: an unrecognised
+// code is not an absent one.
+func FilterByLanguage(streams []*Stream, langCode string, floor langtag.Tier) []*Stream {
+	if want, ok := langtag.Parse(langCode); ok {
+		out, _, found := langtag.Best(want, streams, (*Stream).Lang, floor)
+		if !found {
+			return nil
+		}
+		return out
+	}
+
 	var out []*Stream
+	empty := strings.TrimSpace(langCode) == ""
 	for _, s := range streams {
-		if s.LanguageCode == langCode {
+		if empty && s.HasNoLanguage() || !empty && s.LanguageCode == langCode {
 			out = append(out, s)
 		}
 	}
@@ -211,11 +232,17 @@ func BestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
 	return streams[bestIdx]
 }
 
-// FindSubtitleByLanguage returns the best subtitle stream matching the
-// given language code, preferring higher-quality codecs (see
-// SubtitleCodecScore). Returns nil if none match.
-func FindSubtitleByLanguage(streams []*Stream, langCode string) *Stream {
-	return BestByScore(FilterByLanguage(streams, langCode), func(s *Stream) int {
+// FindSubtitleByLanguage returns the best subtitle stream whose language is an
+// acceptable stand-in for langCode within floor, preferring higher-quality
+// codecs (see SubtitleCodecScore). Returns nil if none match.
+//
+// This is the learned-profile path: langCode comes from the profile map rather
+// than from a track on the reference episode, so it is graded on the same scale
+// as a propagated selection. Without that, a user whose profile learned "nob
+// audio means nob subtitles" would get no subtitle on a new show carrying only
+// nor, which is the reported bug in a second guise.
+func FindSubtitleByLanguage(streams []*Stream, langCode string, floor langtag.Tier) *Stream {
+	return BestByScore(FilterByLanguage(streams, langCode, floor), func(s *Stream) int {
 		return SubtitleCodecScore(s.Codec)
 	})
 }

@@ -1,6 +1,25 @@
 package cache
 
-import "log/slog"
+import (
+	"log/slog"
+
+	"github.com/cplieger/langtag"
+)
+
+// profileKey canonicalizes a language code for use as a profile-map key, so
+// that the several published spellings of one language stop fragmenting into
+// separate entries: nor, nob, no and nb all key on "no". Applied on both the
+// read and the write path, which is what lets an existing profiles.json keep
+// resolving without a migration step.
+//
+// An unparseable code is returned unchanged rather than dropped, so a legacy
+// entry written under a code this build cannot parse stays reachable.
+func profileKey(lang string) string {
+	if t, ok := langtag.Parse(lang); ok {
+		return t.Language()
+	}
+	return lang
+}
 
 // LearnLanguageProfile records a user's audio→subtitle language preference.
 // Empty audioLang is treated as "unknown" and ignored — this prevents the
@@ -10,6 +29,7 @@ func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
 	if audioLang == "" {
 		return
 	}
+	audioLang = profileKey(audioLang)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.data.LanguageProfiles == nil {
@@ -40,6 +60,11 @@ func (c *Cache) SubtitleLangForAudio(userID, audioLang string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	lang, ok := userProfiles[audioLang]
+	if lang, found := userProfiles[audioLang]; found {
+		return lang, true
+	}
+	// Fall back to the canonical key so a profile learned under one spelling of
+	// a language answers a lookup made under another.
+	lang, ok := userProfiles[profileKey(audioLang)]
 	return lang, ok
 }
