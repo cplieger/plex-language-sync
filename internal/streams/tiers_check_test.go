@@ -64,8 +64,14 @@ func TestSubtitleDefaultFloorAdmits(t *testing.T) {
 		"regional variant":       {"es-ES", "es-419", true},
 		"bare against regional":  {"pt", "pt-BR", true},
 
+		// Serbian is written in both scripts and Serbian schooling teaches both,
+		// so the pair reads as one language and the default floor accepts it.
+		// The Unicode locale data agrees and is why this is not a judgment: it
+		// scores the pair 5, against 50 for a script substitution it does not
+		// explicitly vouch for, which is where Chinese lands.
+		"serbian scripts read as one": {"sr-Cyrl", "sr-Latn", true},
+
 		"chinese scripts":       {"zh-Hans", "zh-Hant", false},
-		"serbian scripts":       {"sr-Cyrl", "sr-Latn", false},
 		"nynorsk for bokmal":    {"nb", "nn", false},
 		"danish for norwegian":  {"nb", "da", false},
 		"spanish for catalan":   {"ca", "es", false},
@@ -97,6 +103,7 @@ func TestSubtitleFloorsAreReachableInOrder(t *testing.T) {
 		"same tag":        {"nb", "nb", langtag.TierIdentical},
 		"macrolanguage":   {"nb", "no", langtag.TierSameLanguage},
 		"chinese scripts": {"zh-Hans", "zh-Hant", langtag.TierOtherScript},
+		"serbian scripts": {"sr-Cyrl", "sr-Latn", langtag.TierSameLanguage},
 		"nynorsk":         {"nb", "nn", langtag.TierIntelligible},
 		"catalan":         {"ca", "es", langtag.TierSharedLiteracy},
 	}
