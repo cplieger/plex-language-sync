@@ -268,3 +268,75 @@ func TestIntentCarriesTheFinerTag(t *testing.T) {
 		t.Fatalf("replayed intent matched %v, want ID 4 (es-ES)", got)
 	}
 }
+
+// TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter pins the regression
+// three reviewers found independently.
+//
+// The forced flag is a hard requirement and is applied before the language
+// grading; the hearing-impaired flag is a preference and must be applied after.
+// FilterByBoolPref falls back to the whole set only when NOTHING in it matches,
+// so applying it first lets one hearing-impaired track in an unrelated language
+// capture the candidate set, after which the grading finds nothing acceptable in
+// it and returns no subtitle at all. That is worse than the plain string
+// equality this change replaced.
+func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a foreign hearing-impaired track must not capture the set", func(t *testing.T) {
+		t.Parallel()
+		ref := sub(10, "eng", "en")
+		ref.HearingImpaired = true
+
+		exactNonHI := sub(1, "eng", "en")
+		foreignHI := sub(2, "spa", "es")
+		foreignHI.HearingImpaired = true
+
+		// At the strictest floor this is the exact behavior of the old
+		// string comparison, so it must not regress.
+		for _, floor := range []langtag.Tier{
+			langtag.TierIdentical, langtag.TierSameLanguage,
+			langtag.TierOtherScript, langtag.TierIntelligible,
+		} {
+			got := MatchSubtitle(ref, nil, []*Stream{exactNonHI, foreignHI}, floor)
+			if got == nil {
+				t.Errorf("MatchSubtitle(eng+HI ref, [eng non-HI, spa HI], %v) = nil, want the eng track", floor)
+				continue
+			}
+			if got.ID != 1 {
+				t.Errorf("MatchSubtitle(eng+HI ref, [eng non-HI, spa HI], %v) = ID %d, want ID 1 (language outranks the HI preference)",
+					floor, got.ID)
+			}
+		}
+	})
+
+	t.Run("the preference still applies within the chosen language", func(t *testing.T) {
+		t.Parallel()
+		ref := sub(10, "eng", "en")
+		ref.HearingImpaired = true
+
+		nonHI := sub(1, "eng", "en")
+		hi := sub(2, "eng", "en")
+		hi.HearingImpaired = true
+
+		got := MatchSubtitle(ref, nil, []*Stream{nonHI, hi}, langtag.TierIdentical)
+		if got == nil || got.ID != 2 {
+			t.Fatalf("MatchSubtitle(eng+HI ref, [eng non-HI, eng HI]) = %v, want ID 2", got)
+		}
+	})
+
+	t.Run("a regional variant must not lose to a farther hearing-impaired track", func(t *testing.T) {
+		t.Parallel()
+		ref := sub(10, "spa", "es-ES")
+		ref.HearingImpaired = true
+
+		exactNonHI := sub(1, "spa", "es-ES")
+		regionalHI := sub(2, "spa", "es-419")
+		regionalHI.HearingImpaired = true
+
+		got := MatchSubtitle(ref, nil, []*Stream{exactNonHI, regionalHI}, langtag.TierOtherScript)
+		if got == nil || got.ID != 1 {
+			t.Fatalf("MatchSubtitle(es-ES+HI ref, [es-ES non-HI, es-419 HI]) = %v, want ID 1; the closer language wins and the HI preference applies within it",
+				got)
+		}
+	})
+}

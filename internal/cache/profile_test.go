@@ -118,12 +118,21 @@ func TestCacheLearnLanguageProfileNoChange(t *testing.T) {
 	c.data.LanguageProfiles = map[string]map[string]string{
 		"1": {"jpn": "eng"},
 	}
-	// Call with same value — should be a no-op (no log, no change).
+	// Call with the same value. The stored value must not change. The KEY does
+	// move to its canonical spelling on the first write after an upgrade, which
+	// is what stops a legacy entry shadowing later updates, so this reads through
+	// the accessor rather than reaching for a raw map key.
 	c.LearnLanguageProfile("1", "jpn", "eng")
 
-	lang := c.data.LanguageProfiles["1"]["jpn"]
-	if lang != "eng" {
-		t.Errorf("LanguageProfiles[1][jpn] = %q, want eng", lang)
+	if got, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || got != "eng" {
+		t.Errorf("SubtitleLangForAudio(1, jpn) = (%q, %v), want (%q, true)", got, ok, "eng")
+	}
+
+	// Calling again with the same value is a genuine no-op: the key has already
+	// been canonicalized, so nothing is written and nothing is logged.
+	c.LearnLanguageProfile("1", "jpn", "eng")
+	if got, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || got != "eng" {
+		t.Errorf("SubtitleLangForAudio(1, jpn) after a repeat call = (%q, %v), want (%q, true)", got, ok, "eng")
 	}
 }
 
@@ -224,5 +233,68 @@ func TestCacheLanguageProfileLegacyKeyStillResolves(t *testing.T) {
 		if got, ok := c.SubtitleLangForAudio("1", spelling); !ok || got != "eng" {
 			t.Errorf("SubtitleLangForAudio(1, %q) after relearning = (%q, %v), want (%q, true)", spelling, got, ok, "eng")
 		}
+	}
+}
+
+// TestCacheLanguageProfileLegacyKeyDoesNotShadowUpdates pins the second defect
+// three reviewers found in the diff.
+//
+// The write path records the canonical key while the read path used to check the
+// spelling as given first, so an entry in a profiles.json written by an older
+// version answered every lookup forever and every later preference change was
+// silently discarded. In the collision shape it could answer with the empty
+// string, which the caller reads as "the user wants no subtitles" and acts on by
+// disabling them.
+func TestCacheLanguageProfileLegacyKeyDoesNotShadowUpdates(t *testing.T) {
+	c := New()
+	c.mu.Lock()
+	c.data.LanguageProfiles = map[string]map[string]string{"1": {"jpn": "eng"}}
+	c.mu.Unlock()
+
+	// The user watches something and changes their preference.
+	c.LearnLanguageProfile("1", "jpn", "fre")
+
+	for _, spelling := range []string{"jpn", "ja"} {
+		got, ok := c.SubtitleLangForAudio("1", spelling)
+		if !ok {
+			t.Errorf("SubtitleLangForAudio(1, %q) ok = false, want true", spelling)
+			continue
+		}
+		if got != "fre" {
+			t.Errorf("SubtitleLangForAudio(1, %q) = %q, want %q; a legacy key must not shadow a newer value",
+				spelling, got, "fre")
+		}
+	}
+
+	// The stale spelling must be gone rather than merely outranked, so it cannot
+	// resurface if the read order ever changes again.
+	c.mu.Lock()
+	_, stale := c.data.LanguageProfiles["1"]["jpn"]
+	c.mu.Unlock()
+	if stale {
+		t.Error("the non-canonical key jpn is still present after a relearn, want it removed")
+	}
+}
+
+// TestCacheLanguageProfileEmptyValueIsNotShadowed covers the damaging shape of
+// the same defect: a learned "no subtitles for this audio" preference is a
+// legitimate empty string, so a stale non-empty legacy value must not answer in
+// its place, and vice versa.
+func TestCacheLanguageProfileEmptyValueIsNotShadowed(t *testing.T) {
+	c := New()
+	c.mu.Lock()
+	c.data.LanguageProfiles = map[string]map[string]string{"1": {"jpn": "eng"}}
+	c.mu.Unlock()
+
+	// The user turns subtitles off for Japanese audio.
+	c.LearnLanguageProfile("1", "jpn", "")
+
+	got, ok := c.SubtitleLangForAudio("1", "jpn")
+	if !ok {
+		t.Fatal("SubtitleLangForAudio(1, jpn) ok = false, want true")
+	}
+	if got != "" {
+		t.Errorf("SubtitleLangForAudio(1, jpn) = %q, want the empty string; the user chose no subtitles and a stale value answered instead",
+			got)
 	}
 }
