@@ -157,23 +157,16 @@ func (s *Stream) languageRaw() string {
 
 // HasNoLanguage reports whether Plex supplied no language at all for the track,
 // as opposed to supplying one this build cannot parse. The two cases are
-// different and the app treats them differently: see candidatesInLanguage.
+// different and the app treats them differently: see selectByLanguage.
+//
+// Two tracks that both answer true here are treated as a match on the audio
+// path, because the old comparison made an empty code equal an empty code and
+// propagating across an untagged library is behavior a user relies on. That
+// differs from langtag's rule that an unknown tag matches nothing, which is
+// right for a library where two "undetermined" tracks prove nothing, and wrong
+// here where the alternative is doing nothing for a whole class of library.
 func (s *Stream) HasNoLanguage() bool {
 	return strings.TrimSpace(s.LanguageTag) == "" && strings.TrimSpace(s.LanguageCode) == ""
-}
-
-// SameUnknownLanguage reports whether both streams carry no language at all.
-//
-// Plex reports no language for some tracks, and this app has always treated two
-// such tracks as a match, because the old code compared raw strings and ""
-// equalled "". Propagating a selection across an untagged show is behavior a
-// user with untagged media relies on, so it is preserved explicitly rather than
-// lost to langtag's rule that an unknown tag matches nothing. That rule is right
-// for the library, where two "undetermined" tracks genuinely prove nothing; it
-// is wrong here, where the alternative is doing nothing at all for a whole class
-// of library.
-func SameUnknownLanguage(a, b *Stream) bool {
-	return a != nil && b != nil && a.HasNoLanguage() && b.HasNoLanguage()
 }
 
 // IsAudio reports whether the stream is an audio track.
