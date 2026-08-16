@@ -111,13 +111,18 @@ reach:
 | Value | Accepts | Example |
 | --- | --- | --- |
 | `identical` | Only the same language, same spelling | `ger` and `deu` |
-| `same-language` (default) | One language, differing at most in region | `nob` and `nor`, `es-ES` and `es-419` |
+| `same-language` (default) | One language a reader takes in without effort | `nob` and `nor`, `es-ES` and `es-419`, Serbian in either script |
 | `other-script` | One language in another script | Simplified and Traditional Chinese |
 | `intelligible` | A different but close language | Bokmål and Nynorsk, Norwegian and Danish |
 | `shared-literacy` | A different language its readers are generally schooled in | Catalan and Spanish |
 
-The default never gives you a different language and never asks you to read a different script. It
-solves the case above and leaves everything debatable switched off.
+The default never gives you a different language. It solves the case above and leaves everything
+debatable switched off.
+
+It does allow one script difference, for Serbian, which is written in both Latin and Cyrillic and
+whose readers are taught both. That is the only pair the Unicode locale data explicitly rates as
+close, at 5 against the 50 it gives a script substitution it does not vouch for, so it is a fact
+about the data rather than a judgment.
 
 Each tier past the default costs something specific. `other-script` asks you to read Traditional
 Chinese when you chose Simplified, which is more work than its position suggests: the Unicode locale
