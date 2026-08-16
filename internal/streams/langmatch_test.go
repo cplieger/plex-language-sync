@@ -311,16 +311,31 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 
 	t.Run("the preference still applies within the chosen language", func(t *testing.T) {
 		t.Parallel()
+		// The non-HI track is given the reference's exact title and codec so
+		// ScoreSubtitle favours IT. Only the hearing-impaired preference can
+		// reach the HI track, which is what makes this test detect the stage
+		// being removed rather than passing on scoring alone.
 		ref := sub(10, "eng", "en")
 		ref.HearingImpaired = true
+		ref.Title = "English SDH"
+		ref.Codec = "ass"
 
 		nonHI := sub(1, "eng", "en")
+		nonHI.Title = "English SDH"
+		nonHI.Codec = "ass"
+
 		hi := sub(2, "eng", "en")
 		hi.HearingImpaired = true
+		hi.Codec = "srt"
+
+		if ScoreSubtitle(ref, nonHI) <= ScoreSubtitle(ref, hi) {
+			t.Fatalf("fixture is not adversarial: ScoreSubtitle favours the non-HI track %d vs HI %d, so scoring alone must not be able to pick the HI track",
+				ScoreSubtitle(ref, nonHI), ScoreSubtitle(ref, hi))
+		}
 
 		got := MatchSubtitle(ref, nil, []*Stream{nonHI, hi}, langtag.TierIdentical)
 		if got == nil || got.ID != 2 {
-			t.Fatalf("MatchSubtitle(eng+HI ref, [eng non-HI, eng HI]) = %v, want ID 2", got)
+			t.Fatalf("MatchSubtitle(eng+HI ref, [eng non-HI better-scoring, eng HI]) = %v, want ID 2", got)
 		}
 	})
 
