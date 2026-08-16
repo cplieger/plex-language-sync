@@ -235,12 +235,13 @@ func run() int {
 
 	// WebSocket listener (blocks until context cancelled).
 	notify.NewListener(client, notify.DefaultConfig()).Listen(ctx, notifyAdapter{
-		syncer: syncer,
-		cfg:    &cfg,
-		users:  um,
-		client: client,
-		cache:  c,
-		ignore: ignorePolicy,
+		syncer:        syncer,
+		cfg:           &cfg,
+		users:         um,
+		client:        client,
+		cache:         c,
+		ignore:        ignorePolicy,
+		resolveStalls: &resolveStallCounter{},
 	})
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
@@ -416,6 +417,10 @@ type notifyAdapter struct {
 	client *plex.Client
 	cache  *cache.Cache
 	ignore api.IgnoreChecker
+	// resolveStalls carries the identity-resolution failure run across
+	// events so the expected failures stay quiet and a real stall speaks
+	// once. A nil counter counts nothing (see resolveStallCounter).
+	resolveStalls *resolveStallCounter
 }
 
 func (n notifyAdapter) OnPlay(ctx context.Context, ev notify.PlayEvent) {
@@ -481,21 +486,127 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 // skips the event rather than misattributing it to the admin (the same
 // fail-closed rule as users.Manager.ClientForUser — a per-user stream
 // write under the wrong identity records the selection against the
-// wrong user, and a mis-learned profile poisons future seeding). The
-// scheduler's history replay recovers the episode later with an
-// authoritative AccountID.
+// wrong user, and a mis-learned profile poisons future seeding).
+//
+// A skip is terminal for that notification. The reconcile plane does NOT
+// recover it, because replay re-applies RECORDED intents and a skipped
+// event recorded none. What recovers it is the notification stream
+// itself: Plex re-announces an active session about every 10s, so a
+// genuine session that was merely not yet queryable is attributed on a
+// later notification. See skipUnattributedPlayEvent for the measured
+// behaviour and for why the per-event line is Debug.
 func (n notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.PlayEvent) (userID, username string, ok bool) {
 	if ev.ClientIdentifier == "" {
-		slog.Warn("play event: no client identifier, skipping", "key", ev.RatingKey)
+		n.skipUnattributedPlayEvent(ev, errUnattributedNoClient)
 		return "", "", false
 	}
 	uid, uname, err := n.client.UserFromSession(ctx, ev.ClientIdentifier)
 	if err != nil {
-		slog.Warn("play event: could not resolve user from session, skipping",
-			"client", ev.ClientIdentifier, "key", ev.RatingKey, "error", err)
+		n.skipUnattributedPlayEvent(ev, err)
 		return "", "", false
 	}
+	if recovered, after := n.resolveStalls.success(); recovered {
+		slog.Info("play event: user resolution recovered",
+			"after_consecutive_failures", after)
+	}
 	return uid, uname, true
+}
+
+// errUnattributedNoClient is the cause recorded when Plex sends a play
+// notification with no clientIdentifier at all, leaving nothing to join
+// against /status/sessions.
+var errUnattributedNoClient = errors.New("event carries no client identifier")
+
+// skipUnattributedPlayEvent records one fail-closed skip and escalates
+// only when the run of them says resolution has stopped working.
+//
+// Deliberately Debug, not Warn: an unattributed play event is an
+// EXPECTED, self-healing outcome, and two measured Plex behaviours
+// produce nearly all of them.
+//
+//   - Plex announces playback before the session is queryable. Measured
+//     2026-08-15: a client was announced at 08:02:20, 08:02:31 and
+//     08:02:41 while /status/sessions first carried the session at
+//     08:02:51, which is also when this app first attributed it. The
+//     next notification arrives about 10s later and carries the real
+//     one, so the listener retries for free.
+//   - An idle Plex Web client keeps re-announcing its last item long
+//     after the session ends. Measured on one browser client: 19 skips
+//     for a single ratingKey spanning 73 hours, every one of them
+//     outside all four of that client's real session windows. There is
+//     no playback to attribute, so the skip costs nothing.
+//
+// Neither is actionable by an operator, and at Warn they buried the one
+// state that is: resolution failing across the board, which leaves the
+// app silently attributing no playback at all. That is what the run
+// counter reports, once per stall rather than once per notification.
+func (n notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
+	slog.Debug("play event: skipping, user not attributed",
+		"client", ev.ClientIdentifier, "key", ev.RatingKey,
+		"state", ev.State, "error", cause)
+	if stalled, consecutive := n.resolveStalls.miss(); stalled {
+		slog.Warn("play event: user resolution stalled; no playback has been attributed for a sustained run",
+			"consecutive_failures", consecutive,
+			"last_client", ev.ClientIdentifier, "last_key", ev.RatingKey)
+	}
+}
+
+// resolveStallThreshold is the number of consecutive unattributed play
+// events that means resolution is broken rather than racing.
+//
+// Calibrated against 30 days of production traffic: 2814 resolution
+// attempts, 2651 attributed and 163 skipped, and the longest run of
+// consecutive skips with no success between them was 12. Twenty is
+// 1.7x that observed maximum, so the expected races never reach it,
+// while a resolver that answers nothing crosses it in about three
+// minutes of playback at Plex's ~10s notification cadence.
+const resolveStallThreshold = 20
+
+// resolveStallCounter counts consecutive unattributed play events so a
+// stall is reported once instead of once per notification.
+//
+// Guarded by a mutex rather than left to the listener's serial dispatch:
+// notify.Handler explicitly permits a handler to hand work to a
+// goroutine, so serial dispatch is today's implementation detail and not
+// a contract this type should depend on.
+//
+// A nil counter counts nothing and never escalates. That is what lets
+// resolvePlayEventUser be exercised by tests that build no composition
+// root; production wiring always supplies one.
+type resolveStallCounter struct {
+	mu     sync.Mutex
+	misses int
+	warned bool
+}
+
+// miss records an unattributed event and reports whether this is the one
+// that crosses resolveStallThreshold. True at most once per stall.
+func (c *resolveStallCounter) miss() (stalled bool, consecutive int) {
+	if c == nil {
+		return false, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.misses++
+	if c.misses >= resolveStallThreshold && !c.warned {
+		c.warned = true
+		return true, c.misses
+	}
+	return false, c.misses
+}
+
+// success clears the run and reports whether it ended a stall that was
+// warned about, so recovery is a positive log line rather than the
+// absence of one.
+func (c *resolveStallCounter) success() (recovered bool, after int) {
+	if c == nil {
+		return false, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	after, recovered = c.misses, c.warned
+	c.misses, c.warned = 0, false
+	return recovered, after
 }
 
 func (n notifyAdapter) handleTimeline(ctx context.Context, entries []notify.TimelineEntry) {
