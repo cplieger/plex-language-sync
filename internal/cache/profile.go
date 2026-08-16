@@ -29,7 +29,6 @@ func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
 	if audioLang == "" {
 		return
 	}
-	rawLang := audioLang
 	audioLang = profileKey(audioLang)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -39,12 +38,16 @@ func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
 	if c.data.LanguageProfiles[userID] == nil {
 		c.data.LanguageProfiles[userID] = make(map[string]string)
 	}
-	// Remove any entry left under a non-canonical spelling of the same
-	// language. Without this a profiles.json written before canonicalization
-	// keeps a stale value that the read path would find first, so every later
-	// preference change would be silently discarded for an upgraded install.
-	if rawLang != audioLang {
-		delete(c.data.LanguageProfiles[userID], rawLang)
+	// Remove every entry left under a non-canonical spelling of this language,
+	// not only the spelling handed in. Without this a profiles.json written
+	// before canonicalization keeps a stale value, and Plex reports the same
+	// language under more than one code, so the surviving spelling need not be
+	// the one that arrives next. Sweeping the user's own entries is cheap: the
+	// map holds one entry per language the user has watched.
+	for key := range c.data.LanguageProfiles[userID] {
+		if key != audioLang && profileKey(key) == audioLang {
+			delete(c.data.LanguageProfiles[userID], key)
+		}
 	}
 	prev, exists := c.data.LanguageProfiles[userID][audioLang]
 	if !exists || prev != subtitleLang {

@@ -355,3 +355,82 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 		}
 	})
 }
+
+// TestUntaggedSubtitleReferenceMatchesNothing pins the one place the audio and
+// subtitle paths diverge on untagged media, and restores behavior a review
+// found had been widened by accident.
+//
+// The previous implementation refused outright when the reference subtitle
+// carried no language, while the audio path matched untagged to untagged. That
+// asymmetry is deliberate: an untagged audio track is almost always THE audio
+// track, whereas an untagged subtitle is as likely to be signs-and-songs or
+// commentary, and switching one on across a whole show is visible and unwanted.
+func TestUntaggedSubtitleReferenceMatchesNothing(t *testing.T) {
+	t.Parallel()
+	ref := sub(10, "", "")
+	candidates := []*Stream{sub(1, "eng", "en"), sub(2, "", "")}
+
+	for _, floor := range []langtag.Tier{
+		langtag.TierIdentical, langtag.TierSameLanguage,
+		langtag.TierOtherScript, langtag.TierIntelligible, langtag.TierSharedLiteracy,
+	} {
+		if got := MatchSubtitle(ref, nil, candidates, floor); got != nil {
+			t.Errorf("MatchSubtitle(untagged ref, [eng, untagged], %v) = ID %d, want nil",
+				floor, got.ID)
+		}
+	}
+
+	// The audio path keeps the opposite behavior, which is the asymmetry.
+	if got := MatchAudio(aud(10, "", ""), []*Stream{aud(1, "eng", "en"), aud(2, "", "")}); got == nil {
+		t.Error("MatchAudio(untagged ref, [eng, untagged]) = nil, want the untagged track; only the subtitle path refuses")
+	}
+}
+
+// TestUnreadableCodeComparesTheCoarseFieldOnly covers a regression a reviewer
+// found in the first version of the unreadable-code fallback.
+//
+// The previous implementation compared languageCode alone, so two tracks sharing
+// a private or misspelled code matched even when their finer tags differed.
+// Requiring both fields to agree refused pairs that used to match.
+func TestUnreadableCodeComparesTheCoarseFieldOnly(t *testing.T) {
+	t.Parallel()
+	ref := sub(10, "zzz", "!!!")
+	sameCodeOtherTag := sub(1, "zzz", "???")
+	differentCode := sub(2, "yyy", "!!!")
+	untagged := sub(3, "", "")
+
+	got := MatchSubtitle(ref, nil, []*Stream{untagged, differentCode, sameCodeOtherTag}, langtag.TierIdentical)
+	if got == nil || got.ID != 1 {
+		t.Fatalf("MatchSubtitle(zzz ref, [untagged, yyy, zzz]) = %v, want ID 1; an unreadable code compares on languageCode alone",
+			got)
+	}
+}
+
+// TestMatchTierAgreesWithTheDecision pins that the tier the app logs never
+// contradicts the match it describes. A reviewer found the two cases carrying no
+// readable tag reported "none" for pairs the matcher had just accepted, which
+// would make a log line argue with itself.
+func TestMatchTierAgreesWithTheDecision(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		ref, cand *Stream
+		floor     langtag.Tier
+	}{
+		"both untagged":     {aud(1, "", ""), aud(2, "", ""), langtag.TierIdentical},
+		"same private code": {aud(1, "zzz", ""), aud(2, "zzz", ""), langtag.TierIdentical},
+		"macrolanguage":     {aud(1, "nob", "nb"), aud(2, "nor", "no"), langtag.TierSameLanguage},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			matched := MatchAudio(tc.ref, []*Stream{tc.cand})
+			tier := MatchTier(tc.ref, tc.cand)
+			if matched == nil {
+				t.Fatalf("MatchAudio did not match, so there is no decision for tier %v to describe", tier)
+			}
+			if tier == langtag.TierNone {
+				t.Errorf("MatchTier = %v for a pair MatchAudio accepted; the logged tier must not contradict the decision", tier)
+			}
+		})
+	}
+}

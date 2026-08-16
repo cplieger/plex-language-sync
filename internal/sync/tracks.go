@@ -317,7 +317,7 @@ func (s *Syncer) applyAudioStream(
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
 	}
-	logSubstitution(ep, username, "audio", ref, matched)
+	logSubstitution(ep, username, kindAudio, ref, matched)
 	return true
 }
 
@@ -366,18 +366,46 @@ func (s *Syncer) applySubtitleStream(
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
 	}
-	logSubstitution(ep, username, "subtitle", refSub, matched)
+	logSubstitution(ep, username, kindSubtitle, refSub, matched)
 	return true
 }
 
 // logSubstitution records a track change and the language distance it was
 // accepted at, so a surprising choice is diagnosable from logs without
-// reproducing it. An exact or same-language match is routine and logs at debug;
-// anything further is a substitution a user may want to know happened, and
-// carries the recorded justification when the table supplied one.
+// reproducing it.
+//
+// Only a substitution a user might question reaches INFO. The audio path cannot
+// exceed its own floor, and every tier within that floor names one language, so
+// audio is always routine however it matched; logging it at INFO would emit a
+// line per episode for a regional variant nobody would notice. On the subtitle
+// path anything past same-language crossed a boundary worth recording, and
+// carries the table's recorded justification when there was one.
 func logSubstitution(ep *streams.Episode, username, kind string, ref, matched *streams.Stream) {
 	tier := streams.MatchTier(ref, matched)
-	attrs := []any{
+	if kind == kindAudio {
+		slog.Debug("track language matched", logAttrs(ep, username, kind, ref, matched, tier)...)
+		return
+	}
+	attrs := logAttrs(ep, username, kind, ref, matched, tier)
+	if tier <= langtag.TierSameLanguage {
+		slog.Debug("track language matched", attrs...)
+		return
+	}
+	if reason, ok := langtag.Reason(ref.Lang(), matched.Lang()); ok {
+		attrs = append(attrs, "reason", reason)
+	}
+	slog.Info("track language substituted", attrs...)
+}
+
+// Track kinds as they appear in the match log.
+const (
+	kindAudio    = "audio"
+	kindSubtitle = "subtitle"
+)
+
+// logAttrs builds the attribute list shared by both log levels.
+func logAttrs(ep *streams.Episode, username, kind string, ref, matched *streams.Stream, tier langtag.Tier) []any {
+	return []any{
 		"episode", ep.ShortName(),
 		"user", username,
 		"kind", kind,
@@ -387,14 +415,6 @@ func logSubstitution(ep *streams.Episode, username, kind string, ref, matched *s
 		"to_tag", matched.LanguageTag,
 		"match_tier", tier.String(),
 	}
-	if tier <= langtag.TierSameLanguage {
-		slog.Debug("track language matched", attrs...)
-		return
-	}
-	if reason, ok := langtag.Reason(ref.Lang(), matched.Lang()); ok {
-		attrs = append(attrs, "reason", reason)
-	}
-	slog.Info("track language substituted", attrs...)
 }
 
 // learnProfileFromReference records the user's active audio→subtitle

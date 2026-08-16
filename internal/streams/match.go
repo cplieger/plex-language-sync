@@ -6,29 +6,13 @@ import (
 	"github.com/cplieger/langtag"
 )
 
-// AudioFloor is the language distance the audio path accepts.
-//
-// It is fixed rather than configurable, and it sits one tier looser than a
-// first reading suggests it should. Script cannot matter for audio: a spoken
-// track has no script, and langtag infers one from the region, so two Mandarin
-// tracks tagged zh-CN and zh-TW differ by "script" (Hans against Hant) purely
-// as an artifact of that inference. Both report languageCode="chi" to this app
-// today and match. Flooring audio at TierSameLanguage would therefore stop
-// propagating regional audio that propagates now, so audio accepts a script
-// difference and stops short of any cross-language substitution.
-//
-// The tiers above are subtitle-grade claims. Danish and Norwegian are close on
-// the page and far apart aloud, which is exactly the substitution a viewer
-// notices and resents coming out of the speakers.
-const AudioFloor = langtag.TierOtherScript
-
 // MatchAudio finds the best matching audio stream from candidates against a
 // reference stream, accepting a language within AudioFloor.
 func MatchAudio(ref *Stream, candidates []*Stream) *Stream {
 	if ref == nil {
 		return nil
 	}
-	streams := candidatesInLanguage(ref, candidates, AudioFloor)
+	streams := selectByLanguage(candidates, ref.languageRaw(), AudioFloor)
 	if len(streams) == 0 {
 		return nil
 	}
@@ -80,6 +64,16 @@ func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream, floor langtag.Ti
 	if !ok {
 		return nil
 	}
+	// An untagged subtitle reference matches nothing, deliberately, and this is
+	// the one place the audio and subtitle paths diverge on untagged media. An
+	// untagged audio track is almost always THE audio track, so propagating it
+	// serves a user with untagged files. An untagged subtitle is as likely to be
+	// a signs-and-songs or commentary track, and switching one on across a whole
+	// show is visible and unwanted. The previous implementation refused here too;
+	// preserved rather than widened.
+	if _, mode := classifyReference(ref.languageRaw()); mode == langAbsent {
+		return nil
+	}
 
 	streams := candidates
 	if criteria.ForcedOnly {
@@ -94,7 +88,7 @@ func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream, floor langtag.Ti
 		streams = forced
 	}
 
-	streams = candidatesInLanguage(ref, streams, floor)
+	streams = selectByLanguage(streams, ref.languageRaw(), floor)
 	if len(streams) == 0 {
 		return nil
 	}
@@ -114,57 +108,11 @@ func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream, floor langtag.Ti
 	})
 }
 
-// candidatesInLanguage narrows candidates to those whose language is an
-// acceptable stand-in for the reference's, within floor. Every returned
-// candidate sits at the same language distance, so the caller's own scoring
-// decides between them.
-//
-// Three cases, and keeping them apart matters. A reference with a language we
-// can read is graded on the tier scale. A reference Plex gave no language for
-// matches candidates Plex also gave no language for, preserving what this app
-// has always done for untagged media. A reference carrying a language string
-// that names nothing we know falls back to exact equality on the raw code,
-// which is precisely the old behavior for that input: an unrecognised code is
-// not the same thing as an absent one, and folding the two together would let
-// an untagged track stand in for a track labelled with a private or misspelled
-// code.
-func candidatesInLanguage(ref *Stream, candidates []*Stream, floor langtag.Tier) []*Stream {
-	if want := ref.Lang(); !want.IsZero() {
-		out, _, ok := langtag.Best(want, candidates, (*Stream).Lang, floor)
-		if !ok {
-			return nil
-		}
-		return out
-	}
-
-	var out []*Stream
-	if ref.HasNoLanguage() {
-		for _, s := range candidates {
-			if SameUnknownLanguage(ref, s) {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	for _, s := range candidates {
-		if s.LanguageCode == ref.LanguageCode && s.LanguageTag == ref.LanguageTag {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// MatchTier reports the language distance at which a candidate would be
-// accepted for the reference, and whether it is within floor. Used for log
-// output so that a surprising substitution can be diagnosed after the fact.
+// MatchTier reports the language distance at which a candidate was accepted for
+// the reference. Used for log output so that a surprising substitution can be
+// diagnosed after the fact.
 func MatchTier(ref, candidate *Stream) langtag.Tier {
-	if ref == nil || candidate == nil {
-		return langtag.TierNone
-	}
-	if SameUnknownLanguage(ref, candidate) {
-		return langtag.TierIdentical
-	}
-	return langtag.Compare(ref.Lang(), candidate.Lang())
+	return languageDistance(ref, candidate)
 }
 
 // Criteria is the language and flag requirements derived from a reference

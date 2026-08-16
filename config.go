@@ -35,12 +35,21 @@ const (
 )
 
 // defaultSubtitleTier is the furthest language distance a subtitle substitution
-// reaches unless SUBTITLE_MATCH_TIER says otherwise. It is the loosest tier
-// that involves no human judgment: identical tags, the same language, and the
-// same language in another script. The two tiers beyond it are curated claims
-// about which languages readers can substitute for each other, so reaching them
-// is a decision an operator makes rather than one inherited from a default.
-const defaultSubtitleTier = langtag.TierOtherScript
+// reaches unless SUBTITLE_MATCH_TIER says otherwise.
+//
+// Same-language, which pairs with the fixed audio floor to mean one thing on
+// both paths: never a different language. The tier numbers differ only because
+// a spoken track has no script, so the audio path has to absorb a script
+// difference that is an artifact of inferring one from the region.
+//
+// It stops one tier short of what looks like the last judgment-free rung.
+// Crossing a script boundary is judgment-free but it is not free for the
+// reader: CLDR rates a generic cross-script substitution at distance 50, where
+// every curated close-language pair is between 4 and 20, and there is no
+// Simplified-to-Traditional Chinese entry at all so Chinese falls to that
+// generic 50. Handing a Simplified reader Traditional subtitles across a whole
+// show is a bigger imposition than any tier above this one, so it is opt-in.
+const defaultSubtitleTier = langtag.TierSameLanguage
 
 // Default ignore labels applied when IGNORE_LABELS is not set.
 const (
