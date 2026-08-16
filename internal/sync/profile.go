@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/cplieger/langtag"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
@@ -61,7 +62,7 @@ func (s *Syncer) ApplyLanguageProfile(
 	}
 
 	username := s.users.Name(userID)
-	changed := applyProfileSubtitle(ctx, userClient, target, partID, subLang, curSub, username)
+	changed := applyProfileSubtitle(ctx, userClient, target, partID, subLang, curSub, username, s.cfg.SubtitleFloor)
 	if changed {
 		slog.Info("language profile applied to new show",
 			"trigger", trigger,
@@ -88,6 +89,7 @@ func applyProfileSubtitle(
 	subLang string,
 	curSub *streams.Stream,
 	username string,
+	floor langtag.Tier,
 ) bool {
 	if subLang == "" {
 		// Profile says no subtitles for this audio language.
@@ -102,7 +104,7 @@ func applyProfileSubtitle(
 		return true
 	}
 
-	bestSub := streams.FindSubtitleByLanguage(streams.Subtitle(target), subLang)
+	bestSub := streams.FindSubtitleByLanguage(streams.Subtitle(target), subLang, floor)
 	if bestSub == nil || (curSub != nil && curSub.ID == bestSub.ID) {
 		return false
 	}

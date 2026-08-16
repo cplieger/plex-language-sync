@@ -12,7 +12,9 @@ package streams
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/cplieger/langtag"
 	"github.com/cplieger/runesafe"
 )
 
@@ -96,7 +98,14 @@ const (
 
 // Stream is a single audio / subtitle / video stream on a Part.
 type Stream struct {
-	LanguageCode         string     `json:"languageCode"`
+	// LanguageCode is Plex's ISO 639-2/B code ("nob", "spa"). Kept for log
+	// output and for the persisted intent projection.
+	LanguageCode string `json:"languageCode"`
+	// LanguageTag is Plex's BCP 47 tag ("nb", "es-419"). Strictly more
+	// informative than LanguageCode, which cannot express a region: a movie
+	// carrying both a European and a Latin American Spanish subtitle reports
+	// languageCode="spa" for both and distinguishes them only here.
+	LanguageTag          string     `json:"languageTag"`
 	DisplayTitle         string     `json:"displayTitle"`
 	ExtendedDisplayTitle string     `json:"extendedDisplayTitle"`
 	Title                string     `json:"title"`
@@ -109,6 +118,49 @@ type Stream struct {
 	Forced               bool       `json:"forced"`
 	HearingImpaired      bool       `json:"hearingImpaired"`
 	VisualImpaired       bool       `json:"visualImpaired"`
+}
+
+// Lang returns the stream's canonical language, preferring Plex's BCP 47
+// languageTag over the coarser languageCode. The zero Tag means Plex reported
+// no usable language for the track, which is a real case: a track with no
+// language metadata at all, and one Plex labels "unknown".
+//
+// Not memoized. Stream values are copied into and out of slices all over this
+// package, so a cached field would either be silently stale after a copy or
+// need a mutex on a type that has no other reason to hold one. Parsing costs
+// under a microsecond and happens a handful of times per episode.
+func (s *Stream) Lang() langtag.Tag {
+	if t, ok := langtag.Parse(s.LanguageTag); ok {
+		return t
+	}
+	// Fall back on an absent OR unparseable tag. Plex has been observed to
+	// report a languageTag for every stream, but the two fields come from
+	// different derivations of the same container metadata, so treating a
+	// malformed tag as "no tag" rather than "no language" keeps the coarser
+	// field useful.
+	t, _ := langtag.Parse(s.LanguageCode)
+	return t
+}
+
+// HasNoLanguage reports whether Plex supplied no language at all for the track,
+// as opposed to supplying one this build cannot parse. The two cases are
+// different and the app treats them differently: see candidatesInLanguage.
+func (s *Stream) HasNoLanguage() bool {
+	return strings.TrimSpace(s.LanguageTag) == "" && strings.TrimSpace(s.LanguageCode) == ""
+}
+
+// SameUnknownLanguage reports whether both streams carry no language at all.
+//
+// Plex reports no language for some tracks, and this app has always treated two
+// such tracks as a match, because the old code compared raw strings and ""
+// equalled "". Propagating a selection across an untagged show is behavior a
+// user with untagged media relies on, so it is preserved explicitly rather than
+// lost to langtag's rule that an unknown tag matches nothing. That rule is right
+// for the library, where two "undetermined" tracks genuinely prove nothing; it
+// is wrong here, where the alternative is doing nothing at all for a whole class
+// of library.
+func SameUnknownLanguage(a, b *Stream) bool {
+	return a != nil && b != nil && a.HasNoLanguage() && b.HasNoLanguage()
 }
 
 // IsAudio reports whether the stream is an audio track.

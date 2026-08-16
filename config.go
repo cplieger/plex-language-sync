@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cplieger/envx"
+	"github.com/cplieger/langtag"
 	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
 	"github.com/cplieger/slogx"
 )
@@ -32,6 +33,14 @@ const (
 	defaultUpdateStrategy    = syncpkg.StrategyAll
 	defaultSchedulerInterval = 24 * time.Hour
 )
+
+// defaultSubtitleTier is the furthest language distance a subtitle substitution
+// reaches unless SUBTITLE_MATCH_TIER says otherwise. It is the loosest tier
+// that involves no human judgment: identical tags, the same language, and the
+// same language in another script. The two tiers beyond it are curated claims
+// about which languages readers can substitute for each other, so reaching them
+// is a decision an operator makes rather than one inherited from a default.
+const defaultSubtitleTier = langtag.TierOtherScript
 
 // Default ignore labels applied when IGNORE_LABELS is not set.
 const (
@@ -52,6 +61,7 @@ type config struct {
 	ignoreLabels      []string
 	ignoreLibraries   []string
 	schedulerInterval time.Duration // deep-analysis cadence; 0 = disabled
+	subtitleTier      langtag.Tier  // furthest language distance for a subtitle match
 	triggerOnPlay     bool
 	triggerOnScan     bool
 	schedulerEnabled  bool
@@ -83,6 +93,7 @@ func loadConfig() config {
 		languageProfiles: envx.Bool("LANGUAGE_PROFILES", true),
 		debug:            debug,
 		caCertPath:       envx.String("PLEX_CA_CERT_PATH", ""),
+		subtitleTier:     loadSubtitleTier(),
 	}
 	cfg.schedulerInterval, cfg.schedulerEnabled = loadSchedulerInterval()
 
@@ -107,6 +118,29 @@ func loadConfig() config {
 	return cfg
 }
 
+// loadSubtitleTier parses SUBTITLE_MATCH_TIER, warning and falling back to the
+// default on an unrecognized value, which is how UPDATE_LEVEL and
+// UPDATE_STRATEGY already behave.
+//
+// The fallback matters more than it looks. langtag.ParseTier returns TierNone
+// for input it does not recognize, and TierNone as a floor means "no
+// relationship", so a typo must not be passed through: the library refuses such
+// a floor outright, and this app substitutes the documented default so a
+// mistyped value degrades to normal behavior rather than to no matching at all.
+func loadSubtitleTier() langtag.Tier {
+	raw := envx.String("SUBTITLE_MATCH_TIER", "")
+	if raw == "" {
+		return defaultSubtitleTier
+	}
+	tier, ok := langtag.ParseTier(raw)
+	if !ok {
+		slog.Warn("cannot parse SUBTITLE_MATCH_TIER, using default",
+			"value", raw, "default", defaultSubtitleTier.String())
+		return defaultSubtitleTier
+	}
+	return tier
+}
+
 // logConfig emits the loaded configuration at INFO. The plex_token field
 // is deliberately logged as "configured" rather than its real value.
 func logConfig(cfg *config) {
@@ -115,6 +149,7 @@ func logConfig(cfg *config) {
 		"plex_token", "configured",
 		"update_level", cfg.updateLevel,
 		"update_strategy", cfg.updateStrategy,
+		"subtitle_match_tier", cfg.subtitleTier.String(),
 		"trigger_on_play", cfg.triggerOnPlay,
 		"trigger_on_scan", cfg.triggerOnScan,
 		"scheduler_enabled", cfg.schedulerEnabled,

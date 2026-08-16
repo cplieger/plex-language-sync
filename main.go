@@ -190,6 +190,7 @@ func run() int {
 			UpdateLevel:      cfg.updateLevel,
 			UpdateStrategy:   cfg.updateStrategy,
 			Ignore:           ignorePolicy,
+			SubtitleFloor:    cfg.subtitleTier,
 			LanguageProfiles: cfg.languageProfiles,
 		},
 		client,

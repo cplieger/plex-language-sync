@@ -37,7 +37,14 @@ type Intent struct {
 // deliberately absent — they are meaningless outside the episode the
 // stream was observed on.
 type IntentStream struct {
-	LanguageCode         string `json:"languageCode"`
+	LanguageCode string `json:"languageCode"`
+	// LanguageTag is Plex's BCP 47 tag. Additive and omitempty, so an intent
+	// written before this field existed still loads and simply falls back to
+	// the coarser LanguageCode. Without it the reconcile plane and the
+	// new-episode seeding path would match on a code that cannot express a
+	// region, and would pick arbitrarily between a European and a Latin
+	// American Spanish subtitle where the event plane picks correctly.
+	LanguageTag          string `json:"languageTag,omitempty"`
 	Title                string `json:"title,omitempty"`
 	DisplayTitle         string `json:"displayTitle,omitempty"`
 	ExtendedDisplayTitle string `json:"extendedDisplayTitle,omitempty"`
@@ -67,6 +74,7 @@ func intentStreamFrom(s *Stream) *IntentStream {
 	}
 	return &IntentStream{
 		LanguageCode:         s.LanguageCode,
+		LanguageTag:          s.LanguageTag,
 		Title:                s.Title,
 		DisplayTitle:         s.DisplayTitle,
 		ExtendedDisplayTitle: s.ExtendedDisplayTitle,
@@ -94,6 +102,7 @@ func (is *IntentStream) stream() *Stream {
 	}
 	return &Stream{
 		LanguageCode:         is.LanguageCode,
+		LanguageTag:          is.LanguageTag,
 		Title:                is.Title,
 		DisplayTitle:         is.DisplayTitle,
 		ExtendedDisplayTitle: is.ExtendedDisplayTitle,

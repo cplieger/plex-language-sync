@@ -26,10 +26,12 @@ require github.com/cplieger/httpx/v4 v4.3.1
 require (
 	github.com/cplieger/jsonx v1.4.1
 	github.com/cplieger/keyenc v1.0.2
+	github.com/cplieger/langtag v1.0.1
 	github.com/cplieger/runesafe v1.4.1
 )
 
 require (
 	github.com/cplieger/pathinside v1.0.1 // indirect
 	github.com/cplieger/xmlx v1.0.1 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )

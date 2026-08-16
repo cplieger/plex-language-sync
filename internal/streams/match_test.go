@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cplieger/langtag"
 	"pgregory.net/rapid"
 )
 
@@ -180,7 +181,7 @@ func TestMatchSubtitleStream(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchSubtitle(tt.ref, tt.refAudio, tt.candidates)
+			got := MatchSubtitle(tt.ref, tt.refAudio, tt.candidates, langtag.TierIdentical)
 			gotID := 0
 			if got != nil {
 				gotID = got.ID
@@ -194,27 +195,30 @@ func TestMatchSubtitleStream(t *testing.T) {
 
 func TestSubtitleMatchCriteria(t *testing.T) {
 	t.Run("nil ref nil audio", func(t *testing.T) {
-		lang, forced, hi := SubtitleCriteria(nil, nil)
-		if lang != "" || forced || hi {
-			t.Errorf("got (%q, %v, %v), want empty", lang, forced, hi)
+		got, ok := SubtitleCriteria(nil, nil)
+		if ok {
+			t.Errorf("SubtitleCriteria(nil, nil) = (%+v, true), want ok=false", got)
 		}
 	})
 
-	t.Run("nil ref with audio returns empty (no subtitle means no subtitle)", func(t *testing.T) {
+	t.Run("nil ref with audio returns nothing (no subtitle means no subtitle)", func(t *testing.T) {
 		audio := &Stream{LanguageCode: "jpn"}
-		lang, forced, hi := SubtitleCriteria(nil, audio)
-		if lang != "" || forced || hi {
-			t.Errorf("nil ref must not search for forced subs in audio language; got (%q, %v, %v)",
-				lang, forced, hi)
+		got, ok := SubtitleCriteria(nil, audio)
+		if ok {
+			t.Errorf("SubtitleCriteria(nil, audio) = (%+v, true), want ok=false; a nil ref must not search for forced subs in the audio language", got)
 		}
 	})
 
 	t.Run("ref overrides audio", func(t *testing.T) {
 		ref := &Stream{LanguageCode: "eng", Forced: false, HearingImpaired: true}
 		audio := &Stream{LanguageCode: "jpn"}
-		lang, forced, hi := SubtitleCriteria(ref, audio)
-		if lang != "eng" || forced || !hi {
-			t.Errorf("got (%q, %v, %v), want (eng, false, true)", lang, forced, hi)
+		got, ok := SubtitleCriteria(ref, audio)
+		if !ok {
+			t.Fatal("SubtitleCriteria(ref, audio) ok = false, want true")
+		}
+		if got.Lang.Language() != "en" || got.ForcedOnly || !got.HearingImpairedOnly {
+			t.Errorf("SubtitleCriteria(ref, audio) = {lang %q forced %v hi %v}, want {en false true}",
+				got.Lang.Language(), got.ForcedOnly, got.HearingImpairedOnly)
 		}
 	})
 }
@@ -226,13 +230,13 @@ func TestMatchSubtitleStreamNilRefReturnsNil(t *testing.T) {
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "ass"},
 		{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 	}
-	got := MatchSubtitle(nil, refAudio, candidates)
+	got := MatchSubtitle(nil, refAudio, candidates, langtag.TierIdentical)
 	if got != nil {
 		t.Errorf("nil ref must always return nil (no subtitle means no subtitle), got ID=%d", got.ID)
 	}
 
 	// Also true when refAudio is nil.
-	got = MatchSubtitle(nil, nil, candidates)
+	got = MatchSubtitle(nil, nil, candidates, langtag.TierIdentical)
 	if got != nil {
 		t.Errorf("nil ref + nil refAudio must return nil, got ID=%d", got.ID)
 	}
@@ -244,7 +248,7 @@ func TestMatchSubtitleStreamNoLanguageMatch(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"},
 	}
-	got := MatchSubtitle(ref, nil, candidates)
+	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
 	if got != nil {
 		t.Errorf("expected nil for no language match, got ID=%d", got.ID)
 	}
@@ -260,7 +264,7 @@ func TestMatchSubtitleStreamHIOnly(t *testing.T) {
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
 		{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true, Codec: "srt"},
 	}
-	got := MatchSubtitle(ref, nil, candidates)
+	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
 	if got == nil {
 		t.Fatal("expected a match")
 	}
@@ -405,7 +409,7 @@ func TestMatchSubtitleStreamMultipleForced(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "srt"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "ass"},
 	}
-	got := MatchSubtitle(ref, refAudio, candidates)
+	got := MatchSubtitle(ref, refAudio, candidates, langtag.TierIdentical)
 	if got != nil {
 		t.Errorf("nil ref: no subtitle means no subtitle, got ID=%d", got.ID)
 	}
@@ -464,7 +468,7 @@ func TestMatchSubtitleStreamNeverPanics(t *testing.T) {
 				LanguageCode: rapid.SampledFrom([]string{"eng", "jpn", "kor", ""}).Draw(t, "ref_audio_lang"),
 			}
 		}
-		MatchSubtitle(ref, refAudio, candidates)
+		MatchSubtitle(ref, refAudio, candidates, langtag.TierIdentical)
 	})
 }
 
@@ -495,7 +499,7 @@ func TestMatchSubtitleStreamPrefersSameCodecAndFlags(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "ass", Title: "English"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "srt", Title: "English"},
 	}
-	got := MatchSubtitle(ref, nil, candidates)
+	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
 	if got == nil || got.ID != 2 {
 		t.Errorf("MatchSubtitle should prefer matching codec, got ID=%v", got)
 	}
@@ -553,7 +557,7 @@ func TestMatchSubtitleStream_LanguageInvariantPBT(t *testing.T) {
 				LanguageCode: rapid.SampledFrom([]string{"eng", "jpn", "kor", "fra"}).Draw(t, "ref_audio_lang"),
 			}
 		}
-		got := MatchSubtitle(ref, refAudio, candidates)
+		got := MatchSubtitle(ref, refAudio, candidates, langtag.TierIdentical)
 		if got == nil {
 			return
 		}
@@ -641,7 +645,7 @@ func TestMatchSubtitle_ForcedOnly(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchSubtitle(tt.ref, nil, tt.candidates)
+			got := MatchSubtitle(tt.ref, nil, tt.candidates, langtag.TierIdentical)
 			gotID := 0
 			if got != nil {
 				gotID = got.ID
@@ -667,7 +671,7 @@ func TestMatchSubtitleStream_ForcedAndHIRefExcludesNonForced(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: false},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: true},
 	}
-	got := MatchSubtitle(ref, nil, candidates)
+	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
 	if got == nil || got.ID != 1 {
 		t.Fatalf("forced+HI ref must apply the forced exact-filter and exclude the non-forced HI candidate ID=2, falling back to forced ID=1; got %v", got)
 	}

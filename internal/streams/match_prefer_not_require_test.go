@@ -1,6 +1,10 @@
 package streams
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cplieger/langtag"
+)
 
 // TestMatchAudioStream_VIPreferNotRequire pins the "prefer, not require"
 // contract at the MatchAudio boundary: when the reference is VisualImpaired
@@ -34,7 +38,7 @@ func TestMatchSubtitleStream_HIPreferNotRequire(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false, Codec: "srt"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false, Codec: "ass"},
 	}
-	got := MatchSubtitle(ref, nil, candidates)
+	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
 	if got == nil {
 		t.Fatal("HI ref with no HI candidate must still return a subtitle (prefer, not require), got nil")
 	}

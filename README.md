@@ -69,6 +69,7 @@ services:
       TRIGGER_ON_PLAY: "true"
       TRIGGER_ON_SCAN: "true"
       LANGUAGE_PROFILES: "true"  # learn and apply audio→subtitle pairs for new shows
+      SUBTITLE_MATCH_TIER: "other-script"  # how far a subtitle substitution may reach
       SCHEDULER_INTERVAL: "24h"  # deep-analysis cadence (Go duration); off/disabled/0 disables
 
     volumes:
@@ -88,13 +89,56 @@ services:
 | `TRIGGER_ON_PLAY` | React to playback events: when you play an episode, propagate its language settings | `true` | No |
 | `TRIGGER_ON_SCAN` | React to library scan events: when episodes are added or updated, apply each user's recorded selection for the show (falling back to the show's established selection, then to the user's learned profile) | `true` | No |
 | `LANGUAGE_PROFILES` | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history | `true` | No |
+| `SUBTITLE_MATCH_TIER` | How far a subtitle substitution may reach when no exact language match exists: `identical`, `same-language`, `other-script`, `intelligible`, or `shared-literacy` (see [Language matching](#language-matching)) | `other-script` | No |
 | `SCHEDULER_INTERVAL` | Cadence of the daily deep-analysis safety net, a Go duration (e.g. `24h`, `12h`). `off`/`disabled`/`0` disables it (the app then runs WebSocket-only). | `24h` | No |
 | `PLEX_CA_CERT_PATH` | Path to a PEM file with the CA certificate that signed your Plex server's cert; TLS verification stays **on**, pinned to that CA. Needed only for self-signed or private-CA `https://` URLs (see [TLS / certificate setup](#tls--certificate-setup)) | unset | No |
 | `IGNORE_LABELS` | Comma-separated Plex labels that exclude a show from language sync (a show carrying any listed label is skipped); label matching is exact and case-sensitive, and setting this replaces the built-in defaults | `PAL_IGNORE,PLS_IGNORE` | No |
 | `IGNORE_LIBRARIES` | Comma-separated Plex library names to exclude from language sync entirely (exact, case-sensitive name match) | unset | No |
 | `DEBUG` | Enable debug-level logging (`true`/`1`/`yes`/`on`). Raises log verbosity for troubleshooting; leave unset for normal INFO-level output | `false` | No |
 
-### TLS / certificate setup
+### Language matching
+
+Media files disagree about how to name a language. One episode carries a subtitle Plex labels
+"Norwegian Bokmål" and reports as `nob`; the next carries one labelled "Norwegian" and reports as
+`nor`. Both name the same thing. Comparing the codes as text finds no match, so the second episode
+would be left alone.
+
+Language identifiers are canonicalized with [`langtag`](https://github.com/cplieger/langtag), which
+collapses the several published spellings of one language onto one form, then grades how far a
+candidate track sits from the one you chose. `SUBTITLE_MATCH_TIER` sets how far a substitution may
+reach:
+
+| Value | Accepts | Example |
+| --- | --- | --- |
+| `identical` | Only the same language, same spelling | `ger` and `deu` |
+| `same-language` | One language, differing at most in region | `nob` and `nor`, `es-ES` and `es-419` |
+| `other-script` (default) | One language in another script | Simplified and Traditional Chinese |
+| `intelligible` | A different but close language | Bokmål and Nynorsk, Norwegian and Danish |
+| `shared-literacy` | A different language its readers are generally schooled in | Catalan and Spanish |
+
+The default stops at the last tier that involves no judgment about which languages readers can
+substitute for each other. The two tiers beyond it are curated claims, so reaching them is your
+decision rather than a default you inherit. `intelligible` will put Danish subtitles on a Norwegian
+selection when no Norwegian track exists; `shared-literacy` will put Spanish on a Catalan one.
+
+Worth knowing before raising it: `other-script` is a bigger ask than its position suggests. Reading
+Traditional Chinese when you chose Simplified is real work, more than reading Nynorsk when you chose
+Bokmål. If your library is mostly Chinese, `same-language` may suit you better than the default.
+
+**Audio is not configurable** and never substitutes another language. A regional variant is
+accepted, so audio tagged `zh-CN` still matches `zh-TW`, but Danish never plays for a Norwegian
+selection. Subtitles you can read past or switch off; wrong audio is the thing you notice.
+
+An unrecognized value logs a warning and falls back to the default.
+
+Every change is logged with the distance it matched at, so a surprising substitution is
+diagnosable:
+
+```text
+level=INFO msg="track language substituted" kind=subtitle from=nob to=nno match_tier=intelligible
+```
+
+## TLS / certificate setup
 
 Pick the configuration that matches your Plex server:
 

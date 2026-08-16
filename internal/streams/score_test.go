@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cplieger/langtag"
 	"pgregory.net/rapid"
 )
 
@@ -143,7 +144,7 @@ func TestFilterByLanguage(t *testing.T) {
 		{ID: 2, LanguageCode: "jpn"},
 		{ID: 3, LanguageCode: "eng"},
 	}
-	got := FilterByLanguage(streams, "eng")
+	got := FilterByLanguage(streams, "eng", langtag.TierIdentical)
 	if len(got) != 2 {
 		t.Fatalf("expected 2, got %d", len(got))
 	}
@@ -151,7 +152,7 @@ func TestFilterByLanguage(t *testing.T) {
 		t.Errorf("unexpected IDs: %d, %d", got[0].ID, got[1].ID)
 	}
 
-	got = FilterByLanguage(streams, "kor")
+	got = FilterByLanguage(streams, "kor", langtag.TierIdentical)
 	if len(got) != 0 {
 		t.Errorf("expected 0 for kor, got %d", len(got))
 	}
@@ -272,7 +273,7 @@ func TestFilterByLanguageEmptyCode(t *testing.T) {
 		{ID: 1, LanguageCode: "eng"},
 		{ID: 2, LanguageCode: ""},
 	}
-	got := FilterByLanguage(streams, "")
+	got := FilterByLanguage(streams, "", langtag.TierIdentical)
 	if len(got) != 1 || got[0].ID != 2 {
 		t.Errorf("expected stream with empty language code, got %v", got)
 	}
@@ -462,7 +463,7 @@ func TestFindSubtitleByLanguage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := FindSubtitleByLanguage(tt.streams, tt.langCode)
+			got := FindSubtitleByLanguage(tt.streams, tt.langCode, langtag.TierIdentical)
 			if tt.wantNil {
 				if got != nil {
 					t.Errorf("FindSubtitleByLanguage(streams, %q) = stream %d, want nil",
@@ -530,7 +531,7 @@ func TestFindSubtitleByLanguageNeverPanics(t *testing.T) {
 			}
 		}
 		langCode := rapid.StringMatching(`[a-z]{0,3}`).Draw(t, "target_lang")
-		result := FindSubtitleByLanguage(streams, langCode)
+		result := FindSubtitleByLanguage(streams, langCode, langtag.TierIdentical)
 		// Invariant: if result is non-nil, its language must match.
 		if result != nil && result.LanguageCode != langCode {
 			t.Errorf("FindSubtitleByLanguage returned stream with lang %q, want %q",
@@ -553,7 +554,7 @@ func TestFindSubtitleByLanguage_ReturnsHighestCodecScorePBT(t *testing.T) {
 			}
 		}
 		targetLang := rapid.SampledFrom([]string{"eng", "fra", "kor"}).Draw(t, "target")
-		got := FindSubtitleByLanguage(candidates, targetLang)
+		got := FindSubtitleByLanguage(candidates, targetLang, langtag.TierIdentical)
 		if got == nil {
 			for _, s := range candidates {
 				if s.LanguageCode == targetLang {
@@ -590,7 +591,7 @@ func TestFilterByLanguage_InvariantPBT(t *testing.T) {
 			}
 		}
 		target := rapid.SampledFrom(langs).Draw(t, "target")
-		got := FilterByLanguage(streams, target)
+		got := FilterByLanguage(streams, target, langtag.TierIdentical)
 		for _, s := range got {
 			if s.LanguageCode != target {
 				t.Errorf("FilterByLanguage(%q): returned stream ID=%d has lang=%q", target, s.ID, s.LanguageCode)
