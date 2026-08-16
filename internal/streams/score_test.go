@@ -531,11 +531,28 @@ func TestFindSubtitleByLanguageNeverPanics(t *testing.T) {
 			}
 		}
 		langCode := rapid.StringMatching(`[a-z]{0,3}`).Draw(t, "target_lang")
-		result := FindSubtitleByLanguage(streams, langCode, langtag.TierIdentical)
-		// Invariant: if result is non-nil, its language must match.
-		if result != nil && result.LanguageCode != langCode {
-			t.Errorf("FindSubtitleByLanguage returned stream with lang %q, want %q",
-				result.LanguageCode, langCode)
+		floor := langtag.TierIdentical
+		result := FindSubtitleByLanguage(streams, langCode, floor)
+		if result == nil {
+			return
+		}
+		// The invariant is acceptance, not string equality. Two spellings of one
+		// language canonicalize together, so a target of "eng" legitimately
+		// returns a stream coded "en"; asserting the raw strings match was
+		// falsifiable and passed only because the generator rarely drew a
+		// colliding pair.
+		if want, ok := langtag.Parse(langCode); ok {
+			if !langtag.Match(want, result.Lang(), floor) {
+				t.Errorf("FindSubtitleByLanguage(target %q, floor %v) returned lang %q, which is not within the floor",
+					langCode, floor, result.Lang())
+			}
+			return
+		}
+		// A target langtag cannot read falls back to exact comparison on the
+		// coarse field, so there the raw strings really must agree.
+		if result.LanguageCode != langCode {
+			t.Errorf("FindSubtitleByLanguage(unreadable target %q) returned lang %q, want the same code",
+				langCode, result.LanguageCode)
 		}
 	})
 }

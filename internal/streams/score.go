@@ -171,30 +171,9 @@ func SubtitleCodecScore(codec string) int {
 
 // FilterByLanguage returns the streams whose language is an acceptable stand-in
 // for langCode, within floor. Every returned stream sits at the same language
-// distance.
-//
-// An empty langCode selects streams that carry no language either, preserving
-// this app's long-standing behavior for untagged media. A non-empty langCode
-// that names no known language selects streams whose raw code matches it
-// exactly, which is also what the old string comparison did: an unrecognised
-// code is not an absent one.
+// distance. See selectByLanguage for how a code langtag cannot read is handled.
 func FilterByLanguage(streams []*Stream, langCode string, floor langtag.Tier) []*Stream {
-	if want, ok := langtag.Parse(langCode); ok {
-		out, _, found := langtag.Best(want, streams, (*Stream).Lang, floor)
-		if !found {
-			return nil
-		}
-		return out
-	}
-
-	var out []*Stream
-	empty := strings.TrimSpace(langCode) == ""
-	for _, s := range streams {
-		if empty && s.HasNoLanguage() || !empty && s.LanguageCode == langCode {
-			out = append(out, s)
-		}
-	}
-	return out
+	return selectByLanguage(streams, langCode, floor)
 }
 
 // FilterByBoolPref returns streams whose fn value matches desired. If

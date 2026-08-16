@@ -330,3 +330,38 @@ func TestCacheLanguageProfileReadPrefersCanonicalKey(t *testing.T) {
 		}
 	}
 }
+
+// TestCacheLanguageProfileSweepsEveryStaleSpelling covers the case that made
+// deleting only the incoming spelling insufficient: Plex reports one language
+// under several codes, so a profiles.json can hold more than one stale entry for
+// it and the spelling that arrives next need not be any of them.
+func TestCacheLanguageProfileSweepsEveryStaleSpelling(t *testing.T) {
+	c := New()
+	c.mu.Lock()
+	c.data.LanguageProfiles = map[string]map[string]string{
+		"1": {"nob": "eng", "nb": "ger", "no": "ita", "jpn": "eng"},
+	}
+	c.mu.Unlock()
+
+	// Arrives under a fourth spelling of the same language.
+	c.LearnLanguageProfile("1", "nor", "fre")
+
+	c.mu.Lock()
+	profiles := c.data.LanguageProfiles["1"]
+	c.mu.Unlock()
+
+	for _, stale := range []string{"nob", "nb"} {
+		if _, present := profiles[stale]; present {
+			t.Errorf("spelling %q survived the sweep, want it removed; a stale entry can answer a later lookup", stale)
+		}
+	}
+	// An unrelated language must be untouched.
+	if got := profiles["jpn"]; got != "eng" {
+		t.Errorf("LanguageProfiles[1][jpn] = %q, want %q; the sweep must not reach another language", got, "eng")
+	}
+	for _, spelling := range []string{"nob", "nor", "nb", "no"} {
+		if got, ok := c.SubtitleLangForAudio("1", spelling); !ok || got != "fre" {
+			t.Errorf("SubtitleLangForAudio(1, %q) = (%q, %v), want (%q, true)", spelling, got, ok, "fre")
+		}
+	}
+}

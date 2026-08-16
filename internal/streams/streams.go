@@ -142,6 +142,19 @@ func (s *Stream) Lang() langtag.Tag {
 	return t
 }
 
+// languageRaw returns the raw identifier the matcher keys on, preferring the
+// BCP 47 tag and falling back to the coarser code. It is the un-parsed
+// counterpart of Lang, needed because an identifier langtag cannot read still
+// has to be comparable to another copy of itself.
+func (s *Stream) languageRaw() string {
+	if t := strings.TrimSpace(s.LanguageTag); t != "" {
+		if _, ok := langtag.Parse(t); ok {
+			return t
+		}
+	}
+	return s.LanguageCode
+}
+
 // HasNoLanguage reports whether Plex supplied no language at all for the track,
 // as opposed to supplying one this build cannot parse. The two cases are
 // different and the app treats them differently: see candidatesInLanguage.
