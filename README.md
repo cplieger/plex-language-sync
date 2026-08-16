@@ -173,7 +173,7 @@ re-learned from live playback as you watch.
 
 plex-language-sync has no metrics endpoint; its operational state is in
 its logs. Ship the container's logs to Loki (Grafana Alloy's Docker log
-discovery does this with no configuration) and evaluate this rule with
+discovery does this with no configuration) and evaluate these rules with
 [Loki's ruler](https://grafana.com/docs/loki/latest/alert/); firing
 alerts deliver through your Alertmanager exactly like Prometheus metric
 alerts.
@@ -203,15 +203,37 @@ groups:
             transient: the container starts healthy in a degraded state
             and retries at WARN, so it never fires this alert. The
             healthcheck deliberately ignores WebSocket state (the
-            listener auto-reconnects), so this alert is the only signal
-            that the container is up but processing nothing. The benign
-            "failed to refresh shared user tokens" logs at WARN and is
-            excluded by the level=ERROR filter.
+            listener auto-reconnects), so nothing else reports a
+            container that is up and failing.
+
+      - alert: PlexLanguageSyncResolutionStalled
+        expr: |
+          sum by (container) (count_over_time(
+            {container="plex-language-sync"} |= `user resolution stalled` [30m]
+          )) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync is attributing no playback to any user"
+          description: >
+            plex-language-sync could not attribute 20 consecutive play
+            events to a user. It identifies the viewer by joining each
+            playback notification against the server's active sessions,
+            and it skips an event it cannot attribute rather than
+            writing a language choice under the wrong identity, so a
+            stall means playback is being watched and nothing is
+            propagating. Check that PLEX_TOKEN still has admin rights
+            and that the active-session endpoint answers. Individual
+            skips are expected and log at DEBUG: the server announces
+            playback a few seconds before a session becomes queryable,
+            and an idle web client re-announces a finished item for as
+            long as its tab stays open. The app logs "user resolution
+            recovered" once playback is attributed again.
 ```
 
-The threshold, window, and `severity` label are starting points; adjust
-the `container` selector to your deployment and route by whatever labels
-your Alertmanager uses.
+The thresholds, windows, and `severity` labels are starting points;
+adjust the `container` selector to your deployment and route by whatever
+labels your Alertmanager uses.
 
 ## Healthcheck
 

@@ -909,6 +909,171 @@ func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Unattributed-play-event severity (resolveStallCounter)
+// ---------------------------------------------------------------------------
+//
+// These pin the fix for a real production defect: the per-event skip was
+// logged at WARN, which produced 163 operator-facing lines in 30 days for
+// two expected, self-healing Plex behaviours, and buried the one state
+// that matters (resolution failing across the board). The contract is a
+// quiet Debug per event plus exactly one WARN per stall.
+
+// captureLogs redirects the default logger at Debug level for the test
+// and returns the buffer holding everything written to it.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+func TestSkipUnattributedPlayEvent_singleSkipDoesNotWarn(t *testing.T) {
+	buf := captureLogs(t)
+	adapter := notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+
+	adapter.skipUnattributedPlayEvent(
+		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-A"},
+		errUnattributedNoClient)
+
+	out := buf.String()
+	if strings.Contains(out, "level=WARN") {
+		t.Errorf("a single unattributed play event logged at WARN: %q\nPlex announces playback up to 31s before the session is queryable and idle web clients re-announce finished items, so one skip is expected and self-healing; WARN here is the defect this change removed", out)
+	}
+	if !strings.Contains(out, "level=DEBUG") {
+		t.Errorf("the skip left no DEBUG record, so a real stall would be undiagnosable: %q", out)
+	}
+	for _, want := range []string{"client=mac-A", "key=100", "state=playing"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("skip record is missing %q, which the RCA needed to tell a start race from a stale client: %q", want, out)
+		}
+	}
+}
+
+func TestSkipUnattributedPlayEvent_warnsOnceAtStallThreshold(t *testing.T) {
+	buf := captureLogs(t)
+	adapter := notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+	ev := notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-A"}
+
+	// Well past the threshold: a stall must cost one line, not one per
+	// notification, or the fix trades 163 WARN lines for more.
+	for range resolveStallThreshold * 3 {
+		adapter.skipUnattributedPlayEvent(ev, errUnattributedNoClient)
+	}
+
+	if got := strings.Count(buf.String(), "level=WARN"); got != 1 {
+		t.Errorf("WARN lines = %d, want exactly 1 for a single sustained stall; a per-notification WARN is the noise this change removed", got)
+	}
+	if !strings.Contains(buf.String(), "user resolution stalled") {
+		t.Errorf("crossing the threshold did not report a stall, so total resolution failure is now silent: %q", buf.String())
+	}
+}
+
+func TestResolveStallCounter_thresholdAndRecovery(t *testing.T) {
+	c := &resolveStallCounter{}
+
+	// One below the threshold must stay quiet.
+	for i := 1; i < resolveStallThreshold; i++ {
+		if stalled, n := c.miss(); stalled {
+			t.Fatalf("miss %d of %d reported a stall; the expected races (longest measured run: 12) must never escalate", n, resolveStallThreshold)
+		}
+	}
+	stalled, n := c.miss()
+	if !stalled || n != resolveStallThreshold {
+		t.Errorf("miss at the threshold = (%v, %d), want (true, %d)", stalled, n, resolveStallThreshold)
+	}
+	if again, _ := c.miss(); again {
+		t.Error("a second stall was reported without an intervening success; the warn must fire once per stall")
+	}
+
+	recovered, after := c.success()
+	if !recovered || after != resolveStallThreshold+1 {
+		t.Errorf("success after a warned stall = (%v, %d), want (true, %d); recovery must be a positive log line, not the absence of one", recovered, after, resolveStallThreshold+1)
+	}
+	// The run is cleared, so the next stall must be able to fire again.
+	for range resolveStallThreshold {
+		stalled, _ = c.miss()
+	}
+	if !stalled {
+		t.Error("the counter did not re-arm after recovery, so a second outage would be silent")
+	}
+}
+
+func TestResolveStallCounter_successWithoutStallIsNotRecovery(t *testing.T) {
+	c := &resolveStallCounter{}
+	c.miss() // a normal race, well below the threshold
+
+	if recovered, _ := c.success(); recovered {
+		t.Error("a success after an ordinary sub-threshold race reported recovery; nothing warned, so nothing recovered")
+	}
+}
+
+func TestResolveStallCounter_nilCountsNothing(t *testing.T) {
+	// The resolver is exercised by tests that build no composition root,
+	// so a nil counter must be inert rather than panic.
+	var c *resolveStallCounter
+	for range resolveStallThreshold + 1 {
+		if stalled, _ := c.miss(); stalled {
+			t.Fatal("a nil counter escalated")
+		}
+	}
+	if recovered, _ := c.success(); recovered {
+		t.Error("a nil counter reported recovery")
+	}
+}
+
+func TestResolvePlayEventUser_unresolvedSessionCountsTowardStall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+	counter := &resolveStallCounter{}
+	adapter := notifyAdapter{
+		cfg:           &config{},
+		client:        plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		resolveStalls: counter,
+	}
+	ev := notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-missing"}
+
+	for range resolveStallThreshold - 1 {
+		adapter.resolvePlayEventUser(t.Context(), ev)
+	}
+	if stalled, n := counter.miss(); !stalled {
+		t.Errorf("session-lookup failures did not accumulate toward the stall signal (run reached %d); both skip causes must count, or a broken resolver stays silent", n)
+	}
+}
+
+func TestResolvePlayEventUser_successClearsTheStallRun(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[` +
+			`{"User":{"id":"9","title":"bob"},"Player":{"machineIdentifier":"mac-B"}}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+	counter := &resolveStallCounter{}
+	adapter := notifyAdapter{
+		cfg:           &config{},
+		client:        plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		resolveStalls: counter,
+	}
+	// A start race: the event is unattributed, then the same client
+	// resolves on a later notification, which is how production recovers.
+	adapter.skipUnattributedPlayEvent(notify.PlayEvent{ClientIdentifier: "mac-B"}, errUnattributedNoClient)
+
+	if _, _, ok := adapter.resolvePlayEventUser(t.Context(),
+		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-B"}); !ok {
+		t.Fatal("resolvePlayEventUser did not attribute a resolvable session")
+	}
+	if stalled, n := counter.miss(); stalled || n != 1 {
+		t.Errorf("run after a success = (%v, %d), want (false, 1); a success must clear the run or transient races accumulate into a false stall", stalled, n)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // isFatalStartupError / startupBackoff (degraded-start classifier + backoff)
 // ---------------------------------------------------------------------------
 
