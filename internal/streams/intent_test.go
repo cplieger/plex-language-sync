@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 	"pgregory.net/rapid"
 )
 
@@ -58,7 +58,7 @@ func TestIntentRoundTripPreservesMatcherFields(t *testing.T) {
 		}
 		observedAt := int64(rapid.IntRange(0, 2_000_000_000).Draw(t, "observed_at"))
 
-		intent := NewIntent(audio, sub, observedAt)
+		intent := NewIntent(Pair{Audio: audio, Subtitle: sub}, observedAt)
 
 		// Persist and reload as profiles.json would.
 		raw, err := json.Marshal(intent)
@@ -70,7 +70,8 @@ func TestIntentRoundTripPreservesMatcherFields(t *testing.T) {
 			t.Fatalf("unmarshal: %v", err)
 		}
 
-		gotAudio, gotSub := loaded.RefStreams()
+		got := loaded.RefStreams()
+		gotAudio, gotSub := got.Audio, got.Subtitle
 		if gotAudio == nil || !matcherFieldsEqual(gotAudio, audio) {
 			t.Fatalf("audio round-trip mismatch:\n got %+v\nwant %+v", gotAudio, audio)
 		}
@@ -94,11 +95,10 @@ func TestIntentRoundTripPreservesMatcherFields(t *testing.T) {
 // subtitle never leaks into the original.
 func TestIntentCloneIsolation(t *testing.T) {
 	t.Parallel()
-	orig := NewIntent(
-		&Stream{LanguageCode: "jpn"},
-		&Stream{LanguageCode: "eng"},
-		42,
-	)
+	orig := NewIntent(Pair{
+		Audio:    &Stream{LanguageCode: "jpn"},
+		Subtitle: &Stream{LanguageCode: "eng"},
+	}, 42)
 	cl := orig.Clone()
 	cl.Subtitle.LanguageCode = "MUTATED"
 	if orig.Subtitle.LanguageCode != "eng" {
@@ -131,17 +131,17 @@ func TestIntentReconstructedRefDrivesMatchers(t *testing.T) {
 		{ID: 31, LanguageCode: "eng", Codec: "ass", Forced: false}, // forced+codec match → wins
 	}
 
-	intent := NewIntent(liveAudio, liveSub, 1)
-	refAudio, refSub := intent.RefStreams()
+	intent := NewIntent(Pair{Audio: liveAudio, Subtitle: liveSub}, 1)
+	ref := intent.RefStreams()
 
 	liveAudioWinner := MatchAudio(liveAudio, audioCandidates)
-	intentAudioWinner := MatchAudio(refAudio, audioCandidates)
+	intentAudioWinner := MatchAudio(ref.Audio, audioCandidates)
 	if liveAudioWinner == nil || intentAudioWinner == nil || liveAudioWinner.ID != intentAudioWinner.ID {
 		t.Errorf("audio winner differs: live=%v intent=%v", liveAudioWinner, intentAudioWinner)
 	}
 
-	liveSubWinner := MatchSubtitle(liveSub, liveAudio, subCandidates, langtag.TierIdentical)
-	intentSubWinner := MatchSubtitle(refSub, refAudio, subCandidates, langtag.TierIdentical)
+	liveSubWinner := MatchSubtitle(liveSub, subCandidates, langtag.TierIdentical)
+	intentSubWinner := MatchSubtitle(ref.Subtitle, subCandidates, langtag.TierIdentical)
 	if liveSubWinner == nil || intentSubWinner == nil || liveSubWinner.ID != intentSubWinner.ID {
 		t.Errorf("subtitle winner differs: live=%v intent=%v", liveSubWinner, intentSubWinner)
 	}

@@ -1,4 +1,4 @@
-package sync
+package tracksync
 
 import (
 	"bytes"
@@ -294,13 +294,17 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T)
 		{ID: "1", Name: "admin"},
 		{ID: "2", Name: "bob"},
 	}}
-	s := NewSyncer(Config{}, plx, fakeapi.NewCache(), users,
-		func(uid string) api.PlexReadWriter {
+	s := New(Config{}, Deps{
+		Plex:  plx,
+		Cache: fakeapi.NewCache(),
+		Users: users,
+		UserClient: func(uid string) api.PlexReadWriter {
 			if uid == "2" {
 				return nil
 			}
 			return plx
-		})
+		},
+	})
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
 	var buf bytes.Buffer
@@ -333,7 +337,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testin
 	}
 	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
 	c := fakeapi.NewCache()
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	s := newSyncer(Config{LanguageProfiles: true}, plx, c, users)
 	ep := &streams.Episode{
 		RatingKey:            "100",
@@ -437,7 +441,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T
 	}
 	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
 	c := fakeapi.NewCache()
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	s := newSyncer(Config{LanguageProfiles: true}, plx, c, users)
 	ep := &streams.Episode{
 		RatingKey:            "100",

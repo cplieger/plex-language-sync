@@ -3,7 +3,7 @@ package streams
 import (
 	"testing"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 )
 
 // sub builds a subtitle stream with the language fields Plex actually supplies.
@@ -26,7 +26,7 @@ func TestMatchSubtitleFixesReportedBug(t *testing.T) {
 	ref := sub(10, "nob", "nb")
 	candidates := []*Stream{sub(1, "eng", "en"), sub(2, "nor", "no")}
 
-	got := MatchSubtitle(ref, nil, candidates, langtag.TierSameLanguage)
+	got := MatchSubtitle(ref, candidates, langtag.TierSameLanguage)
 	if got == nil {
 		t.Fatal("MatchSubtitle(nob ref, [eng nor], same-language) = nil, want the nor track")
 	}
@@ -36,7 +36,7 @@ func TestMatchSubtitleFixesReportedBug(t *testing.T) {
 
 	// The old behavior is still available, and still finds nothing, which is
 	// what makes the default a deliberate choice rather than an accident.
-	if got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical); got != nil {
+	if got := MatchSubtitle(ref, candidates, langtag.TierIdentical); got != nil {
 		t.Errorf("MatchSubtitle at the identical floor = ID %d, want nil", got.ID)
 	}
 }
@@ -48,7 +48,7 @@ func TestMatchSubtitlePrefersExactOverSubstitution(t *testing.T) {
 	ref := sub(10, "nob", "nb")
 	candidates := []*Stream{sub(1, "nor", "no"), sub(2, "nob", "nb"), sub(3, "nno", "nn")}
 
-	got := MatchSubtitle(ref, nil, candidates, langtag.TierIntelligible)
+	got := MatchSubtitle(ref, candidates, langtag.TierIntelligible)
 	if got == nil || got.ID != 2 {
 		t.Fatalf("MatchSubtitle(nob ref, [nor nob nno]) = %v, want ID 2 (the exact nob track)", got)
 	}
@@ -75,7 +75,7 @@ func TestMatchSubtitleDistinguishesRegionalSpanish(t *testing.T) {
 		t.Run(tc.refTag, func(t *testing.T) {
 			t.Parallel()
 			ref := sub(10, "spa", tc.refTag)
-			got := MatchSubtitle(ref, nil, candidates, langtag.TierSameLanguage)
+			got := MatchSubtitle(ref, candidates, langtag.TierSameLanguage)
 			if got == nil {
 				t.Fatalf("MatchSubtitle(%s ref, [es-419 es-ES]) = nil, want ID %d", tc.refTag, tc.wantID)
 			}
@@ -105,7 +105,7 @@ func TestMatchSubtitleForcedFilterRunsBeforeGrading(t *testing.T) {
 	forcedFurther := sub(2, "nor", "no")
 	forcedFurther.Forced = true
 
-	got := MatchSubtitle(ref, nil, []*Stream{nonForcedExact, forcedFurther}, langtag.TierSameLanguage)
+	got := MatchSubtitle(ref, []*Stream{nonForcedExact, forcedFurther}, langtag.TierSameLanguage)
 	if got == nil {
 		t.Fatal("MatchSubtitle(forced nob ref, [non-forced nob, forced nor]) = nil, want the forced nor track")
 	}
@@ -179,10 +179,10 @@ func TestUnrecognizedCodeIsNotAnAbsentCode(t *testing.T) {
 	untagged := sub(1, "", "")
 	sameGarbage := sub(2, "zzz", "")
 
-	if got := MatchSubtitle(ref, nil, []*Stream{untagged}, langtag.TierIntelligible); got != nil {
+	if got := MatchSubtitle(ref, []*Stream{untagged}, langtag.TierIntelligible); got != nil {
 		t.Errorf("MatchSubtitle(zzz ref, [untagged]) = ID %d, want nil", got.ID)
 	}
-	got := MatchSubtitle(ref, nil, []*Stream{untagged, sameGarbage}, langtag.TierIntelligible)
+	got := MatchSubtitle(ref, []*Stream{untagged, sameGarbage}, langtag.TierIntelligible)
 	if got == nil || got.ID != 2 {
 		t.Fatalf("MatchSubtitle(zzz ref, [untagged, zzz]) = %v, want ID 2", got)
 	}
@@ -250,22 +250,22 @@ func TestIntentCarriesTheFinerTag(t *testing.T) {
 	t.Parallel()
 	audio := aud(1, "spa", "es-ES")
 	subtitle := sub(2, "spa", "es-ES")
-	intent := NewIntent(audio, subtitle, 0)
+	intent := NewIntent(Pair{Audio: audio, Subtitle: subtitle}, 0)
 
-	gotAudio, gotSub := intent.RefStreams()
-	if gotAudio.LanguageTag != "es-ES" {
-		t.Errorf("intent audio LanguageTag = %q, want %q", gotAudio.LanguageTag, "es-ES")
+	got := intent.RefStreams()
+	if got.Audio.LanguageTag != "es-ES" {
+		t.Errorf("intent audio LanguageTag = %q, want %q", got.Audio.LanguageTag, "es-ES")
 	}
-	if gotSub.LanguageTag != "es-ES" {
-		t.Errorf("intent subtitle LanguageTag = %q, want %q", gotSub.LanguageTag, "es-ES")
+	if got.Subtitle.LanguageTag != "es-ES" {
+		t.Errorf("intent subtitle LanguageTag = %q, want %q", got.Subtitle.LanguageTag, "es-ES")
 	}
 
 	// Replaying the recorded intent must reach the European track, not the
 	// Latin American one, which is what the event plane would have chosen.
 	candidates := []*Stream{sub(3, "spa", "es-419"), sub(4, "spa", "es-ES")}
-	got := MatchSubtitle(gotSub, gotAudio, candidates, langtag.TierSameLanguage)
-	if got == nil || got.ID != 4 {
-		t.Fatalf("replayed intent matched %v, want ID 4 (es-ES)", got)
+	matched := MatchSubtitle(got.Subtitle, candidates, langtag.TierSameLanguage)
+	if matched == nil || matched.ID != 4 {
+		t.Fatalf("replayed intent matched %v, want ID 4 (es-ES)", matched)
 	}
 }
 
@@ -297,7 +297,7 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 			langtag.TierIdentical, langtag.TierSameLanguage,
 			langtag.TierOtherScript, langtag.TierIntelligible,
 		} {
-			got := MatchSubtitle(ref, nil, []*Stream{exactNonHI, foreignHI}, floor)
+			got := MatchSubtitle(ref, []*Stream{exactNonHI, foreignHI}, floor)
 			if got == nil {
 				t.Errorf("MatchSubtitle(eng+HI ref, [eng non-HI, spa HI], %v) = nil, want the eng track", floor)
 				continue
@@ -333,7 +333,7 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 				ScoreSubtitle(ref, nonHI), ScoreSubtitle(ref, hi))
 		}
 
-		got := MatchSubtitle(ref, nil, []*Stream{nonHI, hi}, langtag.TierIdentical)
+		got := MatchSubtitle(ref, []*Stream{nonHI, hi}, langtag.TierIdentical)
 		if got == nil || got.ID != 2 {
 			t.Fatalf("MatchSubtitle(eng+HI ref, [eng non-HI better-scoring, eng HI]) = %v, want ID 2", got)
 		}
@@ -348,7 +348,7 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 		regionalHI := sub(2, "spa", "es-419")
 		regionalHI.HearingImpaired = true
 
-		got := MatchSubtitle(ref, nil, []*Stream{exactNonHI, regionalHI}, langtag.TierOtherScript)
+		got := MatchSubtitle(ref, []*Stream{exactNonHI, regionalHI}, langtag.TierOtherScript)
 		if got == nil || got.ID != 1 {
 			t.Fatalf("MatchSubtitle(es-ES+HI ref, [es-ES non-HI, es-419 HI]) = %v, want ID 1; the closer language wins and the HI preference applies within it",
 				got)
@@ -374,7 +374,7 @@ func TestUntaggedSubtitleReferenceMatchesNothing(t *testing.T) {
 		langtag.TierIdentical, langtag.TierSameLanguage,
 		langtag.TierOtherScript, langtag.TierIntelligible, langtag.TierSharedLiteracy,
 	} {
-		if got := MatchSubtitle(ref, nil, candidates, floor); got != nil {
+		if got := MatchSubtitle(ref, candidates, floor); got != nil {
 			t.Errorf("MatchSubtitle(untagged ref, [eng, untagged], %v) = ID %d, want nil",
 				floor, got.ID)
 		}
@@ -399,7 +399,7 @@ func TestUnreadableCodeComparesTheCoarseFieldOnly(t *testing.T) {
 	differentCode := sub(2, "yyy", "!!!")
 	untagged := sub(3, "", "")
 
-	got := MatchSubtitle(ref, nil, []*Stream{untagged, differentCode, sameCodeOtherTag}, langtag.TierIdentical)
+	got := MatchSubtitle(ref, []*Stream{untagged, differentCode, sameCodeOtherTag}, langtag.TierIdentical)
 	if got == nil || got.ID != 1 {
 		t.Fatalf("MatchSubtitle(zzz ref, [untagged, yyy, zzz]) = %v, want ID 1; an unreadable code compares on languageCode alone",
 			got)

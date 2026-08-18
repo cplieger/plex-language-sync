@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/plex-language-sync/internal/streams"
 	"pgregory.net/rapid"
 )
 
@@ -12,9 +13,9 @@ func TestCacheLanguageProfilePerUser(t *testing.T) {
 	c := New()
 
 	// User 1 prefers English subs for Japanese audio.
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	// User 2 prefers no subs for Japanese audio.
-	c.LearnLanguageProfile("2", "jpn", "")
+	c.LearnLanguageProfile("2", streams.LanguageChoice{Audio: "jpn", Subtitle: ""})
 
 	lang, ok := c.SubtitleLangForAudio("1", "jpn")
 	if !ok || lang != "eng" {
@@ -35,7 +36,7 @@ func TestCacheLanguageProfilePerUser(t *testing.T) {
 
 func TestCacheLearnLanguageProfileIgnoresEmptyAudio(t *testing.T) {
 	c := New()
-	c.LearnLanguageProfile("1", "", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "", Subtitle: "eng"})
 	if len(c.data.LanguageProfiles) != 0 {
 		t.Error("should not learn profile with empty audio lang")
 	}
@@ -53,8 +54,8 @@ func TestCacheGetSubtitleLangForAudioNilProfiles(t *testing.T) {
 func TestCacheLearnLanguageProfileIdempotent(t *testing.T) {
 	c := New()
 
-	c.LearnLanguageProfile("1", "jpn", "eng")
-	c.LearnLanguageProfile("1", "jpn", "eng") // same value — should not log again
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"}) // same value — should not log again
 
 	lang, ok := c.SubtitleLangForAudio("1", "jpn")
 	if !ok || lang != "eng" {
@@ -65,12 +66,12 @@ func TestCacheLearnLanguageProfileIdempotent(t *testing.T) {
 func TestCacheLearnLanguageProfileUpdate(t *testing.T) {
 	c := New()
 
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	if got, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || got != "eng" {
 		t.Fatalf("SubtitleLangForAudio(1, jpn) = (%q, %v), want (%q, true)", got, ok, "eng")
 	}
 
-	c.LearnLanguageProfile("1", "jpn", "fre")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "fre"})
 	if got, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || got != "fre" {
 		t.Errorf("SubtitleLangForAudio(1, jpn) after update = (%q, %v), want (%q, true)", got, ok, "fre")
 	}
@@ -79,9 +80,9 @@ func TestCacheLearnLanguageProfileUpdate(t *testing.T) {
 func TestCacheLearnLanguageProfileMultipleLanguages(t *testing.T) {
 	c := New()
 
-	c.LearnLanguageProfile("1", "jpn", "eng")
-	c.LearnLanguageProfile("1", "kor", "eng")
-	c.LearnLanguageProfile("1", "eng", "")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "kor", Subtitle: "eng"})
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "eng", Subtitle: ""})
 
 	if lang, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || lang != "eng" {
 		t.Errorf("jpn profile: got %q, %v", lang, ok)
@@ -101,7 +102,7 @@ func TestCacheLearnLanguageProfileNilMaps(t *testing.T) {
 	t.Parallel()
 	var c Cache
 	// Don't initialize LanguageProfiles — test nil map initialization path.
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 
 	lang, ok := c.SubtitleLangForAudio("1", "jpn")
 	if !ok {
@@ -122,7 +123,7 @@ func TestCacheLearnLanguageProfileNoChange(t *testing.T) {
 	// move to its canonical spelling on the first write after an upgrade, which
 	// is what stops a legacy entry shadowing later updates, so this reads through
 	// the accessor rather than reaching for a raw map key.
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 
 	if got, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || got != "eng" {
 		t.Errorf("SubtitleLangForAudio(1, jpn) = (%q, %v), want (%q, true)", got, ok, "eng")
@@ -130,7 +131,7 @@ func TestCacheLearnLanguageProfileNoChange(t *testing.T) {
 
 	// Calling again with the same value is a genuine no-op: the key has already
 	// been canonicalized, so nothing is written and nothing is logged.
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	if got, ok := c.SubtitleLangForAudio("1", "jpn"); !ok || got != "eng" {
 		t.Errorf("SubtitleLangForAudio(1, jpn) after a repeat call = (%q, %v), want (%q, true)", got, ok, "eng")
 	}
@@ -148,7 +149,7 @@ func TestLearnLanguageProfile_LastWriteWinsPBT(t *testing.T) {
 			user := rapid.SampledFrom([]string{"1", "2", "3"}).Draw(t, fmt.Sprintf("u_%d", i))
 			audio := rapid.SampledFrom([]string{"eng", "jpn", "kor", "fra"}).Draw(t, fmt.Sprintf("a_%d", i))
 			sub := rapid.SampledFrom([]string{"", "eng", "jpn", "kor", "fra"}).Draw(t, fmt.Sprintf("s_%d", i))
-			c.LearnLanguageProfile(user, audio, sub)
+			c.LearnLanguageProfile(user, streams.LanguageChoice{Audio: audio, Subtitle: sub})
 			expect[user+"|"+audio] = sub
 		}
 		for k, want := range expect {
@@ -172,7 +173,7 @@ func TestLearnLanguageProfile_EmptyAudioIsNoOpPBT(t *testing.T) {
 
 		user := rapid.SampledFrom([]string{"1", "2"}).Draw(t, "user")
 		sub := rapid.String().Draw(t, "sub")
-		c.LearnLanguageProfile(user, "", sub)
+		c.LearnLanguageProfile(user, streams.LanguageChoice{Audio: "", Subtitle: sub})
 
 		if profiles, ok := c.data.LanguageProfiles[user]; ok {
 			if _, hasEmpty := profiles[""]; hasEmpty {
@@ -189,7 +190,7 @@ func TestLearnLanguageProfile_EmptyAudioIsNoOpPBT(t *testing.T) {
 // all. Both now key on the canonical language.
 func TestCacheLanguageProfileDoesNotFragmentAcrossSpellings(t *testing.T) {
 	c := New()
-	c.LearnLanguageProfile("1", "nob", "nob")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "nob", Subtitle: "nob"})
 
 	for _, spelling := range []string{"nob", "nor", "nb", "no"} {
 		got, ok := c.SubtitleLangForAudio("1", spelling)
@@ -228,7 +229,7 @@ func TestCacheLanguageProfileLegacyKeyStillResolves(t *testing.T) {
 		t.Error("SubtitleLangForAudio(1, ja) against a legacy jpn key resolved; the documented boundary is that it does not until relearned")
 	}
 
-	c.LearnLanguageProfile("1", "jpn", "eng")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	for _, spelling := range []string{"jpn", "ja"} {
 		if got, ok := c.SubtitleLangForAudio("1", spelling); !ok || got != "eng" {
 			t.Errorf("SubtitleLangForAudio(1, %q) after relearning = (%q, %v), want (%q, true)", spelling, got, ok, "eng")
@@ -252,7 +253,7 @@ func TestCacheLanguageProfileLegacyKeyDoesNotShadowUpdates(t *testing.T) {
 	c.mu.Unlock()
 
 	// The user watches something and changes their preference.
-	c.LearnLanguageProfile("1", "jpn", "fre")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "fre"})
 
 	for _, spelling := range []string{"jpn", "ja"} {
 		got, ok := c.SubtitleLangForAudio("1", spelling)
@@ -287,7 +288,7 @@ func TestCacheLanguageProfileEmptyValueIsNotShadowed(t *testing.T) {
 	c.mu.Unlock()
 
 	// The user turns subtitles off for Japanese audio.
-	c.LearnLanguageProfile("1", "jpn", "")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: ""})
 
 	got, ok := c.SubtitleLangForAudio("1", "jpn")
 	if !ok {
@@ -316,7 +317,7 @@ func TestCacheLanguageProfileReadPrefersCanonicalKey(t *testing.T) {
 
 	// The relearn arrives under a different spelling of the same language, so it
 	// is written under the canonical key and cannot delete the legacy one.
-	c.LearnLanguageProfile("1", "nor", "fre")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "nor", Subtitle: "fre"})
 
 	for _, spelling := range []string{"nob", "nor", "nb", "no"} {
 		got, ok := c.SubtitleLangForAudio("1", spelling)
@@ -344,7 +345,7 @@ func TestCacheLanguageProfileSweepsEveryStaleSpelling(t *testing.T) {
 	c.mu.Unlock()
 
 	// Arrives under a fourth spelling of the same language.
-	c.LearnLanguageProfile("1", "nor", "fre")
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "nor", Subtitle: "fre"})
 
 	c.mu.Lock()
 	profiles := c.data.LanguageProfiles["1"]

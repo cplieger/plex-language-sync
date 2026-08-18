@@ -19,9 +19,9 @@
 // Business-logic tests that used to live here moved out:
 //
 //   - Track-sync / language-profile / stream-apply / episode-ref
-//     tests → internal/sync/tracks_test.go.
+//     tests → internal/tracksync/tracks_test.go.
 //   - Scheduler worker-pool / dedup / circuit-breaker tests →
-//     internal/scheduler/scheduler_test.go.
+//     internal/deepscan/deepscan_test.go.
 //   - User-manager tests → internal/users/manager_test.go (since
 //     cycle-1 step 6).
 //   - WebSocket listener tests → internal/notify/*_test.go (since
@@ -60,8 +60,8 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
+	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
@@ -510,14 +510,14 @@ func TestLoadConfigTrimsFileSecrets(t *testing.T) {
 // surface the pre-extraction handleNotification enforced.
 // ---------------------------------------------------------------------------
 
-func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) notifyAdapter {
+func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) *notifyAdapter {
 	t.Helper()
 	parsed, _ := url.Parse("http://example.test")
 	c := cache.New()
-	client := plexclient.NewFromHTTP(parsed, "test-token", nil)
+	client := plexclient.NewFromHTTP(parsed, "test-token", plexclient.Options{})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	return notifyAdapter{
+	return &notifyAdapter{
 		syncer: nil, // unused on the gated-off paths
 		cfg:    &config{triggerOnPlay: triggerOnPlay, triggerOnScan: triggerOnScan},
 		users:  mgr,
@@ -539,7 +539,7 @@ func TestResolvePlayEventUser_noClientIdentifier_failsClosed(t *testing.T) {
 
 // NOTE: deep-dispatch tests for notifyAdapter.handlePlayEvent and
 // handleTimeline (fetching episodes, dedup, ignored libraries, ignored
-// shows, session resolution) live in internal/sync and internal/notify
+// shows, session resolution) live in internal/tracksync and internal/notify
 // now — the per-feature logic moved out of the main package in
 // cycle-1 steps 5 and 7. What remains here is the trigger-gate
 // behaviour, which is a composition-root concern.
@@ -642,14 +642,14 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
 
-	build := func(play, scan bool) notifyAdapter {
+	build := func(play, scan bool) *notifyAdapter {
 		c := cache.New()
 		mgr := users.NewManager(c)
 		mgr.Init(&plex.User{ID: "1", Name: "admin"})
-		return notifyAdapter{
+		return &notifyAdapter{
 			cfg:    &config{triggerOnPlay: play, triggerOnScan: scan},
 			users:  mgr,
-			client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+			client: plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
 			cache:  c,
 		}
 	}
@@ -695,10 +695,10 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 	c := cache.New()
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	adapter := notifyAdapter{
+	adapter := &notifyAdapter{
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
-		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		client: plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
 		cache:  c,
 	}
 
@@ -767,11 +767,11 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	client := plexclient.NewFromHTTP(base, "test-token", srv.Client())
+	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
-	adapter := notifyAdapter{
+	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) api.PlexReadWriter { return nil }})
+	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
@@ -806,11 +806,11 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	client := plexclient.NewFromHTTP(base, "test-token", srv.Client())
+	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
-	adapter := notifyAdapter{
+	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) api.PlexReadWriter { return nil }})
+	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
@@ -842,11 +842,11 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	client := plexclient.NewFromHTTP(base, "test-token", srv.Client())
+	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := syncpkg.NewSyncer(syncpkg.Config{}, client, c, mgr, func(string) api.PlexReadWriter { return nil })
-	adapter := notifyAdapter{
+	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) api.PlexReadWriter { return nil }})
+	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
 		users:  mgr,
@@ -875,9 +875,9 @@ func TestResolvePlayEventUser_sessionResolvesNonAdmin(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
-	adapter := notifyAdapter{
+	adapter := &notifyAdapter{
 		cfg:    &config{},
-		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		client: plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
 	}
 
 	uid, uname, ok := adapter.resolvePlayEventUser(t.Context(),
@@ -895,9 +895,9 @@ func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
-	adapter := notifyAdapter{
+	adapter := &notifyAdapter{
 		cfg:    &config{},
-		client: plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		client: plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
 	}
 
 	uid, uname, ok := adapter.resolvePlayEventUser(t.Context(),
@@ -931,7 +931,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 
 func TestSkipUnattributedPlayEvent_singleSkipDoesNotWarn(t *testing.T) {
 	buf := captureLogs(t)
-	adapter := notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 
 	adapter.skipUnattributedPlayEvent(
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-A"},
@@ -953,7 +953,7 @@ func TestSkipUnattributedPlayEvent_singleSkipDoesNotWarn(t *testing.T) {
 
 func TestSkipUnattributedPlayEvent_warnsOnceAtStallThreshold(t *testing.T) {
 	buf := captureLogs(t)
-	adapter := notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 	ev := notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-A"}
 
 	// Well past the threshold: a stall must cost one line, not one per
@@ -1031,9 +1031,9 @@ func TestResolvePlayEventUser_unresolvedSessionCountsTowardStall(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
 	counter := &resolveStallCounter{}
-	adapter := notifyAdapter{
+	adapter := &notifyAdapter{
 		cfg:           &config{},
-		client:        plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		client:        plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
 		resolveStalls: counter,
 	}
 	ev := notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-missing"}
@@ -1055,9 +1055,9 @@ func TestResolvePlayEventUser_successClearsTheStallRun(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
 	counter := &resolveStallCounter{}
-	adapter := notifyAdapter{
+	adapter := &notifyAdapter{
 		cfg:           &config{},
-		client:        plexclient.NewFromHTTP(base, "test-token", srv.Client()),
+		client:        plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
 		resolveStalls: counter,
 	}
 	// A start race: the event is unattributed, then the same client

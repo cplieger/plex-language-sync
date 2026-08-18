@@ -50,8 +50,8 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 	if ep.GrandparentTitle != "Breaking Bad" {
 		t.Errorf("GrandparentTitle = %q, want %q", ep.GrandparentTitle, "Breaking Bad")
 	}
-	if got := ep.EpisodeNum(); got != 5 {
-		t.Errorf("EpisodeNum() = %d, want 5 (bare-number FlexInt in situ)", got)
+	if got := ep.Num(); got != 5 {
+		t.Errorf("Num() = %d, want 5 (bare-number FlexInt in situ)", got)
 	}
 	if got := ep.SeasonNum(); got != 2 {
 		t.Errorf("SeasonNum() = %d, want 2 (quoted-string FlexInt in situ)", got)
@@ -60,7 +60,8 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 		t.Errorf("FirstPartID() = %d, want 42 (Media[0].Part[0].id)", got)
 	}
 
-	audio, sub := Selected(&ep)
+	sel := Selected(&ep)
+	audio, sub := sel.Audio, sel.Subtitle
 	if audio == nil || audio.ID != 3 {
 		t.Errorf("Selected() audio = %v, want stream ID=3", audio)
 	}

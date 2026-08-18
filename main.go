@@ -6,7 +6,7 @@
 //     syncer, and scheduler, wire them together, start the WebSocket
 //     listener, and orchestrate a bounded shutdown join.
 //   - notifyAdapter: the thin glue between internal/notify's WebSocket
-//     listener and internal/sync. It gates on cfg.triggerOnPlay /
+//     listener and internal/tracksync. It gates on cfg.triggerOnPlay /
 //     cfg.triggerOnScan and forwards relevant events to the syncer.
 //
 // Env-var contract, SCHEDULER_INTERVAL parsing, and _FILE-suffix secret
@@ -28,16 +28,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/health"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/deepscan"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/plex-language-sync/internal/scheduler"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
+	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
@@ -79,7 +79,7 @@ func run() int {
 
 	// NewClient warns (via the shared library) when the URL is plain http
 	// to a non-local host — the X-Plex-Token would transit unencrypted.
-	client, err := plex.NewClient(cfg.plexURL, cfg.plexToken, cfg.caCertPath)
+	client, err := plex.NewClient(plex.Options{ServerURL: cfg.plexURL, Token: cfg.plexToken, CACertPath: cfg.caCertPath})
 	if err != nil {
 		slog.Error("cannot initialize plex client", "error", err)
 		return 1
@@ -185,34 +185,37 @@ func run() int {
 		return uc
 	}
 	ignorePolicy := ignore.NewPolicy(cfg.ignoreLibraries, cfg.ignoreLabels)
-	syncer := syncpkg.NewSyncer(
-		syncpkg.Config{
+	syncer := tracksync.New(
+		tracksync.Config{
 			UpdateLevel:      cfg.updateLevel,
 			UpdateStrategy:   cfg.updateStrategy,
 			Ignore:           ignorePolicy,
 			SubtitleFloor:    cfg.subtitleTier,
 			LanguageProfiles: cfg.languageProfiles,
 		},
-		client,
-		c,
-		um,
-		userClientFn,
+		tracksync.Deps{
+			Plex:       client,
+			Cache:      c,
+			Users:      um,
+			UserClient: userClientFn,
+		},
 	)
-	sched := scheduler.New(
-		scheduler.Config{
+	sched := deepscan.New(
+		deepscan.Config{
 			Interval: cfg.schedulerInterval,
 			Enable:   cfg.schedulerEnabled,
 			Ignore:   ignorePolicy,
 		},
-		client,
-		c,
-		um,
-		userClientFn,
-		syncer,
-		func() error { return c.Save(cacheDir) },
+		deepscan.Deps{
+			Plex:       client,
+			Cache:      c,
+			UserClient: userClientFn,
+			Sync:       syncer,
+			SaveCache:  func() error { return c.Save(cacheDir) },
+		},
 	)
 
-	// runtime-concurrency-p2: join on RefreshLoop + scheduler.Run at
+	// runtime-concurrency-p2: join on RefreshLoop + deepscan.Run at
 	// shutdown so any in-flight work (a tick mid-analysis, a token
 	// refresh mid-HTTP) completes before the deferred cache save
 	// writes its final snapshot.
@@ -234,7 +237,7 @@ func run() int {
 	defer waitForBackgroundLoops(&wg, refreshDone, schedDone)
 
 	// WebSocket listener (blocks until context cancelled).
-	notify.NewListener(client, notify.DefaultConfig()).Listen(ctx, notifyAdapter{
+	notify.NewListener(client, notify.DefaultConfig()).Listen(ctx, &notifyAdapter{
 		syncer:        syncer,
 		cfg:           &cfg,
 		users:         um,
@@ -402,16 +405,22 @@ func isFatalStartupError(err error) bool {
 // ---------------------------------------------------------------------------
 //
 // notifyAdapter is the composition-root glue between the WebSocket
-// listener (internal/notify) and the sync subsystem (internal/sync).
+// listener (internal/notify) and the sync subsystem (internal/tracksync).
 // It gates play events on cfg.triggerOnPlay and timeline events on
 // cfg.triggerOnScan, then forwards relevant events to the sync
-// subsystem. The per-event handlers live here (not in internal/sync)
+// subsystem. The per-event handlers live here (not in internal/tracksync)
 // because the event shape is notify-package-typed and the
 // ignore/dedup rules are a blend of cache state and config — both of
 // which are main-package concerns.
-
+//
+// Methods take a POINTER receiver. Every field is a handle onto shared
+// mutable state (the cache, the users manager, the stall counter), so a value
+// receiver copied the struct on every event for no reason and made the
+// no-copy intent invisible: a future field with a mutex or an inline counter
+// would be silently copied per event. Pointer receivers state that this glue
+// is one live object.
 type notifyAdapter struct {
-	syncer *syncpkg.Syncer
+	syncer *tracksync.Syncer
 	cfg    *config
 	users  *users.Manager
 	client *plex.Client
@@ -423,14 +432,14 @@ type notifyAdapter struct {
 	resolveStalls *resolveStallCounter
 }
 
-func (n notifyAdapter) OnPlay(ctx context.Context, ev notify.PlayEvent) {
+func (n *notifyAdapter) OnPlay(ctx context.Context, ev notify.PlayEvent) {
 	if !n.cfg.triggerOnPlay {
 		return
 	}
 	n.handlePlayEvent(ctx, ev)
 }
 
-func (n notifyAdapter) OnTimeline(ctx context.Context, entries []notify.TimelineEntry) {
+func (n *notifyAdapter) OnTimeline(ctx context.Context, entries []notify.TimelineEntry) {
 	if !n.cfg.triggerOnScan {
 		return
 	}
@@ -438,7 +447,7 @@ func (n notifyAdapter) OnTimeline(ctx context.Context, entries []notify.Timeline
 }
 
 // handlePlayEvent processes a single play session state notification.
-func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent) {
+func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent) {
 	if !notify.IsRelevantPlayEvent(ev) {
 		return
 	}
@@ -466,8 +475,13 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 		return
 	}
 
-	curAudio, curSub := streams.Selected(episode)
-	streamKey := notify.BuildStreamCacheKey(userID, ev.RatingKey, streams.ID(curAudio), streams.ID(curSub))
+	cur := streams.Selected(episode)
+	streamKey := notify.BuildStreamCacheKey(notify.StreamSelectionKey{
+		UserID:     userID,
+		RatingKey:  ev.RatingKey,
+		AudioID:    streams.ID(cur.Audio),
+		SubtitleID: streams.ID(cur.Subtitle),
+	})
 	if !n.cache.CheckAndMark(streamKey) {
 		return
 	}
@@ -495,7 +509,7 @@ func (n notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent)
 // genuine session that was merely not yet queryable is attributed on a
 // later notification. See skipUnattributedPlayEvent for the measured
 // behaviour and for why the per-event line is Debug.
-func (n notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.PlayEvent) (userID, username string, ok bool) {
+func (n *notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.PlayEvent) (userID, username string, ok bool) {
 	if ev.ClientIdentifier == "" {
 		n.skipUnattributedPlayEvent(ev, errUnattributedNoClient)
 		return "", "", false
@@ -540,7 +554,7 @@ var errUnattributedNoClient = errors.New("event carries no client identifier")
 // state that is: resolution failing across the board, which leaves the
 // app silently attributing no playback at all. That is what the run
 // counter reports, once per stall rather than once per notification.
-func (n notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
+func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
 	slog.Debug("play event: skipping, user not attributed",
 		"client", ev.ClientIdentifier, "key", ev.RatingKey,
 		"state", ev.State, "error", cause)
@@ -609,7 +623,7 @@ func (c *resolveStallCounter) success() (recovered bool, after int) {
 	return recovered, after
 }
 
-func (n notifyAdapter) handleTimeline(ctx context.Context, entries []notify.TimelineEntry) {
+func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.TimelineEntry) {
 	for i := range entries {
 		entry := &entries[i]
 		if !notify.IsRelevantTimelineEntry(entry) {

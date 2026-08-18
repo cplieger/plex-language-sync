@@ -1,5 +1,8 @@
-// Package scheduler owns the periodic deep-analysis tick and its
-// sub-workers (recent-history replay + recently-added sweep).
+// Package deepscan owns the periodic deep-analysis tick and its
+// sub-workers (recent-history replay + recently-added sweep). Named for what
+// it does rather than "scheduler": that name belongs to the first-party
+// scheduler library this package consumes, and the collision forced a
+// schedlib alias on the library at every use.
 //
 // Responsibilities:
 //   - Schedule a periodic deep-analysis run on a fixed Go-duration
@@ -31,20 +34,20 @@
 //     through api.Cache and are tagged by the concrete internal/cache
 //     package.
 //
-// Consumer note: scheduler depends on api.PlexReader, api.Cache,
-// api.UserLookup, and a Syncer interface satisfied by *sync.Syncer
+// Consumer note: deepscan depends on api.PlexReader, api.Cache,
+// api.UserLookup, and a Syncer interface satisfied by *tracksync.Syncer
 // (declared locally to keep this package testable without importing
-// internal/sync, which would create a visible dependency direction
+// internal/tracksync, which would create a visible dependency direction
 // only used in one place). In practice main.go wires the concrete
-// *sync.Syncer through.
-package scheduler
+// *tracksync.Syncer through.
+package deepscan
 
 import (
 	"context"
 	"errors"
 	"log/slog"
 	"strconv"
-	stdsync "sync"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -52,7 +55,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	schedlib "github.com/cplieger/scheduler/v3"
+	"github.com/cplieger/scheduler/v4"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -99,17 +102,17 @@ type Config struct {
 // trivial closure in the composition root.
 type CacheSaver func() error
 
-// Syncer is the narrow interface the scheduler needs from the sync
+// Syncer is the narrow interface this package needs from the tracksync
 // package: the reconcile-plane per-user call (re-apply the user's
 // RECORDED intent — history replay never derives a user's choice from
 // a delayed metadata read) plus the multi-user new-episode fan-out.
 // The ignore-library/ignore-label skip checks live on
 // api.IgnoreChecker (injected via Config.Ignore) rather than on the
-// Syncer, so overlapping event/scheduler paths share one decision
+// Syncer, so overlapping event/deep-scan paths share one decision
 // point instead of the three duplicated implementations that existed
 // previously.
-// *sync.Syncer satisfies this. Declared here (rather than imported)
-// to keep scheduler independent of internal/sync for test ergonomics.
+// *tracksync.Syncer satisfies this. Declared here (rather than imported)
+// to keep deepscan independent of internal/tracksync for test ergonomics.
 type Syncer interface {
 	ReconcileWithIntent(ctx context.Context, userClient api.PlexReadWriter, userID string, episode *streams.Episode, viewedAt int64, trigger string)
 	ProcessNewOrUpdatedEpisodeAllUsers(ctx context.Context, episode *streams.Episode, trigger string)
@@ -130,7 +133,6 @@ type Syncer interface {
 type Scheduler struct {
 	plex       api.PlexReader
 	cache      api.Cache
-	users      api.UserLookup
 	sync       Syncer
 	dedup      singleflight.Group
 	userClient api.UserClientFunc
@@ -155,17 +157,37 @@ func (s *Scheduler) workerCount() int {
 	return s.workers
 }
 
-// New constructs a Scheduler with the given collaborators. saveCache
-// may be nil in tests that don't exercise the disk-flush path.
-func New(cfg Config, reader api.PlexReader, c api.Cache, lookup api.UserLookup, userClient api.UserClientFunc, s Syncer, saveCache CacheSaver) *Scheduler {
+// Deps carries New's collaborators. Seven positional parameters, six of them
+// interfaces this package declares, is a transposition waiting to happen: the
+// compatible method sets among them mean a swapped pair type-checks and the
+// pass then reads history through the wrong collaborator. Named fields, wired
+// once at the composition root.
+type Deps struct {
+	// Plex reads history and library metadata for the sweep.
+	Plex api.PlexReader
+	// Cache holds the run marker and the recorded intents the pass re-applies.
+	Cache api.Cache
+	// UserClient returns the per-user write client for a username.
+	UserClient api.UserClientFunc
+	// Sync applies the recorded intent to an episode.
+	Sync Syncer
+	// SaveCache flushes the cache to disk. May be nil in tests that do not
+	// exercise the disk-flush path.
+	SaveCache CacheSaver
+}
+
+// New constructs a Scheduler from cfg and deps. Deps is passed by value: it is
+// a handful of interface handles wired once at startup, so the one-time copy
+// costs nothing measurable, and a pointer would let a caller mutate the wiring
+// after construction.
+func New(cfg Config, deps Deps) *Scheduler {
 	return &Scheduler{
 		cfg:        cfg,
-		plex:       reader,
-		cache:      c,
-		users:      lookup,
-		userClient: userClient,
-		sync:       s,
-		saveCache:  saveCache,
+		plex:       deps.Plex,
+		cache:      deps.Cache,
+		userClient: deps.UserClient,
+		sync:       deps.Sync,
+		saveCache:  deps.SaveCache,
 	}
 }
 
@@ -201,10 +223,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// on a recent restart). Overlapping ticks collapse via the singleflight in
 	// deepAnalysis, RunLoop is sequential, so no wall-clock slot-dedup is needed
 	// and no local wall-clock time is read.
-	schedlib.RunLoop(ctx, func(ctx context.Context) {
+	scheduler.RunLoop(ctx, func(ctx context.Context) {
 		slog.Info("scheduled deep analysis starting")
 		s.deepAnalysis(ctx)
-	}, schedlib.LoopOptions{Interval: s.cfg.Interval})
+	}, scheduler.LoopOptions{Interval: s.cfg.Interval})
 }
 
 // deepAnalysis runs the recent-history replay + recently-added sweep,
@@ -320,14 +342,14 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) b
 		"items", len(history))
 
 	work := make(chan plex.HistoryItem)
-	var wg stdsync.WaitGroup
+	var wg sync.WaitGroup
 	var consecutiveErrors atomic.Int32
 	var totalErrors atomic.Int32
 	// unknownUsers de-spams the per-item "no per-user client" WARN: each
 	// unknown userID is reported once per pass instead of once per history
 	// item, so a single unmanaged user with N recent plays no longer emits
 	// N identical WARN lines. Created per pass and shared across workers.
-	var unknownUsers stdsync.Map
+	var unknownUsers sync.Map
 
 	for range s.workerCount() {
 		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors, &totalErrors, &unknownUsers) })
@@ -354,7 +376,7 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) b
 // item via processHistoryItem. It does no further work once the context
 // is cancelled (returning) or the shared circuit breaker has tripped
 // (continuing to drain so the feeder can finish and close the channel).
-func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors, totalErrors *atomic.Int32, unknownUsers *stdsync.Map) {
+func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors, totalErrors *atomic.Int32, unknownUsers *sync.Map) {
 	for item := range work {
 		if ctx.Err() != nil {
 			return
@@ -408,7 +430,7 @@ func (s *Scheduler) processHistoryItem(
 	ctx context.Context,
 	item plex.HistoryItem,
 	consecutiveErrors, totalErrors *atomic.Int32,
-	unknownUsers *stdsync.Map,
+	unknownUsers *sync.Map,
 ) {
 	userID := strconv.Itoa(int(item.AccountID))
 	userClient := s.userClient(userID)
@@ -455,7 +477,7 @@ func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) b
 	// pushes individual episodes into the work channel so per-episode
 	// processing runs concurrently.
 	work := make(chan streams.Episode)
-	var wg stdsync.WaitGroup
+	var wg sync.WaitGroup
 
 	for range s.workerCount() {
 		wg.Go(func() { s.recentlyAddedWorker(ctx, work) })

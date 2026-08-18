@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi"
+	"github.com/cplieger/plexapi/v2"
 )
 
 func FuzzSharedServersXMLUnmarshal(f *testing.F) {
@@ -37,7 +37,7 @@ func FuzzEpisodeUnmarshal(f *testing.F) {
 		}
 		for i := range env.MediaContainer.Metadata {
 			_ = env.MediaContainer.Metadata[i].SeasonNum()
-			_ = env.MediaContainer.Metadata[i].EpisodeNum()
+			_ = env.MediaContainer.Metadata[i].Num()
 			_ = env.MediaContainer.Metadata[i].ShortName()
 		}
 	})

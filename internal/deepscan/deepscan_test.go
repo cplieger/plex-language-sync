@@ -1,4 +1,4 @@
-package scheduler
+package deepscan
 
 import (
 	"bytes"
@@ -88,10 +88,13 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 
 	sched.processRecentHistory(t.Context(), time.Now().Unix())
@@ -143,10 +146,13 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	sched.workers = 1 // serial run -> deterministic breaker-reset semantics
 
@@ -179,10 +185,13 @@ func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	ep := &streams.Episode{RatingKey: "100"}
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
@@ -211,10 +220,13 @@ func TestProcessRecentlyAddedEpisode_TransientFetchFailureRetries(t *testing.T) 
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	ep := &streams.Episode{RatingKey: "100"}
 
@@ -243,10 +255,13 @@ func TestProcessRecentlyAddedEpisode_SkipsIgnoredShow(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: &fakeIgnore{skipEpisode: true}},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
@@ -266,10 +281,13 @@ func TestProcessRecentlyAddedEpisode_HappyPathDelegates(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: &fakeIgnore{skipEpisode: false}},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
@@ -303,10 +321,13 @@ func TestProcessRecentlyAdded_FansOutAcrossSections(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 	if syncer.processCalls.Load() != 3 {
@@ -333,10 +354,13 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: ignore.NewPolicy([]string{"Kids"}, nil)},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	sched.processRecentlyAdded(t.Context(), time.Now().Unix())
 	if syncer.processCalls.Load() != 1 {
@@ -362,10 +386,13 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 	var saveCalls atomic.Int64
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		func() error { saveCalls.Add(1); return nil },
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  func() error { saveCalls.Add(1); return nil },
+		},
 	)
 
 	sched.deepAnalysisCore(t.Context())
@@ -380,10 +407,13 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 	// A nil saveCache must not panic.
 	schedNilSave := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 	schedNilSave.deepAnalysisCore(t.Context())
 }
@@ -399,10 +429,13 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 	plx := &fakeapi.Plex{}
 	sched := New(
 		Config{Enable: false},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 	sched.Run(t.Context())
 	if plx.Calls.Load() != 0 {
@@ -426,10 +459,13 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	c := fakeapi.NewCache() // zero last-run -> initial pass should fire
 	sched := New(
 		Config{Enable: true, Interval: 24 * time.Hour},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // loop returns on ctx.Done() right after the initial pass
@@ -470,10 +506,13 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 		c.SetLastSchedulerRun(time.Now()) // ran within the last interval
 		sched := New(
 			Config{Enable: true, Interval: 24 * time.Hour},
-			plx, c, &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx },
-			&fakeSyncer{},
-			nil,
+			Deps{
+				Plex:       plx,
+				Cache:      c,
+				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				Sync:       &fakeSyncer{},
+				SaveCache:  nil,
+			},
 		)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // pre-cancelled on purpose; Background, not t.Context()
@@ -489,10 +528,13 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 		c.SetLastSchedulerRun(time.Now().Add(-72 * time.Hour)) // older than the 24h interval
 		sched := New(
 			Config{Enable: true, Interval: 24 * time.Hour},
-			plx, c, &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx },
-			&fakeSyncer{},
-			nil,
+			Deps{
+				Plex:       plx,
+				Cache:      c,
+				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				Sync:       &fakeSyncer{},
+				SaveCache:  nil,
+			},
 		)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // pre-cancelled on purpose; Background, not t.Context()
@@ -560,10 +602,13 @@ func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx.Plex },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	out := captureSlog(t, func() {
 		sched.processRecentHistory(t.Context(), time.Now().Unix())
@@ -583,10 +628,13 @@ func TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx.Plex },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	out := captureSlog(t, func() {
 		sched.processRecentlyAdded(t.Context(), time.Now().Unix())
@@ -607,10 +655,13 @@ func TestProcessRecentHistory_BreakerAbortLogsInviolateWarn(t *testing.T) {
 	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch failed")}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 
 	out := captureSlog(t, func() {
@@ -636,10 +687,13 @@ func TestProcessRecentlyAddedEpisode_GenericFetchErrorSkipsSync(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	ep := &streams.Episode{RatingKey: "100"}
 	out := captureSlog(t, func() {
@@ -665,10 +719,13 @@ func TestProcessRecentlyAddedEpisode_NotFoundSkipsSyncSilently(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	ep := &streams.Episode{RatingKey: "404"}
 	out := captureSlog(t, func() {
@@ -730,10 +787,13 @@ func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
 	}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx.Plex },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 
 	out := captureSlog(t, func() {
@@ -816,10 +876,13 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx.Plex },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	out := captureSlog(t, func() {
 		sched.processRecentlyAdded(t.Context(), time.Now().Unix())
@@ -849,10 +912,13 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return nil },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return nil },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 	out := captureSlog(t, func() {
 		sched.processRecentHistory(t.Context(), time.Now().Unix())
@@ -878,10 +944,13 @@ func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 	c := fakeapi.NewCache()
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		func() error { return errors.New("disk full") },
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  func() error { return errors.New("disk full") },
+		},
 	)
 	out := captureSlog(t, func() {
 		sched.deepAnalysisCore(t.Context())
@@ -909,8 +978,13 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			EpisodeByKey: map[string]*streams.Episode{"1": {RatingKey: "1"}, "2": {RatingKey: "2"}},
 		}
 		syncer := &fakeSyncer{}
-		sched := New(Config{Enable: true}, plx, fakeapi.NewCache(), &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx }, syncer, nil)
+		sched := New(Config{Enable: true}, Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		})
 		sched.processRecentHistory(ctx, time.Now().Unix())
 		if syncer.changeCalls.Load() != 0 {
 			t.Errorf("ChangeTracks called %d times under a cancelled context; want 0", syncer.changeCalls.Load())
@@ -924,8 +998,13 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			EpisodeByKey:       map[string]*streams.Episode{"101": {RatingKey: "101"}},
 		}
 		syncer := &fakeSyncer{}
-		sched := New(Config{Enable: true}, plx, fakeapi.NewCache(), &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx }, syncer, nil)
+		sched := New(Config{Enable: true}, Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		})
 		sched.processRecentlyAdded(ctx, time.Now().Unix())
 		if syncer.processCalls.Load() != 0 {
 			t.Errorf("ProcessNewOrUpdated called %d times under a cancelled context; want 0", syncer.processCalls.Load())
@@ -958,10 +1037,13 @@ func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: ignore.NewPolicy([]string{"Kids"}, nil)},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		syncer,
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       syncer,
+			SaveCache:  nil,
+		},
 	)
 
 	sched.processRecentHistory(t.Context(), time.Now().Unix())
@@ -986,10 +1068,13 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: context.Canceled}
 		sched := New(
 			Config{Enable: true},
-			plx, fakeapi.NewCache(), &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx.Plex },
-			&fakeSyncer{},
-			nil,
+			Deps{
+				Plex:       plx,
+				Cache:      fakeapi.NewCache(),
+				UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+				Sync:       &fakeSyncer{},
+				SaveCache:  nil,
+			},
 		)
 		out := captureSlog(t, func() {
 			sched.processRecentHistory(t.Context(), time.Now().Unix())
@@ -1005,10 +1090,13 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, sectionsErr: context.Canceled}
 		sched := New(
 			Config{Enable: true},
-			plx, fakeapi.NewCache(), &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx.Plex },
-			&fakeSyncer{},
-			nil,
+			Deps{
+				Plex:       plx,
+				Cache:      fakeapi.NewCache(),
+				UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+				Sync:       &fakeSyncer{},
+				SaveCache:  nil,
+			},
 		)
 		out := captureSlog(t, func() {
 			sched.processRecentlyAdded(t.Context(), time.Now().Unix())
@@ -1041,10 +1129,13 @@ func TestProcessRecentHistory_PartialItemFailureWarnsWithCounts(t *testing.T) {
 	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
 	sched := New(
 		Config{Enable: true},
-		plx, fakeapi.NewCache(), &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 	sched.workers = 1 // serial -> deterministic failed_items; 3 failures < breaker threshold (5)
 	out := captureSlog(t, func() {
@@ -1098,10 +1189,13 @@ func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 	c.SetLastSchedulerRun(time.Now().Add(-72 * time.Hour)) // previous run 72h ago
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx.Plex },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 
 	sched.deepAnalysisCore(t.Context())
@@ -1150,10 +1244,13 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 		var saveCalls atomic.Int64
 		sched := New(
 			Config{Enable: true},
-			plx, c, &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx },
-			&fakeSyncer{},
-			func() error { saveCalls.Add(1); return nil },
+			Deps{
+				Plex:       plx,
+				Cache:      c,
+				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				Sync:       &fakeSyncer{},
+				SaveCache:  func() error { saveCalls.Add(1); return nil },
+			},
 		)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // graceful-shutdown: the pass sees a cancelled context
@@ -1179,10 +1276,13 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 		c.SetLastSchedulerRun(prev)
 		sched := New(
 			Config{Enable: true},
-			plx, c, &fakeapi.Users{},
-			func(_ string) api.PlexReadWriter { return plx },
-			&fakeSyncer{},
-			nil,
+			Deps{
+				Plex:       plx,
+				Cache:      c,
+				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				Sync:       &fakeSyncer{},
+				SaveCache:  nil,
+			},
 		)
 		before := time.Now()
 
@@ -1214,7 +1314,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 	// prev is the previous COMPLETED run's marker; every subtest asserts it is
 	// left untouched by an incomplete pass.
 	newSched := func(plx api.PlexReadWriter, reader func(string) api.PlexReadWriter, c api.Cache) *Scheduler {
-		return New(Config{Enable: true}, plx, c, &fakeapi.Users{}, reader, &fakeSyncer{}, nil)
+		return New(Config{Enable: true}, Deps{Plex: plx, Cache: c, UserClient: reader, Sync: &fakeSyncer{}})
 	}
 
 	t.Run("history circuit-breaker abort", func(t *testing.T) {
@@ -1287,10 +1387,13 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 	c.SetLastSchedulerRun(time.Now().Add(-60 * 24 * time.Hour)) // 60 days ago, well past the 30d cap
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx.Plex },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 
 	sched.deepAnalysisCore(t.Context())
@@ -1338,10 +1441,13 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 	c.SetLastSchedulerRun(prev)
 	sched := New(
 		Config{Enable: true},
-		plx, c, &fakeapi.Users{},
-		func(_ string) api.PlexReadWriter { return plx },
-		&fakeSyncer{},
-		nil,
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
 	)
 	sched.workers = 1 // serial -> 3 failures deterministic, below the breaker threshold
 

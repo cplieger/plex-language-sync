@@ -1,4 +1,4 @@
-package sync
+package tracksync
 
 import (
 	"testing"
@@ -114,8 +114,7 @@ func TestObserveAndPropagate_CommentaryAudioStillRecordsIntent(t *testing.T) {
 // seedIntent records a jpn-audio/no-subtitle intent for (user 1, show 42)
 // observed at the given timestamp.
 func seedIntent(c *fakeapi.Cache, observedAt int64) {
-	c.RecordIntent("1", "42", streams.NewIntent(
-		&streams.Stream{LanguageCode: "jpn"}, nil, observedAt))
+	c.RecordIntent("1", "42", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "jpn"}, Subtitle: nil}, observedAt))
 }
 
 // replayedEpisode builds the episode a history replay fetched: note its

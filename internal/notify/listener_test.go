@@ -253,7 +253,7 @@ func TestBuildStreamCacheKeyFormat(t *testing.T) {
 		audioID := rapid.IntRange(0, 100000).Draw(t, "audioID")
 		subID := rapid.IntRange(0, 100000).Draw(t, "subID")
 
-		got := BuildStreamCacheKey(userID, ratingKey, audioID, subID)
+		got := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioID, SubtitleID: subID})
 
 		if !strings.HasPrefix(got, "streams:") {
 			t.Errorf("BuildStreamCacheKey(...) = %q, want 'streams:' prefix", got)
@@ -609,7 +609,7 @@ func TestConnectAndListen_PinnedCAHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := plex.NewClient(srv.URL, "test-token", caPath)
+	client, err := plex.NewClient(plex.Options{ServerURL: srv.URL, Token: "test-token", CACertPath: caPath})
 	if err != nil {
 		t.Fatalf("NewClient with pinned CA: %v", err)
 	}

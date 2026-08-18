@@ -3,6 +3,8 @@ package fakeapi
 import (
 	"testing"
 	"time"
+
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 func TestCacheRoundTrip(t *testing.T) {
@@ -19,7 +21,7 @@ func TestCacheRoundTrip(t *testing.T) {
 	}
 
 	// Language profile round-trip.
-	c.LearnLanguageProfile("user1", "eng", "fra")
+	c.LearnLanguageProfile("user1", streams.LanguageChoice{Audio: "eng", Subtitle: "fra"})
 	if got, ok := c.SubtitleLangForAudio("user1", "eng"); !ok || got != "fra" {
 		t.Errorf("SubtitleLangForAudio = (%q, %v), want (fra, true)", got, ok)
 	}
@@ -28,7 +30,7 @@ func TestCacheRoundTrip(t *testing.T) {
 	}
 
 	// Empty audioLang is ignored (matches internal/cache).
-	c.LearnLanguageProfile("user1", "", "fra")
+	c.LearnLanguageProfile("user1", streams.LanguageChoice{Audio: "", Subtitle: "fra"})
 	if _, ok := c.SubtitleLangForAudio("user1", ""); ok {
 		t.Error("empty audio lang should not be stored")
 	}

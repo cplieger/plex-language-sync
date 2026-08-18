@@ -17,7 +17,7 @@ type Cache interface {
 	WasRecentlyProcessed(key string) bool
 	MarkProcessed(key string)
 	CheckAndMark(key string) bool
-	LearnLanguageProfile(userID, audioLang, subtitleLang string)
+	LearnLanguageProfile(userID string, choice streams.LanguageChoice)
 	SubtitleLangForAudio(userID, audioLang string) (string, bool)
 	// RecordIntent stores a user's observed track selection for a show
 	// (event-plane only: callers record what they witnessed at a resolved

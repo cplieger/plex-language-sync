@@ -3,7 +3,8 @@ package cache
 import (
 	"log/slog"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
 // profileKey canonicalizes a language code for use as a profile-map key, so
@@ -22,10 +23,11 @@ func profileKey(lang string) string {
 }
 
 // LearnLanguageProfile records a user's audio→subtitle language preference.
-// Empty audioLang is treated as "unknown" and ignored — this prevents the
-// profile map from accumulating an empty-key entry for streams whose
+// An empty choice.Audio is treated as "unknown" and ignored — this prevents
+// the profile map from accumulating an empty-key entry for streams whose
 // language is not reported by Plex.
-func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
+func (c *Cache) LearnLanguageProfile(userID string, choice streams.LanguageChoice) {
+	audioLang, subtitleLang := choice.Audio, choice.Subtitle
 	if audioLang == "" {
 		return
 	}

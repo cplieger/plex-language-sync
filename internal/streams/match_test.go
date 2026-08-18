@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 	"pgregory.net/rapid"
 )
 
@@ -121,23 +121,20 @@ func TestMatchSubtitleStream(t *testing.T) {
 	tests := []struct {
 		name       string
 		ref        *Stream
-		refAudio   *Stream
 		candidates []*Stream
 		wantID     int
 	}{
 		{
-			name:     "nil ref and nil audio returns nil",
-			ref:      nil,
-			refAudio: nil,
+			name: "nil ref returns nil",
+			ref:  nil,
 			candidates: []*Stream{
 				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 			},
 			wantID: 0,
 		},
 		{
-			name:     "nil ref never matches anything (no subtitle means no subtitle)",
-			ref:      nil,
-			refAudio: &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "jpn"},
+			name: "nil ref never matches anything, forced candidates included (no subtitle means no subtitle)",
+			ref:  nil,
 			candidates: []*Stream{
 				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: false},
 				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true},
@@ -146,9 +143,8 @@ func TestMatchSubtitleStream(t *testing.T) {
 			wantID: 0,
 		},
 		{
-			name:     "exact language match",
-			ref:      &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
-			refAudio: &Stream{ID: 20, StreamType: StreamTypeAudio, LanguageCode: "jpn"},
+			name: "exact language match",
+			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 			candidates: []*Stream{
 				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"},
 				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
@@ -161,7 +157,6 @@ func TestMatchSubtitleStream(t *testing.T) {
 				ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng",
 				HearingImpaired: true,
 			},
-			refAudio: nil,
 			candidates: []*Stream{
 				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false},
 				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
@@ -169,9 +164,8 @@ func TestMatchSubtitleStream(t *testing.T) {
 			wantID: 2,
 		},
 		{
-			name:     "no match returns nil",
-			ref:      &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "kor"},
-			refAudio: nil,
+			name: "no match returns nil",
+			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "kor"},
 			candidates: []*Stream{
 				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 			},
@@ -181,7 +175,7 @@ func TestMatchSubtitleStream(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchSubtitle(tt.ref, tt.refAudio, tt.candidates, langtag.TierIdentical)
+			got := MatchSubtitle(tt.ref, tt.candidates, langtag.TierIdentical)
 			gotID := 0
 			if got != nil {
 				gotID = got.ID
@@ -194,51 +188,42 @@ func TestMatchSubtitleStream(t *testing.T) {
 }
 
 func TestSubtitleMatchCriteria(t *testing.T) {
-	t.Run("nil ref nil audio", func(t *testing.T) {
-		got, ok := SubtitleCriteria(nil, nil)
+	// The old two-case split ("nil ref nil audio" / "nil ref with audio")
+	// parameterized on a reference-audio argument SubtitleCriteria no longer
+	// takes. "A nil ref must not search for forced subs in the audio language"
+	// is now structural — the function cannot see an audio stream — so one nil
+	// case covers the policy.
+	t.Run("nil ref yields no criteria (no subtitle means no subtitle)", func(t *testing.T) {
+		got, ok := SubtitleCriteria(nil)
 		if ok {
-			t.Errorf("SubtitleCriteria(nil, nil) = (%+v, true), want ok=false", got)
+			t.Errorf("SubtitleCriteria(nil) = (%+v, true), want ok=false", got)
 		}
 	})
 
-	t.Run("nil ref with audio returns nothing (no subtitle means no subtitle)", func(t *testing.T) {
-		audio := &Stream{LanguageCode: "jpn"}
-		got, ok := SubtitleCriteria(nil, audio)
-		if ok {
-			t.Errorf("SubtitleCriteria(nil, audio) = (%+v, true), want ok=false; a nil ref must not search for forced subs in the audio language", got)
-		}
-	})
-
-	t.Run("ref overrides audio", func(t *testing.T) {
+	t.Run("criteria come from the reference subtitle's language and flags", func(t *testing.T) {
 		ref := &Stream{LanguageCode: "eng", Forced: false, HearingImpaired: true}
-		audio := &Stream{LanguageCode: "jpn"}
-		got, ok := SubtitleCriteria(ref, audio)
+		got, ok := SubtitleCriteria(ref)
 		if !ok {
-			t.Fatal("SubtitleCriteria(ref, audio) ok = false, want true")
+			t.Fatal("SubtitleCriteria(ref) ok = false, want true")
 		}
 		if got.Lang.Language() != "en" || got.ForcedOnly || !got.HearingImpairedOnly {
-			t.Errorf("SubtitleCriteria(ref, audio) = {lang %q forced %v hi %v}, want {en false true}",
+			t.Errorf("SubtitleCriteria(ref) = {lang %q forced %v hi %v}, want {en false true}",
 				got.Lang.Language(), got.ForcedOnly, got.HearingImpairedOnly)
 		}
 	})
 }
 
 func TestMatchSubtitleStreamNilRefReturnsNil(t *testing.T) {
-	refAudio := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "jpn"}
 	candidates := []*Stream{
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "srt"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "ass"},
 		{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 	}
-	got := MatchSubtitle(nil, refAudio, candidates, langtag.TierIdentical)
+	// Forced same-language candidates are present precisely so a nil ref that
+	// leaked the audio language into the criteria would select one; it must not.
+	got := MatchSubtitle(nil, candidates, langtag.TierIdentical)
 	if got != nil {
 		t.Errorf("nil ref must always return nil (no subtitle means no subtitle), got ID=%d", got.ID)
-	}
-
-	// Also true when refAudio is nil.
-	got = MatchSubtitle(nil, nil, candidates, langtag.TierIdentical)
-	if got != nil {
-		t.Errorf("nil ref + nil refAudio must return nil, got ID=%d", got.ID)
 	}
 }
 
@@ -248,7 +233,7 @@ func TestMatchSubtitleStreamNoLanguageMatch(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"},
 	}
-	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
+	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got != nil {
 		t.Errorf("expected nil for no language match, got ID=%d", got.ID)
 	}
@@ -264,7 +249,7 @@ func TestMatchSubtitleStreamHIOnly(t *testing.T) {
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
 		{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true, Codec: "srt"},
 	}
-	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
+	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil {
 		t.Fatal("expected a match")
 	}
@@ -395,25 +380,12 @@ func TestMatchAudioStreamVisualImpairedPreference(t *testing.T) {
 	})
 }
 
-// --- Tests: MatchSubtitle with multiple forced subs ---
-
-// TestMatchSubtitleStreamMultipleForced documents the "no subtitle means no
-// subtitle" policy: a nil subtitle ref combined with an audio ref must NOT
-// search for forced subs in the audio language. The user's explicit "no
-// subtitle" choice takes precedence.
-
-func TestMatchSubtitleStreamMultipleForced(t *testing.T) {
-	ref := (*Stream)(nil)
-	refAudio := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "jpn"}
-	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "srt"},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "ass"},
-	}
-	got := MatchSubtitle(ref, refAudio, candidates, langtag.TierIdentical)
-	if got != nil {
-		t.Errorf("nil ref: no subtitle means no subtitle, got ID=%d", got.ID)
-	}
-}
+// TestMatchSubtitleStreamMultipleForced was deleted with MatchSubtitle's
+// reference-audio parameter: it asserted that a nil subtitle ref combined with
+// an audio ref does not search for forced subs in the audio language, which was
+// only expressible while the function took an audio ref. The policy is now
+// structural, and TestMatchSubtitleStreamNilRefReturnsNil plus the table's
+// forced-candidate case still pin the nil-ref behaviour.
 
 func TestMatchAudioStreamNeverPanics(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -461,14 +433,7 @@ func TestMatchSubtitleStreamNeverPanics(t *testing.T) {
 				HearingImpaired: rapid.Bool().Draw(t, "ref_hi"),
 			}
 		}
-		var refAudio *Stream
-		if rapid.Bool().Draw(t, "has_ref_audio") {
-			refAudio = &Stream{
-				StreamType:   2,
-				LanguageCode: rapid.SampledFrom([]string{"eng", "jpn", "kor", ""}).Draw(t, "ref_audio_lang"),
-			}
-		}
-		MatchSubtitle(ref, refAudio, candidates, langtag.TierIdentical)
+		MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	})
 }
 
@@ -499,7 +464,7 @@ func TestMatchSubtitleStreamPrefersSameCodecAndFlags(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "ass", Title: "English"},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "srt", Title: "English"},
 	}
-	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
+	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil || got.ID != 2 {
 		t.Errorf("MatchSubtitle should prefer matching codec, got ID=%v", got)
 	}
@@ -543,7 +508,7 @@ func TestMatchSubtitleStream_LanguageInvariantPBT(t *testing.T) {
 				HearingImpaired: rapid.Bool().Draw(t, fmt.Sprintf("hi_%d", i)),
 			}
 		}
-		var ref, refAudio *Stream
+		var ref *Stream
 		if rapid.Bool().Draw(t, "has_ref") {
 			ref = &Stream{
 				StreamType:      3,
@@ -551,24 +516,23 @@ func TestMatchSubtitleStream_LanguageInvariantPBT(t *testing.T) {
 				Forced:          rapid.Bool().Draw(t, "ref_f"),
 				HearingImpaired: rapid.Bool().Draw(t, "ref_hi"),
 			}
-		} else {
-			refAudio = &Stream{
-				StreamType:   2,
-				LanguageCode: rapid.SampledFrom([]string{"eng", "jpn", "kor", "fra"}).Draw(t, "ref_audio_lang"),
-			}
 		}
-		got := MatchSubtitle(ref, refAudio, candidates, langtag.TierIdentical)
+		got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
+		if ref == nil {
+			// "No subtitle means no subtitle", whatever the candidates offer.
+			// Asserted rather than skipped: the oracle's old second arm derived
+			// wantLang from a reference AUDIO stream, which MatchSubtitle no
+			// longer takes and never consulted, so that arm was unreachable.
+			if got != nil {
+				t.Errorf("MatchSubtitle(nil ref) = ID %d, want nil", got.ID)
+			}
+			return
+		}
 		if got == nil {
 			return
 		}
-		wantLang := ""
-		if ref != nil {
-			wantLang = ref.LanguageCode
-		} else if refAudio != nil {
-			wantLang = refAudio.LanguageCode
-		}
-		if got.LanguageCode != wantLang {
-			t.Errorf("MatchSubtitle returned lang=%q, want %q", got.LanguageCode, wantLang)
+		if got.LanguageCode != ref.LanguageCode {
+			t.Errorf("MatchSubtitle returned lang=%q, want %q", got.LanguageCode, ref.LanguageCode)
 		}
 	})
 }
@@ -645,7 +609,7 @@ func TestMatchSubtitle_ForcedOnly(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchSubtitle(tt.ref, nil, tt.candidates, langtag.TierIdentical)
+			got := MatchSubtitle(tt.ref, tt.candidates, langtag.TierIdentical)
 			gotID := 0
 			if got != nil {
 				gotID = got.ID
@@ -671,7 +635,7 @@ func TestMatchSubtitleStream_ForcedAndHIRefExcludesNonForced(t *testing.T) {
 		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: false},
 		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: true},
 	}
-	got := MatchSubtitle(ref, nil, candidates, langtag.TierIdentical)
+	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil || got.ID != 1 {
 		t.Fatalf("forced+HI ref must apply the forced exact-filter and exclude the non-forced HI candidate ID=2, falling back to forced ID=1; got %v", got)
 	}

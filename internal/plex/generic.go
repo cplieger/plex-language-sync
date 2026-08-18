@@ -5,7 +5,8 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/cplieger/plexapi"
+	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // fetchMetadata decodes GET <path> through the library's exported
@@ -19,18 +20,22 @@ func fetchMetadata[T any](ctx context.Context, c *Client, path plexapi.Path) ([]
 	return items, warnIfOverCap(err, string(path))
 }
 
-// fetchMetadataList is fetchMetadata under the library's large-listing
-// read cap, for the ListPath builders (full section listings,
-// recently-added windows).
-func fetchMetadataList[T any](ctx context.Context, c *Client, path plexapi.ListPath) ([]T, error) {
-	items, err := plexapi.FetchMetadataList[T](ctx, c.Client, path)
+// fetchEpisodeList is fetchMetadata under the library's large-listing read
+// cap, for the ListPath builders (full section listings, recently-added
+// windows). Concrete rather than generic: it has exactly one instantiation
+// (streams.Episode), and a type parameter with one argument is a parameter
+// that documents flexibility nothing uses. The library's FetchMetadataList
+// stays generic — genuinely so, across the fleet.
+func fetchEpisodeList(ctx context.Context, c *Client, path plexapi.ListPath) ([]streams.Episode, error) {
+	items, err := plexapi.FetchMetadataList[streams.Episode](ctx, c.Client, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
-// fetchDirectory is fetchMetadata for responses whose container field is
-// named "Directory" (library sections).
-func fetchDirectory[T any](ctx context.Context, c *Client, path plexapi.Path) ([]T, error) {
-	items, err := plexapi.FetchDirectory[T](ctx, c.Client, path)
+// fetchSections is fetchMetadata for responses whose container field is
+// named "Directory" (library sections). Concrete for the same reason as
+// fetchEpisodeList: one instantiation, Section.
+func fetchSections(ctx context.Context, c *Client, path plexapi.Path) ([]Section, error) {
+	items, err := plexapi.FetchDirectory[Section](ctx, c.Client, path)
 	return items, warnIfOverCap(err, string(path))
 }
 

@@ -19,7 +19,8 @@ func TestSelectedStreams(t *testing.T) {
 		}},
 	}
 
-	audio, sub := Selected(ep)
+	sel := Selected(ep)
+	audio, sub := sel.Audio, sel.Subtitle
 	if audio == nil || audio.ID != 3 {
 		t.Errorf("expected audio stream ID=3, got %v", audio)
 	}
@@ -30,7 +31,8 @@ func TestSelectedStreams(t *testing.T) {
 
 func TestSelectedStreamsEmpty(t *testing.T) {
 	ep := &Episode{}
-	audio, sub := Selected(ep)
+	sel := Selected(ep)
+	audio, sub := sel.Audio, sel.Subtitle
 	if audio != nil || sub != nil {
 		t.Error("expected nil streams for empty episode")
 	}
@@ -130,7 +132,8 @@ func TestSelectedStreamsNoSelection(t *testing.T) {
 			}},
 		}},
 	}
-	audio, sub := Selected(ep)
+	sel := Selected(ep)
+	audio, sub := sel.Audio, sel.Subtitle
 	if audio != nil {
 		t.Error("expected nil audio when nothing selected")
 	}
@@ -151,7 +154,7 @@ func TestSelectedStreamsMultipleMedia(t *testing.T) {
 			}}}},
 		},
 	}
-	audio, _ := Selected(ep)
+	audio := Selected(ep).Audio
 	if audio == nil || audio.ID != 1 {
 		t.Errorf("Selected should use first media, got audio ID=%v", audio)
 	}

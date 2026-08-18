@@ -4,12 +4,12 @@ import (
 	"context"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // ShowSections returns the TV-show library sections.
 func (c *Client) ShowSections(ctx context.Context) ([]Section, error) {
-	sections, err := fetchDirectory[Section](ctx, c, plexapi.SectionsPath())
+	sections, err := fetchSections(ctx, c, plexapi.SectionsPath())
 	if err != nil {
 		return nil, err
 	}
@@ -93,5 +93,5 @@ func (c *Client) RecentlyAdded(ctx context.Context, sectionKey RatingKey, sinceU
 	if err != nil {
 		return nil, err
 	}
-	return fetchMetadataList[streams.Episode](ctx, c, path)
+	return fetchEpisodeList(ctx, c, path)
 }

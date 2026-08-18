@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"pgregory.net/rapid"
@@ -428,6 +428,21 @@ func TestCacheLoadMigrationSaveFailureKeepsLegacy(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
+	// The unwritable directory IS the mechanism under test, so probe that
+	// property directly rather than inferring it from the uid. Anything holding
+	// CAP_DAC_OVERRIDE writes straight through a 0o500 directory, and then the
+	// migration save SUCCEEDS and every assertion below inverts. os.Geteuid()==0
+	// is only a proxy for that, wrong in both directions (a non-root process can
+	// hold the capability; a root process on a read-only mount cannot write
+	// anyway). CI runs unprivileged, so the probe passes there and the property
+	// is gated; it skips in the root container this repo is developed in.
+	probe := filepath.Join(dir, ".writability-probe")
+	if f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("this process writes through a 0o500 directory, so the migration-save failure this pins cannot be provoked")
+	}
+
 	c := New()
 	out := captureSlog(t, func() {
 		if err := c.Load(dir); err != nil {
@@ -503,7 +518,7 @@ func TestCache_ConcurrentLearnAndRead(t *testing.T) {
 		userID := strconv.Itoa(i % 5)
 		go func() {
 			defer wg.Done()
-			c.LearnLanguageProfile(userID, "jpn", "eng")
+			c.LearnLanguageProfile(userID, streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 		}()
 		go func() {
 			defer wg.Done()
@@ -543,7 +558,7 @@ func TestCache_ConcurrentLearnAndSetUserTokens(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			c.LearnLanguageProfile("2", "jpn", "eng")
+			c.LearnLanguageProfile("2", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 		}()
 	}
 	wg.Wait()
@@ -753,11 +768,10 @@ func TestCacheIntentsPersistInProfilesFile(t *testing.T) {
 	dir := t.TempDir()
 
 	orig := New()
-	orig.RecordIntent("1", "42", streams.NewIntent(
-		&streams.Stream{LanguageCode: "jpn", Codec: "eac3"},
-		nil, // "no subtitles" must survive the round-trip
-		1700000000,
-	))
+	orig.RecordIntent("1", "42", streams.NewIntent(streams.Pair{
+		Audio:    &streams.Stream{LanguageCode: "jpn", Codec: "eac3"},
+		Subtitle: nil, // "no subtitles" must survive the round-trip
+	}, 1700000000))
 	orig.SetUserTokens(map[string]string{"2": "t2"})
 	if err := orig.Save(dir); err != nil {
 		t.Fatalf("Save() error = %v", err)

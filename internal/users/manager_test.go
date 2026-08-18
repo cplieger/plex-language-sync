@@ -80,7 +80,7 @@ func TestManager_LoadFromCacheSeedsTokens(t *testing.T) {
 	if m.SharedCount() != 2 {
 		t.Errorf("SharedCount = %d, want 2", m.SharedCount())
 	}
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 	if m.ClientForUser("2", adminClient).Token() != "friend-token" {
 		t.Errorf("ClientForUser(2) token mismatch")
 	}
@@ -112,7 +112,7 @@ func TestManager_ClientForUser(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 
 	// Admin user returns the admin client.
 	if got := m.ClientForUser("1", adminClient); got != adminClient {
@@ -179,7 +179,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 
 	const rounds = 200
 	var wg sync.WaitGroup
@@ -223,12 +223,14 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-// swapPlexTVClient redirects the package-level plex.tv client to the
-// given test server. Tests using this helper must NOT use t.Parallel()
-// because they mutate a package-level var in internal/plex.
-func swapPlexTVClient(t *testing.T, srv *httptest.Server) {
-	t.Helper()
-	replacement := &http.Client{
+// plexTVClientFor builds the plex.tv override client that redirects
+// shared-server lookups at the given test server. It is passed to the client
+// under test (plex.Client.TVClient) rather than swapped into a package
+// global, so it imposes no serialization of its own: the tests using it run
+// t.Parallel() unless they have a separate reason not to (a global slog swap, a
+// wall-clock budget), each stated at the test.
+func plexTVClientFor(srv *httptest.Server) *http.Client {
+	return &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			req.URL.Scheme = "http"
@@ -236,11 +238,11 @@ func swapPlexTVClient(t *testing.T, srv *httptest.Server) {
 			return http.DefaultTransport.RoundTrip(req)
 		}),
 	}
-	restore := plex.SwapTVClient(replacement)
-	t.Cleanup(restore)
 }
 
 func TestRefreshTokens_HappyPath(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Plex-Token") != "admin-token" {
 			t.Errorf("X-Plex-Token = %q, want admin-token", r.Header.Get("X-Plex-Token"))
@@ -252,10 +254,8 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 			`</MediaContainer>`))
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
@@ -278,6 +278,8 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 }
 
 func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<MediaContainer>` +
@@ -285,10 +287,8 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 			`</MediaContainer>`))
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
@@ -328,14 +328,14 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 }
 
 func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "existing-token"})
@@ -355,6 +355,8 @@ func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
 }
 
 func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<MediaContainer>` +
@@ -364,10 +366,8 @@ func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
 			`</MediaContainer>`))
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
@@ -386,6 +386,9 @@ func testRefreshConfig(maxAttempts int, base, max time.Duration) RefreshConfig {
 	return RefreshConfig{MaxAttempts: maxAttempts, BaseDelay: base, MaxDelay: max}
 }
 
+// Serial (no t.Parallel): asserts wall-clock elapsed under a 50ms ceiling, so a
+// loaded parallel suite would flake it. The reason is the real-clock budget, not
+// a shared global.
 func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 	// plex.tv always returns 500 — the refresh itself fails. Cached
 	// tokens should still let the loop exit after a single attempt.
@@ -395,10 +398,8 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "cached-token"})
@@ -421,6 +422,8 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 }
 
 func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
+	t.Parallel()
+
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
@@ -434,10 +437,8 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 			`</MediaContainer>`))
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
@@ -454,16 +455,16 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 }
 
 func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
+	t.Parallel()
+
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
@@ -479,6 +480,9 @@ func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
 	}
 }
 
+// Serial (no t.Parallel): asserts wall-clock elapsed under a 1s ceiling to prove
+// cancellation aborts instead of waiting out the backoff. The reason is the
+// real-clock budget, not a shared global.
 func TestInitialRefreshWithRetry_context_cancellation(t *testing.T) {
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -486,10 +490,8 @@ func TestInitialRefreshWithRetry_context_cancellation(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
@@ -554,7 +556,7 @@ func TestManager_ClientForUserCachesInstance(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 
 	first := m.ClientForUser("2", adminClient)
 	second := m.ClientForUser("2", adminClient)
@@ -580,7 +582,7 @@ func TestManager_ClientForUser_DerivesFromAdminClient(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 
 	got := m.ClientForUser("2", adminClient)
 	if got == nil {
@@ -619,7 +621,7 @@ func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 
 	const n = 64
 	got := make([]*plex.Client, n)
@@ -673,7 +675,7 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", nil)
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 
 	// Prime the per-user client cache under the old token.
 	if first := m.ClientForUser("2", adminClient); first == nil || first.Token() != "tok-old" {
@@ -704,9 +706,9 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 // token is written to cache.json. This is the RefreshTokens counterpart of the
 // existing TestManager_LoadFromCacheSkipsAdmin, which only pins the cache-load
 // path.
-//
-// Not parallel: swapPlexTVClient mutates a package-level var in internal/plex.
 func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<MediaContainer>` +
@@ -715,10 +717,8 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 			`</MediaContainer>`))
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	m := NewManager(fc)
@@ -752,7 +752,7 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 // exercised here: the interval is a 12h package const with no injection seam.
 func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}})
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
@@ -779,8 +779,7 @@ func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
 // resulting state (SharedCount / cache tokens), never this audit line, so a
 // mutant that drops the pruned-log block or reports the wrong count survives.
 //
-// Not parallel: swapPlexTVClient mutates a package-level var and this test
-// swaps the process-global default slog logger.
+// Not parallel: this test swaps the process-global default slog logger.
 func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
@@ -789,10 +788,8 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 			`</MediaContainer>`))
 	}))
 	t.Cleanup(srv.Close)
-	swapPlexTVClient(t, srv)
-
 	parsed, _ := url.Parse("http://plex:32400")
-	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", &http.Client{})
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})

@@ -59,10 +59,10 @@ type IntentStream struct {
 // NewIntent projects an observed (audio, subtitle) selection into an
 // Intent. audio must be non-nil (callers gate on a selected audio
 // stream before recording); subtitle may be nil ("no subtitles").
-func NewIntent(audio, subtitle *Stream, observedAt int64) *Intent {
+func NewIntent(ref Pair, observedAt int64) *Intent {
 	return &Intent{
-		Audio:      *intentStreamFrom(audio),
-		Subtitle:   intentStreamFrom(subtitle),
+		Audio:      *intentStreamFrom(ref.Audio),
+		Subtitle:   intentStreamFrom(ref.Subtitle),
 		ObservedAt: observedAt,
 	}
 }
@@ -90,8 +90,8 @@ func intentStreamFrom(s *Stream) *IntentStream {
 // RefStreams reconstructs reference *Stream values for the matchers
 // from the persisted projection. The audio return is always non-nil;
 // the subtitle return is nil when the intent recorded "no subtitles".
-func (i *Intent) RefStreams() (audio, subtitle *Stream) {
-	return i.Audio.stream(), i.Subtitle.stream()
+func (i *Intent) RefStreams() Pair {
+	return Pair{Audio: i.Audio.stream(), Subtitle: i.Subtitle.stream()}
 }
 
 // stream converts the projection back into a Stream carrying only the

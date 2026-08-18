@@ -3,7 +3,7 @@ package streams
 import (
 	"strings"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 )
 
 // AudioFloor is the language distance the audio path accepts. It is fixed
@@ -64,7 +64,7 @@ func classifyReference(raw string) (langtag.Tag, languageMatch) {
 func selectByLanguage(candidates []*Stream, wantRaw string, floor langtag.Tier) []*Stream {
 	want, mode := classifyReference(wantRaw)
 	if mode == langGraded {
-		out, _, ok := langtag.Best(want, candidates, (*Stream).Lang, floor)
+		out, _, ok := langtag.Best(langtag.Prefer(want), candidates, (*Stream).Lang, floor)
 		if !ok {
 			return nil
 		}
@@ -105,7 +105,7 @@ func languageDistance(ref, candidate *Stream) langtag.Tier {
 	want, mode := classifyReference(ref.languageRaw())
 	switch mode {
 	case langGraded:
-		return langtag.Compare(want, candidate.Lang())
+		return langtag.Prefer(want).Compare(candidate.Lang())
 	case langAbsent:
 		if candidate.HasNoLanguage() {
 			return langtag.TierIdentical

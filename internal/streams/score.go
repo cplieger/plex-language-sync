@@ -3,7 +3,7 @@ package streams
 import (
 	"strings"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 )
 
 // scoreRule defines a single scoring criterion: a named predicate that

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 	"pgregory.net/rapid"
 )
 
@@ -542,7 +542,7 @@ func TestFindSubtitleByLanguageNeverPanics(t *testing.T) {
 		// falsifiable and passed only because the generator rarely drew a
 		// colliding pair.
 		if want, ok := langtag.Parse(langCode); ok {
-			if !langtag.Match(want, result.Lang(), floor) {
+			if !langtag.Prefer(want).Match(result.Lang(), floor) {
 				t.Errorf("FindSubtitleByLanguage(target %q, floor %v) returned lang %q, which is not within the floor",
 					langCode, floor, result.Lang())
 			}

@@ -1,12 +1,13 @@
-package sync
+package tracksync
 
 import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // ApplyLanguageProfile applies a learned language profile to a new
@@ -46,12 +47,12 @@ func (s *Syncer) ApplyLanguageProfile(
 
 	// Get the default audio stream to determine the show's primary
 	// language.
-	curAudio, curSub := streams.Selected(target)
-	if curAudio == nil || curAudio.LanguageCode == "" {
+	cur := streams.Selected(target)
+	if cur.Audio == nil || cur.Audio.LanguageCode == "" {
 		return false
 	}
 
-	subLang, ok := s.cache.SubtitleLangForAudio(userID, curAudio.LanguageCode)
+	subLang, ok := s.cache.SubtitleLangForAudio(userID, cur.Audio.LanguageCode)
 	if !ok {
 		return false
 	}
@@ -62,13 +63,13 @@ func (s *Syncer) ApplyLanguageProfile(
 	}
 
 	username := s.users.Name(userID)
-	changed := applyProfileSubtitle(ctx, userClient, target, partID, subLang, curSub, username, s.cfg.SubtitleFloor)
+	changed := applyProfileSubtitle(ctx, userClient, target, partID, subLang, cur.Subtitle, username, s.cfg.SubtitleFloor)
 	if changed {
 		slog.Info("language profile applied to new show",
 			"trigger", trigger,
 			"user", username,
 			"episode", target.ShortName(),
-			"audio_lang", curAudio.LanguageCode,
+			"audio_lang", cur.Audio.LanguageCode,
 			"subtitle_lang", subLang)
 	}
 	return changed
@@ -108,7 +109,7 @@ func applyProfileSubtitle(
 	if bestSub == nil || (curSub != nil && curSub.ID == bestSub.ID) {
 		return false
 	}
-	if err := userClient.SetSubtitleStream(ctx, partID, bestSub.ID); err != nil {
+	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: bestSub.ID}); err != nil {
 		slog.Warn("failed to set subtitle via profile",
 			"episode", target.ShortName(), "user", username, "error", err)
 		return false

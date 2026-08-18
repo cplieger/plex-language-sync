@@ -30,7 +30,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
