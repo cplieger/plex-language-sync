@@ -73,7 +73,7 @@ const deepAnalysisConcurrency = 4
 const maxConsecutiveErrors = 5
 
 // maxDeepAnalysisLookback caps the dynamic look-back window. The window
-// origin is the previous COMPLETED run, so a large SCHEDULER_INTERVAL or a
+// origin is the previous COMPLETED run, so a large DEEP_SCAN_INTERVAL or a
 // long outage would otherwise grow it without bound — and History /
 // RecentlyAdded are fetched in a single, non-paginated response capped at
 // 10 MB, so an unbounded window risks overflowing that cap. The cap bounds
@@ -261,7 +261,7 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 	}()
 
 	// Look back to the previous completed run so no window is missed when
-	// SCHEDULER_INTERVAL exceeds 24h; floor at 24h so a frequent interval
+	// DEEP_SCAN_INTERVAL exceeds 24h; floor at 24h so a frequent interval
 	// (or a zero last-run marker on first boot) still replays a full
 	// recent day. LastSchedulerRun() reads the PREVIOUS run's timestamp
 	// here because this run's marker is only written in the deferred

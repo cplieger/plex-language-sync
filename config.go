@@ -3,12 +3,12 @@
 //
 // Everything in this file is main-package state that the wiring in
 // run() reads at startup. The env-var contract (names, defaults,
-// boolean parsing, _FILE secret handling, Go-duration SCHEDULER_INTERVAL
+// boolean parsing, _FILE secret handling, Go-duration DEEP_SCAN_INTERVAL
 // parsing) is stable; the in-memory representation may evolve freely.
 // The former frozen HH:MM SCHEDULER_SCHEDULE_TIME contract was
-// deliberately replaced by the fleet-standard SCHEDULER_INTERVAL (a Go
-// duration) so the app no longer reads local wall-clock time — see the
-// scheduler package.
+// deliberately replaced by a fleet-standard Go-duration interval
+// (DEEP_SCAN_INTERVAL) so the app no longer reads local wall-clock
+// time — see the deepscan package.
 
 package main
 
@@ -71,12 +71,12 @@ type config struct {
 	ignoreLabels      []string
 	ignoreLibraries   []string
 	schedulerInterval time.Duration // deep-analysis cadence; 0 = disabled
+	logLevel          slog.Level    // level installed from LOG_LEVEL
 	subtitleTier      langtag.Tier  // furthest language distance for a subtitle match
 	triggerOnPlay     bool
 	triggerOnScan     bool
 	schedulerEnabled  bool
 	languageProfiles  bool
-	debug             bool
 }
 
 // loadConfig reads environment variables into a config value, applying
@@ -84,14 +84,20 @@ type config struct {
 // slog.Error and terminates the process via os.Exit(1).
 func loadConfig() config {
 	// Install the configured handler BEFORE the first envx read so a
-	// malformed DEBUG value warns through it (logfmt, Loki-parseable) rather
-	// than Go's pre-setup default logger; the level is then raised in place
-	// once DEBUG is known. requireEnv errors get the same treatment.
+	// malformed value warns through it (logfmt, Loki-parseable) rather than
+	// Go's pre-setup default logger; the level is then set in place once
+	// LOG_LEVEL is parsed. An unrecognized LOG_LEVEL, a typo'd boolean, and
+	// requireEnv errors all get that treatment. Parsing the level after
+	// Setup is what puts its own warning on the configured handler too —
+	// slogx.ParseLevel returns ok rather than logging for exactly that
+	// reason.
 	levelVar := slogx.Setup(slogx.Options{Level: slog.LevelInfo})
-	debug := envx.Bool("DEBUG", false)
-	if debug {
-		levelVar.Set(slog.LevelDebug)
+	rawLevel := envx.String("LOG_LEVEL")
+	logLevel, recognized := slogx.ParseLevel(rawLevel, slog.LevelInfo)
+	if !recognized {
+		slog.Warn("invalid LOG_LEVEL, using default", "value", rawLevel, "default", "info")
 	}
+	levelVar.Set(logLevel)
 
 	cfg := config{
 		plexURL:          requireEnv("PLEX_URL"),
@@ -100,8 +106,8 @@ func loadConfig() config {
 		updateStrategy:   cmp.Or(envx.String("UPDATE_STRATEGY"), defaultUpdateStrategy),
 		triggerOnPlay:    envx.Bool("TRIGGER_ON_PLAY", true),
 		triggerOnScan:    envx.Bool("TRIGGER_ON_SCAN", true),
-		languageProfiles: envx.Bool("LANGUAGE_PROFILES", true),
-		debug:            debug,
+		languageProfiles: envx.Bool("LEARN_LANGUAGE_PROFILES", true),
+		logLevel:         logLevel,
 		caCertPath:       envx.String("PLEX_CA_CERT_PATH"),
 		subtitleTier:     loadSubtitleTier(),
 	}
@@ -163,11 +169,11 @@ func logConfig(cfg *config) {
 		"trigger_on_play", cfg.triggerOnPlay,
 		"trigger_on_scan", cfg.triggerOnScan,
 		"scheduler_enabled", cfg.schedulerEnabled,
-		"language_profiles", cfg.languageProfiles,
-		"scheduler_interval", cfg.schedulerInterval.String(),
+		"learn_language_profiles", cfg.languageProfiles,
+		"deep_scan_interval", cfg.schedulerInterval.String(),
 		"ignore_labels", cfg.ignoreLabels,
 		"ignore_libraries", cfg.ignoreLibraries,
-		"debug", cfg.debug,
+		"log_level", cfg.logLevel.String(),
 		"ca_cert_path", cfg.caCertPath)
 }
 
@@ -223,7 +229,7 @@ func splitTrim(s string) []string {
 	return out
 }
 
-// loadSchedulerInterval parses SCHEDULER_INTERVAL and reports the daily
+// loadSchedulerInterval parses DEEP_SCAN_INTERVAL and reports the daily
 // deep-analysis cadence and whether the scheduler runs at all. The value
 // is a Go duration ("24h", "12h"), matching the fleet docker-*-scheduler
 // convention. The sentinels "off" and "disabled" (case-insensitive) or a
@@ -235,7 +241,7 @@ func splitTrim(s string) []string {
 func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 	interval = defaultSchedulerInterval
 	enabled = true
-	raw := strings.TrimSpace(os.Getenv("SCHEDULER_INTERVAL"))
+	raw := strings.TrimSpace(os.Getenv("DEEP_SCAN_INTERVAL"))
 	if raw == "" {
 		return interval, enabled
 	}
@@ -245,7 +251,7 @@ func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 	d, err := time.ParseDuration(raw)
 	switch {
 	case err != nil:
-		slog.Warn("cannot parse SCHEDULER_INTERVAL, using default",
+		slog.Warn("cannot parse DEEP_SCAN_INTERVAL, using default",
 			"value", raw, "default", defaultSchedulerInterval.String())
 	case d == 0:
 		// "0"/"0s" disables the daily safety-net pass.
@@ -254,7 +260,7 @@ func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 		// A negative duration is a likely typo, not a documented disable
 		// sentinel (off/disabled/0/0s); warn and fall back to the default
 		// rather than silently idling.
-		slog.Warn("SCHEDULER_INTERVAL is negative, using default",
+		slog.Warn("DEEP_SCAN_INTERVAL is negative, using default",
 			"value", raw, "default", defaultSchedulerInterval.String())
 	default:
 		interval = d

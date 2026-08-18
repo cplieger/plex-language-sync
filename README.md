@@ -68,9 +68,9 @@ services:
       UPDATE_STRATEGY: "all"  # all = every episode, next = future episodes only
       TRIGGER_ON_PLAY: "true"
       TRIGGER_ON_SCAN: "true"
-      LANGUAGE_PROFILES: "true"  # learn and apply audio→subtitle pairs for new shows
+      LEARN_LANGUAGE_PROFILES: "true"  # learn and apply audio→subtitle pairs for new shows
       SUBTITLE_MATCH_TIER: "same-language"  # how far a subtitle substitution may reach
-      SCHEDULER_INTERVAL: "24h"  # deep-analysis cadence (Go duration); off/disabled/0 disables
+      DEEP_SCAN_INTERVAL: "24h"  # deep-scan cadence (Go duration); off/disabled/0 disables
 
     volumes:
       - /path/to/plex-language-sync/config:/config
@@ -88,13 +88,13 @@ services:
 | `UPDATE_STRATEGY` | Which episodes to update. `all` updates every episode in scope. `next` updates only episodes after the one being played | `all` | No |
 | `TRIGGER_ON_PLAY` | React to playback events: when you play an episode, propagate its language settings | `true` | No |
 | `TRIGGER_ON_SCAN` | React to library scan events: when episodes are added or updated, apply each user's recorded selection for the show (falling back to the show's established selection, then to the user's learned profile) | `true` | No |
-| `LANGUAGE_PROFILES` | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history | `true` | No |
+| `LEARN_LANGUAGE_PROFILES` | Learn audio→subtitle language pairs from playback and apply them to brand new shows that have no watch history | `true` | No |
 | `SUBTITLE_MATCH_TIER` | How far a subtitle substitution may reach when no exact language match exists: `identical`, `same-language`, `other-script`, `intelligible`, or `shared-literacy` (see [Language matching](#language-matching)) | `same-language` | No |
-| `SCHEDULER_INTERVAL` | Cadence of the daily deep-analysis safety net, a Go duration (e.g. `24h`, `12h`). `off`/`disabled`/`0` disables it (the app then runs WebSocket-only). | `24h` | No |
+| `DEEP_SCAN_INTERVAL` | Cadence of the daily deep-scan safety net, a Go duration (e.g. `24h`, `12h`). `off`/`disabled`/`0` disables it (the app then runs WebSocket-only). | `24h` | No |
 | `PLEX_CA_CERT_PATH` | Path to a PEM file with the CA certificate that signed your Plex server's cert; TLS verification stays **on**, pinned to that CA. Needed only for self-signed or private-CA `https://` URLs (see [TLS / certificate setup](#tls--certificate-setup)) | unset | No |
 | `IGNORE_LABELS` | Comma-separated Plex labels that exclude a show from language sync (a show carrying any listed label is skipped); label matching is exact and case-sensitive, and setting this replaces the built-in defaults | `PAL_IGNORE,PLS_IGNORE` | No |
 | `IGNORE_LIBRARIES` | Comma-separated Plex library names to exclude from language sync entirely (exact, case-sensitive name match) | unset | No |
-| `DEBUG` | Enable debug-level logging (`true`/`1`/`yes`/`on`). Raises log verbosity for troubleshooting; leave unset for normal INFO-level output | `false` | No |
+| `LOG_LEVEL` | Minimum log level: `debug`, `info`, `warn`/`warning`, or `error` (case-insensitive; slog offsets such as `info+2` work). `debug` surfaces the per-event skip reasons and stream-matching detail used for troubleshooting. An unrecognized value warns and falls back to `info` | `info` | No |
 
 ### Language matching
 
