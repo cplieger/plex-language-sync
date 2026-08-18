@@ -24,18 +24,23 @@ business logic under `internal/`.
   the syncer.
 - `config.go`: env-var parsing, defaults, `_FILE`-suffix Docker-secret
   handling, and `SCHEDULER_INTERVAL` (Go duration) parsing.
-- `internal/api/`: the cross-package interface spine (`PlexReadWriter`,
-  `IgnoreChecker`, cache/user contracts). Concrete types in
-  `internal/{plex,cache,users,...}` implement these; consumers
-  (`internal/{sync,scheduler,notify}`) depend only on the interfaces.
-  This keeps `main.go` the single wiring layer and lets tests substitute
-  fakes without reaching into production packages. `internal/api` must
-  not import its implementers; that would reintroduce the import cycle
-  the spine exists to break.
-- `internal/{plex,streams,cache,notify,users,sync,scheduler,ignore}`:
+- **Interfaces live at the consumer, not in a shared package.** Each
+  package declares the methods it actually calls: `tracksync` asks for 3
+  Plex reads, 3 Plex writes and 4 cache methods; `deepscan` asks for 4
+  reads and 3 cache methods; `users` asks for 2; `ignore` asks for 1.
+  There is deliberately no `internal/api`-style contract package — it
+  handed every consumer a menu several times larger than its order, and
+  a test fake then had to implement methods the subject never called (one
+  stub implemented eight and panicked in seven). Adding a dependency
+  means adding the one method you need to your own package's interface.
+  `main.go` stays the single wiring layer.
+  The one exception is `cache.Contract`, the full persisted surface: it
+  exists solely so `cache.RunContract` can run the same suite against the
+  real store and the in-memory fake, and no production code depends on it.
+- `internal/{plex,streams,cache,notify,users,tracksync,deepscan,ignore}`:
   the focused business-logic packages (Plex HTTP client, stream
   matching/scoring, persistent cache, WebSocket listener, multi-user
-  token management, propagation logic, daily scheduler, ignore policy).
+  token management, propagation logic, periodic deep scan, ignore policy).
 
 A daily scheduler runs a deep analysis as a safety net for missed
 real-time events; the WebSocket listener reconnects with exponential

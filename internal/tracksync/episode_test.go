@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
 // mkSelectedAudioEpisode builds an episode whose single part carries one
@@ -39,7 +39,7 @@ func countCalls(calls []string, name string) int {
 // body must run for every user, so a guard that bailed out early would leave
 // zero per-user reloads.
 //
-// given a found reference and two known users on a live context
+// given a found reference and two known lookup on a live context
 // when ProcessNewOrUpdatedEpisodeAllUsers runs
 // then the target episode is reloaded once per user (UpdateEpisodeStreams).
 func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testing.T) {
@@ -53,20 +53,20 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testin
 			"100": mkSelectedAudioEpisode("100"),
 		},
 	}
-	users := &fakeapi.Users{
-		AllResult: []api.UserInfo{
+	lookup := &fakeUsers{
+		AllResult: []users.Account{
 			{ID: "1", Name: "admin"},
 			{ID: "2", Name: "bob"},
 		},
 	}
-	s := newSyncer(Config{LanguageProfiles: false}, plx, fakeapi.NewCache(), users)
+	s := newSyncer(Config{LanguageProfiles: false}, plx, fakeapi.NewCache(), lookup)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	got := countCalls(plx.CallNames(), "Episode:100")
 	if got != 2 {
-		t.Errorf("target episode reloaded %d times for 2 users; want 2 (loop must run per user on a live context)", got)
+		t.Errorf("target episode reloaded %d times for 2 lookup; want 2 (loop must run per user on a live context)", got)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 			t.Cleanup(func() { slog.SetDefault(prev) })
 
-			s := newSyncer(Config{}, tc.plex, fakeapi.NewCache(), &fakeapi.Users{})
+			s := newSyncer(Config{}, tc.plex, fakeapi.NewCache(), &fakeUsers{})
 			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
 			if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
@@ -254,7 +254,7 @@ func TestFindEpisodeReference_logsShowEpisodesFetchError(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
-	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 
 	if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
 		t.Fatalf("FindEpisodeReference = %+v, want nil when ShowEpisodes errors", ref)
@@ -290,15 +290,15 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T)
 			"100": mkSelectedAudioEpisode("100"),
 		},
 	}
-	users := &fakeapi.Users{AllResult: []api.UserInfo{
+	lookup := &fakeUsers{AllResult: []users.Account{
 		{ID: "1", Name: "admin"},
 		{ID: "2", Name: "bob"},
 	}}
 	s := New(Config{}, Deps{
 		Plex:  plx,
 		Cache: fakeapi.NewCache(),
-		Users: users,
-		UserClient: func(uid string) api.PlexReadWriter {
+		Users: lookup,
+		UserClient: func(uid string) PlexReadWriter {
 			if uid == "2" {
 				return nil
 			}
@@ -335,10 +335,10 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testin
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil}, // no candidate -> ref nil
 	}
-	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "admin"}}}
 	c := fakeapi.NewCache()
 	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
-	s := newSyncer(Config{LanguageProfiles: true}, plx, c, users)
+	s := newSyncer(Config{LanguageProfiles: true}, plx, c, lookup)
 	ep := &streams.Episode{
 		RatingKey:            "100",
 		GrandparentRatingKey: "42",
@@ -374,8 +374,8 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *te
 			"100": targetNeedingAudioSwitch("100"),
 		},
 	}
-	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
-	s := newSyncer(Config{}, plx, fakeapi.NewCache(), users)
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "admin"}}}
+	s := newSyncer(Config{}, plx, fakeapi.NewCache(), lookup)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
 	var buf bytes.Buffer
@@ -439,10 +439,10 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil},
 	}
-	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "admin"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "admin"}}}
 	c := fakeapi.NewCache()
 	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
-	s := newSyncer(Config{LanguageProfiles: true}, plx, c, users)
+	s := newSyncer(Config{LanguageProfiles: true}, plx, c, lookup)
 	ep := &streams.Episode{
 		RatingKey:            "100",
 		GrandparentRatingKey: "42",

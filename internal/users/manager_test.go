@@ -12,14 +12,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 )
 
-// Verify *Manager satisfies api.UserLookup at compile time.
-var _ api.UserLookup = (*Manager)(nil)
+// Verify *Manager satisfies the lookup surface its consumers declare. Spelled
+// out here rather than referenced from a shared package: tracksync declares the
+// same two methods for itself, and this assertion is what keeps the manager
+// honest to that shape without either package importing the other.
+var _ interface {
+	All() []Account
+	Name(userID string) string
+} = (*Manager)(nil)
 
 func TestID_StringRoundTrip(t *testing.T) {
 	id := ID("42")
@@ -35,7 +40,7 @@ func TestManager_InitSeedsAdmin(t *testing.T) {
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	// Asserted through the api.UserLookup surface production consumers
+	// Asserted through the same two-method surface production consumers
 	// use: All() must emit the admin, and Name() must resolve its ID to
 	// the seeded display name (not the "unknown-{id}" placeholder).
 	if got := m.Name("1"); got != "admin" {
@@ -142,7 +147,7 @@ func TestManager_AllReturnsAdminAndShared(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("All() len = %d, want 3", len(all))
 	}
-	// Admin must be the first entry. api.UserInfo has no token field, so
+	// Admin must be the first entry. Account has no token field, so
 	// there is no token surface left to assert on.
 	if all[0].ID != "1" {
 		t.Errorf("All()[0].ID = %q, want 1", all[0].ID)
@@ -189,7 +194,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 		for r := range rounds {
 			tok := "tok-" + string(rune('A'+r%26))
 			m.mu.Lock()
-			m.shared["2"] = Info{ID: "2", Name: "u2", Token: tok}
+			m.shared["2"] = record{ID: "2", Name: "u2", Token: tok}
 			m.mu.Unlock()
 		}
 	}()
@@ -685,7 +690,7 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 	// Rotate the shared user's token in place, leaving the now-stale client
 	// cached (models the pre-eviction window).
 	m.mu.Lock()
-	m.shared["2"] = Info{ID: "2", Name: "user-2", Token: "tok-new"}
+	m.shared["2"] = record{ID: "2", Name: "user-2", Token: "tok-new"}
 	m.mu.Unlock()
 
 	got := m.ClientForUser("2", adminClient)

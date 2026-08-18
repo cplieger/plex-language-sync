@@ -1,17 +1,42 @@
-package fakeapi
+package cache
 
 import (
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// RunCacheContract exercises the api.Cache contract against any
-// implementation. Both cache.Cache and fakeapi.Cache must pass.
-func RunCacheContract(t *testing.T, c api.Cache) {
+// Contract is the FULL persisted surface, and the only wide interface in this
+// app. It exists for exactly one consumer — RunContract below — because the
+// thing under test IS the whole surface; no production code depends on it, so
+// it forces no consumer to accept methods it does not call. Production
+// consumers each declare the 4, 3 or 2 methods they actually use, at their own
+// package.
+type Contract interface {
+	WasRecentlyProcessed(key string) bool
+	MarkProcessed(key string)
+	CheckAndMark(key string) bool
+	LearnLanguageProfile(userID string, choice streams.LanguageChoice)
+	SubtitleLangForAudio(userID, audioLang string) (string, bool)
+	RecordIntent(userID, showKey string, intent *streams.Intent)
+	IntentFor(userID, showKey string) (streams.Intent, bool)
+	UserTokens() map[string]string
+	SetUserTokens(tokens map[string]string)
+	LastSchedulerRun() time.Time
+	SetLastSchedulerRun(t time.Time)
+}
+
+// RunContract exercises the persisted-cache contract against any
+// implementation. Both *Cache and the in-memory test fake must pass, which is
+// what keeps the fake honest: a fake that drifts from the real store turns
+// every test built on it into a test of the fake.
+//
+// It lives in an ordinary .go file, not a _test.go, because its second caller
+// is in a different package and a _test.go file is visible only to its own
+// package's test binary.
+func RunContract(t *testing.T, c Contract) {
 	t.Helper()
 
 	t.Run("SetGet_roundtrip", func(t *testing.T) {
@@ -59,11 +84,11 @@ func RunCacheContract(t *testing.T, c api.Cache) {
 	checkAndMarkContract(t, c)
 }
 
-// schedulerRunContract exercises the scheduler-run portion of the api.Cache
+// schedulerRunContract exercises the scheduler-run portion of the Contract
 // contract: the last-scheduler-run marker round-trips a whole-second value and
 // resets to the zero time. Split out of RunCacheContract to keep that
 // function's cognitive complexity under the gate.
-func schedulerRunContract(t *testing.T, c api.Cache) {
+func schedulerRunContract(t *testing.T, c Contract) {
 	t.Helper()
 
 	t.Run("scheduler_run_roundtrip", func(t *testing.T) {
@@ -92,12 +117,12 @@ const (
 	langFRA = "fra"
 )
 
-// intentContract exercises the intent-ledger portion of the api.Cache
+// intentContract exercises the intent-ledger portion of the Contract
 // contract: record/read round-trip with deep-copy isolation and the
 // nil-subtitle ("no subtitles") form. Edge behaviors live in
 // intentEdgeContract. Split out of RunCacheContract to keep cognitive
 // complexity under the gate.
-func intentContract(t *testing.T, c api.Cache) {
+func intentContract(t *testing.T, c Contract) {
 	t.Helper()
 
 	t.Run("intent_roundtrip", func(t *testing.T) {
@@ -135,7 +160,7 @@ func intentContract(t *testing.T, c api.Cache) {
 
 // intentEdgeContract covers the ledger's edges: replace-on-rerecord and
 // the nil/empty-key guards.
-func intentEdgeContract(t *testing.T, c api.Cache) {
+func intentEdgeContract(t *testing.T, c Contract) {
 	t.Helper()
 
 	t.Run("intent_rerecord_replaces", func(t *testing.T) {
@@ -167,12 +192,12 @@ func intentEdgeContract(t *testing.T, c api.Cache) {
 }
 
 // checkAndMarkContract exercises the atomic test-and-set portion of the
-// api.Cache contract: CheckAndMark admits a fresh key exactly once and
+// Contract: CheckAndMark admits a fresh key exactly once and
 // rejects it within the recent window. This is the TOCTOU-free idempotency
 // gate scheduler.processRecentlyAddedEpisode relies on. Split out of
 // RunCacheContract to keep that function's cognitive complexity under the
 // gate.
-func checkAndMarkContract(t *testing.T, c api.Cache) {
+func checkAndMarkContract(t *testing.T, c Contract) {
 	t.Helper()
 
 	t.Run("check_and_mark_admits_once", func(t *testing.T) {

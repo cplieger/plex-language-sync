@@ -95,8 +95,8 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 // m.shared and All() emits it twice, double-processing the admin episode and
 // persisting the admin token into tokens.json via tokensCopy). adminID is
 // passed by the caller, which holds m.mu.
-func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]Info {
-	newShared := make(map[ID]Info, len(servers))
+func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]record {
+	newShared := make(map[ID]record, len(servers))
 	for _, s := range servers {
 		if s.UserID == "" || s.AccessToken == "" {
 			continue
@@ -105,7 +105,7 @@ func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]Inf
 		if uid == adminID {
 			continue
 		}
-		newShared[uid] = Info{
+		newShared[uid] = record{
 			ID:    uid,
 			Name:  s.Username,
 			Token: s.AccessToken,

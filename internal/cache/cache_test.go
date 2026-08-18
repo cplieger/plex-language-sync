@@ -16,7 +16,6 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"pgregory.net/rapid"
 )
 
@@ -566,7 +565,7 @@ func TestCache_ConcurrentLearnAndSetUserTokens(t *testing.T) {
 
 func TestCacheContract(t *testing.T) {
 	t.Parallel()
-	fakeapi.RunCacheContract(t, New())
+	RunContract(t, New())
 }
 
 // --- Load permissive-mode warning ---

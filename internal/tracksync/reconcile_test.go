@@ -3,11 +3,11 @@ package tracksync
 import (
 	"testing"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ func TestObserveAndPropagate_RecordsIntent(t *testing.T) {
 		EpisodeByKey:       map[string]*streams.Episode{"2": targetNeedingAudioSwitch("2")},
 	}
 	c := fakeapi.NewCache()
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeUsers{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
 	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
@@ -57,8 +57,8 @@ func TestObserveAndPropagate_IgnoredShowRecordsNoIntent(t *testing.T) {
 		},
 	}
 	c := fakeapi.NewCache()
-	policy := ignore.NewPolicy(nil, []string{"SKIP"})
-	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, c, &fakeapi.Users{})
+	policy := ignore.New(ignore.Config{Reader: plx, Labels: []string{"SKIP"}})
+	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, c, &fakeUsers{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
 	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
@@ -79,7 +79,7 @@ func TestObserveAndPropagate_CommentaryAudioStillRecordsIntent(t *testing.T) {
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {}},
 	}
 	c := fakeapi.NewCache()
-	s := newSyncer(Config{UpdateLevel: LevelShow, LanguageProfiles: true}, plx, c, &fakeapi.Users{})
+	s := newSyncer(Config{UpdateLevel: LevelShow, LanguageProfiles: true}, plx, c, &fakeUsers{})
 	ref := &streams.Episode{
 		RatingKey:            "1",
 		GrandparentRatingKey: "42",
@@ -153,9 +153,9 @@ func TestReconcileWithIntent_AppliesRecordedIntentNotCurrentSelection(t *testing
 	}
 	c := fakeapi.NewCache()
 	seedIntent(c, 1000)
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeUsers{})
 
-	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 500, "scheduler")
+	s.ReconcileWithIntent(t.Context(), "1", replayedEpisode(), 500, "scheduler")
 
 	// The target (eng selected, jpn available) must be switched to jpn —
 	// the intent — proving the eng current selection of the replayed
@@ -182,9 +182,9 @@ func TestReconcileWithIntent_NoIntentSkips(t *testing.T) {
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
 	}
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeapi.Users{})
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, fakeapi.NewCache(), &fakeUsers{})
 
-	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 500, "scheduler")
+	s.ReconcileWithIntent(t.Context(), "1", replayedEpisode(), 500, "scheduler")
 
 	if calls := plx.CallNames(); len(calls) != 0 {
 		t.Errorf("no Plex calls expected when no intent is recorded, got %v", calls)
@@ -203,9 +203,9 @@ func TestReconcileWithIntent_NewerPlaySkips(t *testing.T) {
 	}
 	c := fakeapi.NewCache()
 	seedIntent(c, 1000)
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeUsers{})
 
-	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 2000, "scheduler")
+	s.ReconcileWithIntent(t.Context(), "1", replayedEpisode(), 2000, "scheduler")
 
 	if calls := plx.CallNames(); len(calls) != 0 {
 		t.Errorf("no Plex calls expected for a play newer than the intent (viewedAt 2000 > observedAt 1000), got %v", calls)
@@ -224,9 +224,9 @@ func TestReconcileWithIntent_EqualTimestampApplies(t *testing.T) {
 	}
 	c := fakeapi.NewCache()
 	seedIntent(c, 1000)
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeapi.Users{})
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, &fakeUsers{})
 
-	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 1000, "scheduler")
+	s.ReconcileWithIntent(t.Context(), "1", replayedEpisode(), 1000, "scheduler")
 
 	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
 		t.Errorf("SetAudio called %d times, want 1 (equal timestamps must reconcile); calls=%v",
@@ -247,10 +247,10 @@ func TestReconcileWithIntent_IgnoredShowSkips(t *testing.T) {
 	}
 	c := fakeapi.NewCache()
 	seedIntent(c, 1000)
-	policy := ignore.NewPolicy(nil, []string{"SKIP"})
-	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, c, &fakeapi.Users{})
+	policy := ignore.New(ignore.Config{Reader: plx, Labels: []string{"SKIP"}})
+	s := newSyncer(Config{UpdateLevel: LevelShow, Ignore: policy}, plx, c, &fakeUsers{})
 
-	s.ReconcileWithIntent(t.Context(), plx, "1", replayedEpisode(), 500, "scheduler")
+	s.ReconcileWithIntent(t.Context(), "1", replayedEpisode(), 500, "scheduler")
 
 	if got := countCalls(plx.CallNames(), "ShowEpisodes:42"); got != 0 {
 		t.Errorf("ShowEpisodes called for an ignored show; calls=%v", plx.CallNames())
@@ -277,8 +277,8 @@ func TestProcessNewOrUpdatedEpisode_IntentTierBeatsSharedReference(t *testing.T)
 	}
 	c := fakeapi.NewCache()
 	seedIntent(c, 1000) // user 1 wants jpn for show 42
-	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "one"}}}
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, users)
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "one"}}}
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, lookup)
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), newEp, "scan_new")
 
@@ -311,8 +311,8 @@ func TestProcessNewOrUpdatedEpisode_IntentlessUserFallsToReference(t *testing.T)
 		},
 	}
 	c := fakeapi.NewCache() // no intents
-	users := &fakeapi.Users{AllResult: []api.UserInfo{{ID: "1", Name: "one"}}}
-	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, users)
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "one"}}}
+	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, lookup)
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), newEp, "scan_new")
 

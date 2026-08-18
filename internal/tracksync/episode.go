@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
@@ -45,7 +44,7 @@ const maxRefSearchDepth = 50
 //
 // Ignore contract: this entry point does NOT apply the ignore
 // policy itself. Callers MUST gate on
-// api.IgnoreChecker.ShouldSkipEpisode before invoking it (main.go
+// episodeSkipper.ShouldSkipEpisode before invoking it (main.go
 // handleTimeline and scheduler processRecentlyAddedEpisode both
 // do). The gate is kept upstream deliberately to avoid a
 // redundant ShowMetadata fetch here; a caller that skips it will
@@ -175,7 +174,7 @@ func (s *Syncer) FindEpisodeReference(
 // per-user client because PUTs set per-user playback state.
 func (s *Syncer) applyEpisodeForUser(
 	ctx context.Context,
-	userClient api.PlexReadWriter,
+	userClient PlexReadWriter,
 	userID string,
 	episode *streams.Episode,
 	refOnce func() *EpisodeRef,
@@ -232,7 +231,7 @@ func (s *Syncer) applyEpisodeForUser(
 // drives it directly with synthetic episode lists.
 func findReferenceEpisode(
 	ctx context.Context,
-	reader api.PlexReader,
+	reader plexReader,
 	episodes []streams.Episode,
 	excludeKey string,
 	maxDepth int,

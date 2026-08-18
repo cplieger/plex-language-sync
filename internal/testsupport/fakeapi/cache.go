@@ -1,9 +1,13 @@
-// Package fakeapi provides shared concurrency-safe test fakes for the
-// interfaces in internal/api. Consumes no I/O. Import from _test.go
-// files only — the package name carries no internal build tag, but
-// callers across internal/{sync,scheduler,notify,users} tests
-// previously declared three near-identical fakeCache types; this
-// package consolidates them into one honest implementation.
+// Package fakeapi provides shared concurrency-safe test fakes for the Plex
+// client and the persisted cache. Consumes no I/O. Import from _test.go files
+// only — the package name carries no internal build tag, but tests across
+// internal/{tracksync,deepscan,notify,users} previously declared three
+// near-identical fakeCache types; this package consolidates them into one
+// honest implementation, kept honest by cache.RunContract.
+//
+// The fakes implement the full surface of what they stand in for; each
+// CONSUMER declares the narrow subset it uses, so a fake satisfying everything
+// still cannot widen what production depends on.
 package fakeapi
 
 import (
@@ -11,17 +15,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// Cache is a concurrency-safe in-memory implementation of api.Cache.
+// Cache is a concurrency-safe in-memory stand-in for the persisted cache.
 // Every accessor takes a short-held lock; consumers can share one Cache
 // across goroutines without additional synchronization.
 //
-// The surface is exactly api.Cache: consumers assert on the fake through
-// the same readers production code uses (WasRecentlyProcessed, IntentFor,
-// UserTokens, LastSchedulerRun) rather than through fake-only inspectors.
+// The surface is exactly cache.Contract, and cache.RunContract is run against
+// it: consumers assert on the fake through the same readers production code
+// uses (WasRecentlyProcessed, IntentFor, UserTokens, LastSchedulerRun) rather
+// than through fake-only inspectors.
 type Cache struct {
 	processed    map[string]time.Time
 	profiles     map[string]map[string]string
@@ -44,10 +48,6 @@ func NewCache() *Cache {
 		recentWindow: 5 * time.Minute,
 	}
 }
-
-// Compile-time interface assertion: *Cache satisfies api.Cache so tests
-// can assign it to an api.Cache-typed field.
-var _ api.Cache = (*Cache)(nil)
 
 // WasRecentlyProcessed reports whether the key was MarkProcessed'd
 // within the recent window.

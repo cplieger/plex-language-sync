@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
@@ -29,7 +28,7 @@ type fakeSyncer struct {
 	processCalls atomic.Int64
 }
 
-func (s *fakeSyncer) ReconcileWithIntent(_ context.Context, _ api.PlexReadWriter, _ string, _ *streams.Episode, _ int64, _ string) {
+func (s *fakeSyncer) ReconcileWithIntent(_ context.Context, _ string, _ *streams.Episode, _ int64, _ string) {
 	s.changeCalls.Add(1)
 }
 
@@ -37,7 +36,7 @@ func (s *fakeSyncer) ProcessNewOrUpdatedEpisodeAllUsers(_ context.Context, _ *st
 	s.processCalls.Add(1)
 }
 
-// fakeIgnore is an api.IgnoreChecker that returns fixed decisions.
+// fakeIgnore is a skipChecker that returns fixed decisions.
 // ShouldSkipEpisode defaults to false; set skipEpisode to flip it.
 // Libraries holds the set of library titles to skip.
 type fakeIgnore struct {
@@ -52,14 +51,14 @@ func (f *fakeIgnore) IgnoreLibrary(title string) bool {
 	return f.libraries[title]
 }
 
-func (f *fakeIgnore) ShouldSkipEpisode(_ context.Context, _ api.PlexReader, _ *streams.Episode) bool {
+func (f *fakeIgnore) ShouldSkipEpisode(_ context.Context, _ *streams.Episode) bool {
 	if f == nil {
 		return false
 	}
 	return f.skipEpisode
 }
 
-var _ api.IgnoreChecker = (*fakeIgnore)(nil)
+var _ skipChecker = (*fakeIgnore)(nil)
 
 // ---------------------------------------------------------------------------
 // processRecentHistory — circuit breaker
@@ -91,7 +90,7 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -149,7 +148,7 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -188,7 +187,7 @@ func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -223,7 +222,7 @@ func TestProcessRecentlyAddedEpisode_TransientFetchFailureRetries(t *testing.T) 
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -258,7 +257,7 @@ func TestProcessRecentlyAddedEpisode_SkipsIgnoredShow(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -284,7 +283,7 @@ func TestProcessRecentlyAddedEpisode_HappyPathDelegates(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -324,7 +323,7 @@ func TestProcessRecentlyAdded_FansOutAcrossSections(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -353,11 +352,11 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 	c := fakeapi.NewCache()
 	syncer := &fakeSyncer{}
 	sched := New(
-		Config{Enable: true, Ignore: ignore.NewPolicy([]string{"Kids"}, nil)},
+		Config{Enable: true, Ignore: ignore.New(ignore.Config{Libraries: []string{"Kids"}})},
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -389,7 +388,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  func() error { saveCalls.Add(1); return nil },
 		},
@@ -410,7 +409,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -432,7 +431,7 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -462,7 +461,7 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -509,7 +508,7 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 			Deps{
 				Plex:       plx,
 				Cache:      c,
-				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
 			},
@@ -531,7 +530,7 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 			Deps{
 				Plex:       plx,
 				Cache:      c,
-				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
 			},
@@ -605,7 +604,7 @@ func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -631,7 +630,7 @@ func TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -658,7 +657,7 @@ func TestProcessRecentHistory_BreakerAbortLogsInviolateWarn(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -690,7 +689,7 @@ func TestProcessRecentlyAddedEpisode_GenericFetchErrorSkipsSync(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -722,7 +721,7 @@ func TestProcessRecentlyAddedEpisode_NotFoundSkipsSyncSilently(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -790,7 +789,7 @@ func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -879,7 +878,7 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -915,7 +914,7 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return nil },
+			UserClient: func(_ string) EpisodeReader { return nil },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -947,7 +946,7 @@ func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  func() error { return errors.New("disk full") },
 		},
@@ -981,7 +980,7 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 		sched := New(Config{Enable: true}, Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		})
@@ -1001,7 +1000,7 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 		sched := New(Config{Enable: true}, Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		})
@@ -1036,11 +1035,11 @@ func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
 	}
 	syncer := &fakeSyncer{}
 	sched := New(
-		Config{Enable: true, Ignore: ignore.NewPolicy([]string{"Kids"}, nil)},
+		Config{Enable: true, Ignore: ignore.New(ignore.Config{Libraries: []string{"Kids"}})},
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       syncer,
 			SaveCache:  nil,
 		},
@@ -1071,7 +1070,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 			Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
-				UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+				UserClient: func(_ string) EpisodeReader { return plx.Plex },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
 			},
@@ -1093,7 +1092,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 			Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
-				UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+				UserClient: func(_ string) EpisodeReader { return plx.Plex },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
 			},
@@ -1132,7 +1131,7 @@ func TestProcessRecentHistory_PartialItemFailureWarnsWithCounts(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -1192,7 +1191,7 @@ func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -1247,7 +1246,7 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 			Deps{
 				Plex:       plx,
 				Cache:      c,
-				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  func() error { saveCalls.Add(1); return nil },
 			},
@@ -1279,7 +1278,7 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 			Deps{
 				Plex:       plx,
 				Cache:      c,
-				UserClient: func(_ string) api.PlexReadWriter { return plx },
+				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
 			},
@@ -1313,7 +1312,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 
 	// prev is the previous COMPLETED run's marker; every subtest asserts it is
 	// left untouched by an incomplete pass.
-	newSched := func(plx api.PlexReadWriter, reader func(string) api.PlexReadWriter, c api.Cache) *Scheduler {
+	newSched := func(plx plexReader, reader func(string) EpisodeReader, c runLedger) *Scheduler {
 		return New(Config{Enable: true}, Deps{Plex: plx, Cache: c, UserClient: reader, Sync: &fakeSyncer{}})
 	}
 
@@ -1330,7 +1329,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
 		c.SetLastSchedulerRun(prev)
-		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx }, c)
+		sched := newSched(plx, func(_ string) EpisodeReader { return plx }, c)
 
 		sched.deepAnalysisCore(t.Context())
 
@@ -1347,7 +1346,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
 		c.SetLastSchedulerRun(prev)
-		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx.Plex }, c)
+		sched := newSched(plx, func(_ string) EpisodeReader { return plx.Plex }, c)
 
 		sched.deepAnalysisCore(t.Context())
 
@@ -1365,7 +1364,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
 		c.SetLastSchedulerRun(prev)
-		sched := newSched(plx, func(_ string) api.PlexReadWriter { return plx.Plex }, c)
+		sched := newSched(plx, func(_ string) EpisodeReader { return plx.Plex }, c)
 
 		sched.deepAnalysisCore(t.Context())
 
@@ -1390,7 +1389,7 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx.Plex },
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
@@ -1444,7 +1443,7 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 		Deps{
 			Plex:       plx,
 			Cache:      c,
-			UserClient: func(_ string) api.PlexReadWriter { return plx },
+			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
 		},
