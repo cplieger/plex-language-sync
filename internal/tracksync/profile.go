@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/langtag/v2"
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
 )
@@ -38,7 +37,7 @@ import (
 // state and not apply the intended user's).
 func (s *Syncer) ApplyLanguageProfile(
 	ctx context.Context,
-	userClient api.PlexWriter,
+	userClient plexWriter,
 	userID string,
 	episode *streams.Episode,
 	trigger string,
@@ -84,7 +83,7 @@ func (s *Syncer) ApplyLanguageProfile(
 // public surface small.
 func applyProfileSubtitle(
 	ctx context.Context,
-	userClient api.PlexWriter,
+	userClient plexWriter,
 	target *streams.Episode,
 	partID int,
 	subLang string,

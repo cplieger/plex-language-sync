@@ -5,7 +5,7 @@
 // Inviolate contracts preserved (see refactor-agent-guide.md):
 //
 //   - The on-disk cache schema is untouched. The Manager reads and
-//     writes tokens through the api.Cache interface (backed by
+//     writes tokens through the tokenStore interface (backed by
 //     internal/cache), never by mutating cache.Data directly.
 //   - WARN/ERROR slog keys for token refresh ("failed to refresh shared
 //     user tokens", "shared user tokens refreshed") are byte-for-byte
@@ -19,12 +19,8 @@ package users
 import (
 	"sync"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 )
-
-// Compile-time interface satisfaction assertion.
-var _ api.UserLookup = (*Manager)(nil)
 
 // ID is the typed user identifier (runtime-types-p2). Plex user IDs are
 // numeric strings, but they are routinely treated as opaque keys — the
@@ -32,42 +28,64 @@ var _ api.UserLookup = (*Manager)(nil)
 // (ratingKey, tokens, session keys) inside this package while still
 // round-tripping through APIs that expect strings.
 //
-// The Manager's public methods accept plain strings (rather than ID)
-// so *Manager naturally satisfies api.UserLookup without a wrapper;
-// the typed ID remains available for internal map keys and for callers
-// that want stricter typing at their own boundaries.
+// The Manager's public methods accept plain strings (rather than ID) so a
+// consumer can declare its own lookup interface without importing this
+// package for the ID type; the typed ID remains available for internal map
+// keys and for callers that want stricter typing at their own boundaries.
 type ID string
 
 // String returns the ID as a plain string for APIs that accept strings
 // (HTTP query params, slog values, cache keys).
 func (i ID) String() string { return string(i) }
 
-// Info is the per-user record: the typed ID, display name, and Plex
-// access token. Tokens are secret; callers must not log Token values.
-type Info struct {
+// record is the manager's own per-user entry: the typed ID, display name, and
+// Plex access token. Unexported precisely BECAUSE of that token — a struct that
+// can carry a secret must not be handed across a package boundary, and nothing
+// outside this package has ever needed one. Callers get Account instead.
+type record struct {
 	ID    ID
 	Name  string
 	Token string
+}
+
+// Account is a user's identity as every other package sees it: an ID and a
+// display name, and deliberately NO token field. With no field to populate,
+// leaking a token through this struct is structurally impossible rather than
+// merely discouraged. Anything needing to act as a user goes through
+// ClientForUser, which looks the token up internally and never returns it.
+type Account struct {
+	ID   string
+	Name string
+}
+
+// tokenStore is the persistence this package needs: read and write the
+// shared-user token map. Two methods, against the eleven of the cache type it
+// is satisfied by — the other nine belong to the profile ledger and the
+// deep-scan watermark, which are no business of user management. Declared here
+// so a test fake implements two methods instead of eleven.
+type tokenStore interface {
+	UserTokens() map[string]string
+	SetUserTokens(tokens map[string]string)
 }
 
 // Manager owns the shared-user map, the per-user HTTP client cache, and
 // the admin user identity. All fields are guarded by mu; the manager is
 // safe for concurrent use.
 type Manager struct {
-	cache   api.Cache
-	shared  map[ID]Info         // keyed by typed userID
+	cache   tokenStore
+	shared  map[ID]record       // keyed by typed userID
 	clients map[ID]*plex.Client // cached per-user clients
-	admin   Info
+	admin   record
 	mu      sync.Mutex
 }
 
 // NewManager returns a Manager with empty shared-user and client maps.
 // The Init method (called by the composition root after the admin user
 // is resolved) seeds the admin identity.
-func NewManager(c api.Cache) *Manager {
+func NewManager(c tokenStore) *Manager {
 	return &Manager{
 		cache:   c,
-		shared:  make(map[ID]Info),
+		shared:  make(map[ID]record),
 		clients: make(map[ID]*plex.Client),
 	}
 }
@@ -78,9 +96,9 @@ func NewManager(c api.Cache) *Manager {
 func (m *Manager) Init(admin *plex.User) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.admin = Info{ID: ID(admin.ID), Name: admin.Name}
+	m.admin = record{ID: ID(admin.ID), Name: admin.Name}
 	if m.shared == nil {
-		m.shared = make(map[ID]Info)
+		m.shared = make(map[ID]record)
 	}
 	m.clients = make(map[ID]*plex.Client)
 }
@@ -103,7 +121,7 @@ func (m *Manager) LoadFromCache() {
 			continue
 		}
 		if _, exists := m.shared[uid]; !exists {
-			m.shared[uid] = Info{ID: uid, Token: token, Name: "user-" + uidStr}
+			m.shared[uid] = record{ID: uid, Token: token, Name: "user-" + uidStr}
 		}
 	}
 }
@@ -133,8 +151,8 @@ func (m *Manager) LoadFromCache() {
 // per-call WARN here would re-introduce the exact Loki spam that de-spam
 // was built to prevent.
 //
-// userID is accepted as a plain string so *Manager satisfies
-// api.UserLookup; convert to ID internally for map keys.
+// userID is accepted as a plain string so consumers need not import this
+// package for the ID type; convert to ID internally for map keys.
 func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.Client {
 	uid := ID(userID)
 
@@ -169,26 +187,21 @@ func (m *Manager) SharedCount() int {
 	return len(m.shared)
 }
 
-// All returns the admin plus all shared users as api.UserInfo values.
-// api.UserInfo has no token field, so this slice cannot carry one.
-// Callers that need an HTTP client for any user must use ClientForUser
-// (which falls back to the admin client for the admin ID and looks up a
-// shared user's token internally).
-//
-// The return type is api.UserInfo (not internal Info) so *Manager
-// satisfies api.UserLookup and consumers (sync, scheduler) can depend
-// on the api interface without pulling in internal/users.
-func (m *Manager) All() []api.UserInfo {
+// All returns the admin plus all shared users as Account values. Account has
+// no token field, so this slice cannot carry one. Callers that need an HTTP
+// client for any user must use ClientForUser (which falls back to the admin
+// client for the admin ID and looks up a shared user's token internally).
+func (m *Manager) All() []Account {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out := make([]api.UserInfo, 0, 1+len(m.shared))
-	out = append(out, api.UserInfo{
+	out := make([]Account, 0, 1+len(m.shared))
+	out = append(out, Account{
 		ID:   m.admin.ID.String(),
 		Name: m.admin.Name,
 	})
 	for _, u := range m.shared {
-		out = append(out, api.UserInfo{
+		out = append(out, Account{
 			ID:   u.ID.String(),
 			Name: u.Name,
 		})

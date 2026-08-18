@@ -22,8 +22,8 @@
 //
 // Inviolate contracts preserved (see refactor-agent-guide.md):
 //   - Plex HTTP URL paths and query parameters — this package never
-//     constructs URLs directly; it calls through api.PlexReader /
-//     api.PlexWriter, so the concrete plex.Client's verbatim path
+//     constructs URLs directly; it calls through plexReader /
+//     plexWriter, so the concrete plex.Client's verbatim path
 //     strings remain the single source of truth (inviolate item 1/9).
 //   - WARN / ERROR slog keys ("failed to set audio stream", "failed to
 //     set subtitle stream", "failed to disable subtitles", "language
@@ -32,8 +32,8 @@
 //     reference") are byte-for-byte identical to the pre-extraction
 //     log lines (inviolate item 5).
 //
-// Consumer note: tracksync depends on api.PlexReader, api.PlexWriter,
-// api.Cache, and api.UserLookup (not on the concrete internal/plex,
+// Consumer note: tracksync depends on plexReader, plexWriter,
+// cacheStore, and userLookup (not on the concrete internal/plex,
 // internal/cache, or internal/users types). This keeps the package
 // trivially testable with in-memory fakes.
 package tracksync
@@ -45,7 +45,6 @@ import (
 	"time"
 
 	"github.com/cplieger/langtag/v2"
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
@@ -56,9 +55,9 @@ import (
 // package boundary clean and lets tests construct a Syncer without
 // mimicking the app's full env-var surface.
 type Config struct {
-	Ignore         api.IgnoreChecker // library/label skip rules; nil means "never skip"
-	UpdateLevel    string            // "show" (default) or "season"
-	UpdateStrategy string            // "all" (default) or "next"
+	Ignore         episodeSkipper // library/label skip rules; nil means "never skip"
+	UpdateLevel    string         // "show" (default) or "season"
+	UpdateStrategy string         // "all" (default) or "next"
 	// SubtitleFloor is the furthest language distance a subtitle substitution
 	// may reach. Audio is not configurable and is fixed at streams.AudioFloor.
 	SubtitleFloor    langtag.Tier
@@ -80,14 +79,14 @@ const (
 
 // Syncer owns the per-episode orchestration. Construct via New in
 // the composition root; *Syncer is safe for concurrent use because all
-// mutation goes through api.Cache (which is itself safe for concurrent
+// mutation goes through cacheStore (which is itself safe for concurrent
 // use) and the Plex clients handled below are concurrency-safe (net/http
 // transport + method-local state).
 type Syncer struct {
-	plex       api.PlexReader // admin-scoped reader
-	cache      api.Cache
-	users      api.UserLookup
-	userClient api.UserClientFunc
+	plex       plexReader // admin-scoped reader
+	cache      cacheStore
+	users      userLookup
+	userClient UserClientFunc
 	cfg        Config
 }
 
@@ -97,15 +96,15 @@ type Syncer struct {
 // composition root wires them exactly once. All four are required.
 type Deps struct {
 	// Plex reads sessions, metadata and history.
-	Plex api.PlexReader
+	Plex plexReader
 	// Cache persists learned profiles and recorded intents.
-	Cache api.Cache
+	Cache cacheStore
 	// Users resolves a play session's account to a known user.
-	Users api.UserLookup
+	Users userLookup
 	// UserClient returns the per-user write client for a username; the write
 	// path is user-scoped because Plex records selection writes against the
 	// requesting token.
-	UserClient api.UserClientFunc
+	UserClient UserClientFunc
 }
 
 // New constructs a Syncer from cfg and deps. Fields stay unexported so
@@ -132,7 +131,7 @@ func New(cfg Config, deps Deps) *Syncer {
 // path only re-apply what was recorded here.
 func (s *Syncer) ObserveAndPropagate(
 	ctx context.Context,
-	userClient api.PlexReadWriter,
+	userClient PlexReadWriter,
 	userID string,
 	reference *streams.Episode,
 	trigger string,
@@ -151,7 +150,7 @@ func (s *Syncer) ObserveAndPropagate(
 	// recording an intent, AND before propagating to other episodes.
 	// Learning/recording must come after this gate so an ignored show
 	// never contributes to the user's global profile or intent ledger.
-	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, reference) {
+	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, reference) {
 		return
 	}
 
@@ -189,15 +188,28 @@ func (s *Syncer) ObserveAndPropagate(
 //
 // No intent recorded for the show → skip: the safety net only replays
 // knowledge, it never invents it.
+//
+// It takes the userID and derives the client itself rather than accepting both.
+// Accepting both let them disagree: nothing tied the passed client to the passed
+// userID, so a caller could apply user A's recorded intent through user B's
+// token — and because Plex records a selection write against the REQUESTING
+// token's user, that writes the wrong account. Deriving the client here makes
+// the mismatch unrepresentable. A user with no client is skipped, never
+// silently retried through the admin token.
 func (s *Syncer) ReconcileWithIntent(
 	ctx context.Context,
-	userClient api.PlexReadWriter,
 	userID string,
 	episode *streams.Episode,
 	viewedAt int64,
 	trigger string,
 ) {
 	username := s.users.Name(userID)
+	userClient := s.userClient(userID)
+	if userClient == nil {
+		slog.Warn("reconcile: no per-user client, skipping user",
+			"user_id", userID, "user", username)
+		return
+	}
 	showKey := episode.GrandparentRatingKey
 	if showKey == "" {
 		slog.Debug("no show rating key, skipping",
@@ -220,7 +232,7 @@ func (s *Syncer) ReconcileWithIntent(
 	// Ignore gate after the cheap ledger checks (it costs a show-metadata
 	// fetch) but before any write, preserving "an ignored show is never
 	// propagated to".
-	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, episode) {
+	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, episode) {
 		return
 	}
 
@@ -234,7 +246,7 @@ func (s *Syncer) ReconcileWithIntent(
 // UpdateStrategy relative to the anchor episode.
 func (s *Syncer) propagate(
 	ctx context.Context,
-	userClient api.PlexReadWriter,
+	userClient PlexReadWriter,
 	username string,
 	anchor *streams.Episode,
 	ref streams.Pair,
@@ -295,7 +307,7 @@ func (s *Syncer) propagate(
 // any change was written.
 func (s *Syncer) UpdateEpisodeStreams(
 	ctx context.Context,
-	userClient api.PlexReadWriter,
+	userClient PlexReadWriter,
 	username, ratingKey string,
 	ref streams.Pair,
 ) bool {
@@ -320,7 +332,7 @@ func (s *Syncer) UpdateEpisodeStreams(
 
 func (s *Syncer) applyAudioStream(
 	ctx context.Context,
-	userClient api.PlexWriter,
+	userClient plexWriter,
 	username string,
 	ep *streams.Episode,
 	partID int,
@@ -342,7 +354,7 @@ func (s *Syncer) applyAudioStream(
 
 func (s *Syncer) applySubtitleStream(
 	ctx context.Context,
-	userClient api.PlexWriter,
+	userClient plexWriter,
 	username string,
 	ep *streams.Episode,
 	partID int,

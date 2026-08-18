@@ -30,7 +30,6 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/health"
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/deepscan"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
@@ -41,9 +40,10 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/users"
 )
 
-// Compile-time interface satisfaction assertions for concrete types
-// whose defining packages cannot import api (import cycle).
-var _ api.PlexReadWriter = (*plex.Client)(nil)
+// Compile-time assertion that the real client satisfies the per-user surface
+// tracksync declares. Checked here, at the composition root, because that is
+// where the two are joined — neither package imports the other.
+var _ tracksync.PlexReadWriter = (*plex.Client)(nil)
 
 // cacheDir is the on-disk directory for the persisted cache (the split
 // profiles.json / tokens.json / state.json layout; a legacy cache.json is
@@ -168,23 +168,36 @@ func run() int {
 	// after the health marker is set so a plex.tv outage never gates liveness.
 	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
-	// Compose the sync and scheduler subsystems from the concrete
-	// internal/* packages, passing api.* interfaces so the subsystems
-	// stay testable.
-	userClientFn := func(userID string) api.PlexReadWriter {
-		// ClientForUser returns a typed nil (*plex.Client)(nil) when no
-		// per-user client can be built. Returning that directly would
-		// produce a non-nil api.PlexReadWriter interface wrapping a nil
-		// pointer (the classic Go nil-interface trap), defeating the
-		// consumers' `== nil` checks. Convert to a genuine nil interface
-		// so sync/scheduler skip the user instead of dereferencing.
-		uc := um.ClientForUser(userID, client)
-		if uc == nil {
-			return nil
-		}
-		return uc
+	// Compose the subsystems from the concrete internal/* packages. Each
+	// subsystem declares its own narrow interfaces, so what it can reach is
+	// bounded by what it asked for rather than by a shared contract package.
+	//
+	// ClientForUser returns a typed nil (*plex.Client)(nil) when no per-user
+	// client can be built, and putting that straight into an interface yields a
+	// NON-nil interface wrapping a nil pointer (the Go nil-interface trap),
+	// which would defeat every consumer's `== nil` check and turn "skip this
+	// user" into a nil dereference. perUserClient is the single place that
+	// conversion happens; the two adapters below only narrow its result.
+	perUserClient := func(userID string) *plex.Client {
+		return um.ClientForUser(userID, client)
 	}
-	ignorePolicy := ignore.NewPolicy(cfg.ignoreLibraries, cfg.ignoreLabels)
+	syncUserClient := func(userID string) tracksync.PlexReadWriter {
+		if uc := perUserClient(userID); uc != nil {
+			return uc
+		}
+		return nil
+	}
+	scanUserClient := func(userID string) deepscan.EpisodeReader {
+		if uc := perUserClient(userID); uc != nil {
+			return uc
+		}
+		return nil
+	}
+	ignorePolicy := ignore.New(ignore.Config{
+		Reader:    client,
+		Libraries: cfg.ignoreLibraries,
+		Labels:    cfg.ignoreLabels,
+	})
 	syncer := tracksync.New(
 		tracksync.Config{
 			UpdateLevel:      cfg.updateLevel,
@@ -197,7 +210,7 @@ func run() int {
 			Plex:       client,
 			Cache:      c,
 			Users:      um,
-			UserClient: userClientFn,
+			UserClient: syncUserClient,
 		},
 	)
 	sched := deepscan.New(
@@ -209,7 +222,7 @@ func run() int {
 		deepscan.Deps{
 			Plex:       client,
 			Cache:      c,
-			UserClient: userClientFn,
+			UserClient: scanUserClient,
 			Sync:       syncer,
 			SaveCache:  func() error { return c.Save(cacheDir) },
 		},
@@ -419,13 +432,20 @@ func isFatalStartupError(err error) bool {
 // no-copy intent invisible: a future field with a mutex or an inline counter
 // would be silently copied per event. Pointer receivers state that this glue
 // is one live object.
+//
+// episodeSkipper is the ignore decision this glue needs: one method, declared
+// at the point of use rather than taken from a shared contract package.
+type episodeSkipper interface {
+	ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool
+}
+
 type notifyAdapter struct {
 	syncer *tracksync.Syncer
 	cfg    *config
 	users  *users.Manager
 	client *plex.Client
 	cache  *cache.Cache
-	ignore api.IgnoreChecker
+	ignore episodeSkipper
 	// resolveStalls carries the identity-resolution failure run across
 	// events so the expected failures stay quiet and a real stall speaks
 	// once. A nil counter counts nothing (see resolveStallCounter).
@@ -653,7 +673,7 @@ func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.Tim
 		if episode.Type != plex.TypeEpisode {
 			continue
 		}
-		if n.ignore != nil && n.ignore.ShouldSkipEpisode(ctx, n.client, episode) {
+		if n.ignore != nil && n.ignore.ShouldSkipEpisode(ctx, episode) {
 			continue
 		}
 

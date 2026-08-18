@@ -55,7 +55,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -752,7 +751,7 @@ type fakeIgnoreChecker struct{ skip bool }
 
 func (f fakeIgnoreChecker) IgnoreLibrary(string) bool { return false }
 
-func (f fakeIgnoreChecker) ShouldSkipEpisode(context.Context, api.PlexReader, *streams.Episode) bool {
+func (f fakeIgnoreChecker) ShouldSkipEpisode(context.Context, *streams.Episode) bool {
 	return f.skip
 }
 
@@ -770,7 +769,7 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) api.PlexReadWriter { return nil }})
+	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) tracksync.PlexReadWriter { return nil }})
 	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
@@ -809,7 +808,7 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) api.PlexReadWriter { return nil }})
+	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) tracksync.PlexReadWriter { return nil }})
 	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},
@@ -845,7 +844,7 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) api.PlexReadWriter { return nil }})
+	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) tracksync.PlexReadWriter { return nil }})
 	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{triggerOnScan: true},

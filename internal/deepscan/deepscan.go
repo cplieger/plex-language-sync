@@ -16,7 +16,7 @@
 //   - Fan out per-item work across a bounded worker pool
 //     with a circuit breaker that aborts the
 //     pass after a threshold of consecutive per-item failures.
-//   - Persist the last-run marker through api.Cache so a cold restart
+//   - Persist the last-run marker through runLedger so a cold restart
 //     does not double-run the analysis.
 //
 // Stable contracts preserved (keep these exact: Loki alerts grep the log
@@ -31,15 +31,15 @@
 //     "scheduler stopped") identical.
 //   - On-disk cache schema unchanged (LastSchedulerRun lives in
 //     state.json since the 2026-07 retention split) — reads and writes go
-//     through api.Cache and are tagged by the concrete internal/cache
+//     through runLedger and are tagged by the concrete internal/cache
 //     package.
 //
-// Consumer note: deepscan depends on api.PlexReader, api.Cache,
-// api.UserLookup, and a Syncer interface satisfied by *tracksync.Syncer
-// (declared locally to keep this package testable without importing
-// internal/tracksync, which would create a visible dependency direction
-// only used in one place). In practice main.go wires the concrete
-// *tracksync.Syncer through.
+// Consumer note: every collaborator is an interface THIS package declares (see
+// deps.go) — plexReader, EpisodeReader, runLedger, skipChecker and Syncer, each
+// naming only the methods the pass calls. Nothing is imported from a shared
+// contract package, and Syncer in particular is declared here rather than
+// imported so deepscan needs no dependency on internal/tracksync. In practice
+// main.go wires the concrete *tracksync.Syncer through.
 package deepscan
 
 import (
@@ -51,7 +51,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
@@ -88,34 +87,9 @@ const maxDeepAnalysisLookback = 30 * 24 * time.Hour
 // the package boundary clean and lets tests construct a Scheduler
 // without mimicking the app's full env-var surface.
 type Config struct {
-	Ignore   api.IgnoreChecker // library skip rules; nil means "never skip"
-	Interval time.Duration     // deep-analysis cadence; <=0 means disabled
-	Enable   bool              // scheduler on/off
-}
-
-// CacheSaver is the narrow persistence sink the scheduler needs: a
-// single "flush the cache to disk" call invoked at the end of each
-// deep-analysis tick. Deliberately separate from api.Cache (which
-// deliberately excludes file-system concerns) so the scheduler can
-// trigger a disk flush without the api.Cache consumers needing to
-// know about the persistence path. *cache.Cache satisfies this via a
-// trivial closure in the composition root.
-type CacheSaver func() error
-
-// Syncer is the narrow interface this package needs from the tracksync
-// package: the reconcile-plane per-user call (re-apply the user's
-// RECORDED intent — history replay never derives a user's choice from
-// a delayed metadata read) plus the multi-user new-episode fan-out.
-// The ignore-library/ignore-label skip checks live on
-// api.IgnoreChecker (injected via Config.Ignore) rather than on the
-// Syncer, so overlapping event/deep-scan paths share one decision
-// point instead of the three duplicated implementations that existed
-// previously.
-// *tracksync.Syncer satisfies this. Declared here (rather than imported)
-// to keep deepscan independent of internal/tracksync for test ergonomics.
-type Syncer interface {
-	ReconcileWithIntent(ctx context.Context, userClient api.PlexReadWriter, userID string, episode *streams.Episode, viewedAt int64, trigger string)
-	ProcessNewOrUpdatedEpisodeAllUsers(ctx context.Context, episode *streams.Episode, trigger string)
+	Ignore   skipChecker   // library skip rules; nil means "never skip"
+	Interval time.Duration // deep-analysis cadence; <=0 means disabled
+	Enable   bool          // scheduler on/off
 }
 
 // Scheduler owns the deep-analysis tick and its workers. Safe for
@@ -131,11 +105,11 @@ type Syncer interface {
 // the "scheduler: deep analysis already in progress, skipping" key so
 // Loki alerts keyed on that string continue to fire.
 type Scheduler struct {
-	plex       api.PlexReader
-	cache      api.Cache
+	plex       plexReader
+	cache      runLedger
 	sync       Syncer
 	dedup      singleflight.Group
-	userClient api.UserClientFunc
+	userClient UserClientFunc
 	saveCache  CacheSaver
 	cfg        Config
 	// workers bounds in-flight per-item work during a deep-analysis
@@ -164,11 +138,11 @@ func (s *Scheduler) workerCount() int {
 // once at the composition root.
 type Deps struct {
 	// Plex reads history and library metadata for the sweep.
-	Plex api.PlexReader
+	Plex plexReader
 	// Cache holds the run marker and the recorded intents the pass re-applies.
-	Cache api.Cache
+	Cache runLedger
 	// UserClient returns the per-user write client for a username.
-	UserClient api.UserClientFunc
+	UserClient UserClientFunc
 	// Sync applies the recorded intent to an episode.
 	Sync Syncer
 	// SaveCache flushes the cache to disk. May be nil in tests that do not
@@ -453,7 +427,7 @@ func (s *Scheduler) processHistoryItem(
 		return
 	}
 	consecutiveErrors.Store(0)
-	s.sync.ReconcileWithIntent(ctx, userClient, userID, ep, int64(item.ViewedAt), "scheduler")
+	s.sync.ReconcileWithIntent(ctx, userID, ep, int64(item.ViewedAt), "scheduler")
 }
 
 // processRecentlyAdded applies language settings to recently added
@@ -570,7 +544,7 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 		}
 		return
 	}
-	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, s.plex, full) {
+	if s.cfg.Ignore != nil && s.cfg.Ignore.ShouldSkipEpisode(ctx, full) {
 		return
 	}
 

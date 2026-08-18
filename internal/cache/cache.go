@@ -31,12 +31,12 @@ import (
 	"sync"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// Compile-time interface satisfaction assertion.
-var _ api.Cache = (*Cache)(nil)
+// Compile-time assertion that the real store satisfies the contract the shared
+// suite runs against it.
+var _ Contract = (*Cache)(nil)
 
 // maxCacheSize caps each cache file at 50 MB. A file at this size is almost
 // certainly corrupted or deliberately bloated; the loader warns and leaves

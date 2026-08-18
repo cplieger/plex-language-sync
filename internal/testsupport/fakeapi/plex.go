@@ -5,20 +5,14 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
 )
 
-// Plex implements api.PlexReadWriter for tests. All methods are
+// Plex is the test stand-in for the Plex client. All methods are
 // concurrency-safe. Fields are exported for direct test setup.
 type Plex struct {
-	UserFromSessionResult struct {
-		Err      error
-		UserID   string
-		Username string
-	}
 	EpisodeErr          error
 	SetAudioErr         error
 	SetSubtitleErr      error
@@ -113,12 +107,6 @@ func (f *Plex) ShowSections(_ context.Context) ([]plex.Section, error) {
 	return f.Sections, nil
 }
 
-// UserFromSession returns the userID, username, and error configured in UserFromSessionResult.
-func (f *Plex) UserFromSession(_ context.Context, _ string) (userID, username string, err error) {
-	f.record("UserFromSession")
-	return f.UserFromSessionResult.UserID, f.UserFromSessionResult.Username, f.UserFromSessionResult.Err
-}
-
 // SetAudioStream records the call and returns SetAudioErr.
 func (f *Plex) SetAudioStream(_ context.Context, _ plexapi.StreamSelection) error {
 	f.record("SetAudio")
@@ -144,4 +132,20 @@ func (f *Plex) record(name string) {
 	f.mu.Unlock()
 }
 
-var _ api.PlexReadWriter = (*Plex)(nil)
+// Compile-time assertion that the fake covers every method any consumer
+// declares for the Plex client. Spelled out rather than referencing a shared
+// interface: consumers each declare their own 1-, 3- or 4-method subset, and
+// this is the union those subsets are drawn from. A consumer adding a method it
+// needs will fail to compile against the fake until it is added here too.
+var _ interface {
+	Episode(ctx context.Context, ratingKey plex.RatingKey) (*streams.Episode, error)
+	ShowEpisodes(ctx context.Context, showRatingKey plex.RatingKey) ([]streams.Episode, error)
+	SeasonEpisodes(ctx context.Context, seasonRatingKey plex.RatingKey) ([]streams.Episode, error)
+	ShowMetadata(ctx context.Context, showRatingKey plex.RatingKey) (*plex.Show, error)
+	RecentlyAdded(ctx context.Context, sectionKey plex.RatingKey, sinceUnix int64) ([]streams.Episode, error)
+	History(ctx context.Context, sinceUnix int64) ([]plex.HistoryItem, error)
+	ShowSections(ctx context.Context) ([]plex.Section, error)
+	SetAudioStream(ctx context.Context, sel plexapi.StreamSelection) error
+	SetSubtitleStream(ctx context.Context, sel plexapi.StreamSelection) error
+	DisableSubtitles(ctx context.Context, partID int) error
+} = (*Plex)(nil)

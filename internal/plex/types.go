@@ -23,9 +23,9 @@ const (
 )
 
 // RatingKey is the library's validated Plex item identifier. The alias
-// preserves this package's boundary vocabulary (api.PlexReader and the
-// *Client methods take plex.RatingKey); validation semantics — and the
-// exact `invalid rating key %q` error text scrapers grep for — are the
+// preserves this package's boundary vocabulary (the *Client methods and every
+// consumer's own reader interface take plex.RatingKey); validation semantics —
+// and the exact `invalid rating key %q` error text scrapers grep for — are the
 // library's.
 type RatingKey = plexapi.RatingKey
 

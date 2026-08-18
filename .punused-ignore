@@ -17,11 +17,15 @@
 # is being called. Each entry names which blind spot, or which structural
 # constraint, applies.
 #
-# Not in this file, because they were resolved instead: api.UserInfo.Token and
-# plex.Show.RatingKey (deleted, no production reader), streams.StreamTypeVideo
-# (deleted from production; the wire value now lives in the test that needs a
-# third stream kind), plex.NewClientFromHTTP (moved to
-# internal/testsupport/plexclient).
+# Not in this file, because they were resolved instead: plex.Show.RatingKey
+# (deleted, no production reader), streams.StreamTypeVideo (deleted from
+# production; the wire value now lives in the test that needs a third stream
+# kind), plex.NewClientFromHTTP (moved to internal/testsupport/plexclient),
+# plex.SwapTVClient (the process-global seam it swapped is gone; the override
+# rides on the Client value), and fakeapi.(*Plex).UserFromSession (the wide
+# shared PlexReader interface was the only thing requiring it; with each
+# consumer declaring its own 1-to-4-method subset, nothing did, so the method
+# and its result field were deleted).
 
 # ---------------------------------------------------------------------------
 # json.Unmarshaler reached reflectively by encoding/json.
@@ -51,16 +55,22 @@ method (*FlexInt).UnmarshalJSON is used in test only
 # directory-wide pattern, so a fixture that becomes genuinely unreferenced
 # still fails the gate.
 
-# fakeapi.NewCache — the in-memory api.Cache fake. 113 call sites across three
+# fakeapi.NewCache — the in-memory cache fake. 113 call sites across three
 # other packages' tests (internal/tracksync, internal/deepscan, internal/users).
 function NewCache is used in test only
 
-# fakeapi.RunCacheContract — the shared api.Cache contract, run against BOTH
-# implementations: the REAL cache at internal/cache/cache_test.go:554
-# (RunCacheContract(t, New())) and the fake at
-# internal/testsupport/fakeapi/cache_contract_test.go:7. Deleting it deletes
-# the production cache's contract coverage, not just the fake's.
-function RunCacheContract is used in test only
+# cache.RunContract — the shared persisted-cache contract, run against BOTH
+# implementations: the REAL cache in internal/cache/cache_test.go and the fake
+# in internal/testsupport/fakeapi/cache_contract_test.go. Deleting it deletes
+# the production cache's contract coverage, not just the fake's. It sits in an
+# ordinary .go file because its second caller is in another package.
+function RunContract is used in test only
+
+# cache.Contract — RunContract's parameter: the full persisted surface, and the
+# only wide interface in this app. Test-only BY DESIGN — no production consumer
+# depends on it, which is the whole point; each declares the 4, 3 or 2 methods
+# it actually calls at its own package.
+type Contract is used in test only
 
 # fakeapi.(*Plex).CallNames — reader for the fake's ordered call log; 73
 # assertion sites in internal/tracksync and internal/deepscan tests pin "the pass
@@ -83,13 +93,7 @@ type Options is used in test only
 # Interface satisfaction.
 # Blind spot: "Some possible surprises when it comes to interfaces."
 #
-# EU1002 (zero references) is literally accurate — nothing calls this method on
-# the fake by name — but it cannot be deleted: api.PlexReader requires
-# UserFromSession (internal/api/plex.go:39) and
-# internal/testsupport/fakeapi/plex.go:141 asserts
-# `var _ api.PlexReadWriter = (*Plex)(nil)`, so removing it breaks compilation
-# everywhere the fake is passed as a PlexReader/PlexReadWriter. Satisfying an
-# interface is not a reference gopls reports, which is why the count is zero.
-# Production reaches the real implementation through the same interface
-# (main.go:491 -> internal/plex/history.go:22).
-method (*Plex).UserFromSession is unused
+# (This section is empty. It held fakeapi.(*Plex).UserFromSession, excused
+# because a shared 8-method PlexReader interface demanded a method nothing
+# called. Deleting the shared interface removed the demand, and the method with
+# it — the adjudication was load-bearing only for a design that is gone.)
