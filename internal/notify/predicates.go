@@ -95,8 +95,25 @@ func TimelineAction(entry *TimelineEntry) string {
 // the state.json schema and every already-persisted key are unaffected
 // (pinned by TestBuildStreamCacheKey and
 // TestBuildStreamCacheKeyByteIdenticalToLegacyFormat).
-func BuildStreamCacheKey(userID, ratingKey string, audioID, subID int) string {
-	return keyenc.Join(streamsKeyKind, userID, ratingKey, strconv.Itoa(audioID), strconv.Itoa(subID))
+func BuildStreamCacheKey(sel StreamSelectionKey) string {
+	return keyenc.Join(streamsKeyKind, sel.UserID, sel.RatingKey,
+		strconv.Itoa(sel.AudioID), strconv.Itoa(sel.SubtitleID))
+}
+
+// StreamSelectionKey names the four values that identify one user's stream
+// selection on one episode. Two adjacent strings followed by two adjacent
+// ints: every transposition type-checked and produced a WELL-FORMED key for
+// the wrong stream, so the dedup check silently passed or silently suppressed.
+// Named fields make the mistake visible where it is made.
+type StreamSelectionKey struct {
+	// UserID is the Plex account the selection belongs to.
+	UserID string
+	// RatingKey is the episode.
+	RatingKey string
+	// AudioID is the selected audio stream's id, 0 when none.
+	AudioID int
+	// SubtitleID is the selected subtitle stream's id, 0 when none.
+	SubtitleID int
 }
 
 // BuildTimelineCacheKey builds the per-episode timeline (library-scan)

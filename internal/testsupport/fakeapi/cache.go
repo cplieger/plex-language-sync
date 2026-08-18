@@ -85,8 +85,9 @@ func (c *Cache) CheckAndMark(key string) bool {
 }
 
 // LearnLanguageProfile stores a user's audio→subtitle preference.
-// Empty audioLang is ignored to match internal/cache.Cache.
-func (c *Cache) LearnLanguageProfile(userID, audioLang, subtitleLang string) {
+// An empty choice.Audio is ignored to match internal/cache.Cache.
+func (c *Cache) LearnLanguageProfile(userID string, choice streams.LanguageChoice) {
+	audioLang, subtitleLang := choice.Audio, choice.Subtitle
 	if audioLang == "" {
 		return
 	}

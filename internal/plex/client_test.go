@@ -10,25 +10,41 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/httpx/v4/certtest"
-	"github.com/cplieger/plexapi"
+	"github.com/cplieger/httpx/v5/certtest"
+	"github.com/cplieger/plexapi/v2"
 )
 
-// newClientFromHTTP builds a Client from an already-parsed base URL and a
-// caller-supplied http.Client. It is the in-package twin of
+// newClientForServer builds a Client whose requests to the Plex server go
+// through hc — the shape a test needs to aim a client at an httptest.Server.
+// It is the in-package twin of
 // testsupport/plexclient.NewFromHTTP, duplicated here because this file is
 // `package plex`: importing the fixture package (which imports plex) would
-// be an import cycle. A nil hc gets the library's default hardened
-// transport.
-func newClientFromHTTP(t *testing.T, baseURL *url.URL, token string, hc *http.Client) *Client {
+// be an import cycle.
+//
+// Split into two single-purpose helpers rather than one taking `hc, tv
+// *http.Client`: that adjacent same-type pair type-checks transposed, and
+// swapping it aims the server client at plex.tv and vice versa — the test
+// would then pass or fail for the wrong reason. No call site needs both, so
+// the pair never has to exist.
+func newClientForServer(t *testing.T, baseURL *url.URL, token string, hc *http.Client) *Client {
 	t.Helper()
-	var opts []plexapi.Option
-	if hc != nil {
-		opts = append(opts, plexapi.WithHTTPClient(hc))
-	}
+	return newClient(t, baseURL, token, plexapi.WithHTTPClient(hc))
+}
+
+// newClientForTV builds a Client whose plex.tv (shared-server) lookups go
+// through tv, leaving the server client on the library's hardened default.
+func newClientForTV(t *testing.T, baseURL *url.URL, token string, tv *http.Client) *Client {
+	t.Helper()
+	c := newClient(t, baseURL, token)
+	c.TVClient = tv
+	return c
+}
+
+func newClient(t *testing.T, baseURL *url.URL, token string, opts ...plexapi.Option) *Client {
+	t.Helper()
 	api, err := plexapi.New(baseURL.String(), token, opts...)
 	if err != nil {
-		t.Fatalf("newClientFromHTTP(%s): %v", baseURL, err)
+		t.Fatalf("newClient(%s): %v", baseURL, err)
 	}
 	return &Client{Client: api}
 }
@@ -44,7 +60,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newClientFromHTTP(t, u, "test-token", srv.Client())
+	return newClientForServer(t, u, "test-token", srv.Client())
 }
 
 // captureSlog redirects the default slog logger to a buffer for the duration
@@ -65,7 +81,7 @@ func captureSlog(t *testing.T, fn func()) string {
 
 func TestNewClient_HappyPath(t *testing.T) {
 	t.Parallel()
-	c, err := NewClient("http://plex:32400", "tok", "")
+	c, err := NewClient(Options{ServerURL: "http://plex:32400", Token: "tok"})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -76,7 +92,7 @@ func TestNewClient_HappyPath(t *testing.T) {
 
 func TestNewClient_InvalidURL(t *testing.T) {
 	t.Parallel()
-	_, err := NewClient("://bad", "tok", "")
+	_, err := NewClient(Options{ServerURL: "://bad", Token: "tok"})
 	if err == nil {
 		t.Fatal("NewClient() with invalid URL should return error")
 	}
@@ -84,7 +100,7 @@ func TestNewClient_InvalidURL(t *testing.T) {
 
 func TestNewClient_BadScheme(t *testing.T) {
 	t.Parallel()
-	_, err := NewClient("ftp://plex:32400", "tok", "")
+	_, err := NewClient(Options{ServerURL: "ftp://plex:32400", Token: "tok"})
 	if err == nil {
 		t.Fatal("NewClient() with ftp scheme should return error")
 	}
@@ -94,7 +110,7 @@ func TestNewClient_BadScheme(t *testing.T) {
 
 func TestForToken(t *testing.T) {
 	t.Parallel()
-	c, err := NewClient("http://plex:32400", "admin-token", "")
+	c, err := NewClient(Options{ServerURL: "http://plex:32400", Token: "admin-token"})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -121,7 +137,7 @@ func TestForToken(t *testing.T) {
 func TestNewClient_CACert(t *testing.T) {
 	t.Parallel()
 	caPath := certtest.WriteSelfSignedCA(t)
-	c, err := NewClient("https://plex:32400", "test-token", caPath)
+	c, err := NewClient(Options{ServerURL: "https://plex:32400", Token: "test-token", CACertPath: caPath})
 	if err != nil {
 		t.Fatalf("NewClient with CA path: %v", err)
 	}
@@ -276,7 +292,7 @@ func TestEpisode_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Episode() error = %v", err)
 	}
-	if ep.RatingKey != "456" || ep.SeasonNum() != 2 || ep.EpisodeNum() != 3 {
+	if ep.RatingKey != "456" || ep.SeasonNum() != 2 || ep.Num() != 3 {
 		t.Errorf("episode = %+v, want rk=456 S02E03", ep)
 	}
 }
@@ -649,7 +665,7 @@ func TestSetAudioStream_PUTPath(t *testing.T) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 		gotMethod = r.Method
 	})
-	if err := c.SetAudioStream(t.Context(), 100, 200); err != nil {
+	if err := c.SetAudioStream(t.Context(), plexapi.StreamSelection{PartID: 100, StreamID: 200}); err != nil {
 		t.Fatalf("SetAudioStream() error = %v", err)
 	}
 	if gotMethod != http.MethodPut {
@@ -671,7 +687,7 @@ func TestSetSubtitleStream_PUTPath(t *testing.T) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 		gotMethod = r.Method
 	})
-	if err := c.SetSubtitleStream(t.Context(), 100, 200); err != nil {
+	if err := c.SetSubtitleStream(t.Context(), plexapi.StreamSelection{PartID: 100, StreamID: 200}); err != nil {
 		t.Fatalf("SetSubtitleStream() error = %v", err)
 	}
 	if gotMethod != http.MethodPut {
@@ -699,8 +715,9 @@ func TestDisableSubtitles_UsesStreamID0(t *testing.T) {
 }
 
 // plexTVRewriteTransport redirects the hardcoded https://plex.tv/... request in
-// SharedUserTokens to a local httptest server, the documented purpose of
-// SwapTVClient. It rewrites scheme+host on every request.
+// SharedUserTokens to a local httptest server. It rewrites scheme+host on
+// every request; the client carrying it is injected per Client, so these
+// tests need no process-global swap and stay parallel-safe.
 type plexTVRewriteTransport struct {
 	base http.RoundTripper
 	host string
@@ -712,10 +729,13 @@ func (rt plexTVRewriteTransport) RoundTrip(req *http.Request) (*http.Response, e
 	return rt.base.RoundTrip(req)
 }
 
-// TestSharedUserTokens exercises the plex.tv shared_servers call via SwapTVClient:
-// a host-rewriting transport points the hardcoded plex.tv URL at a local server.
-// It must not be parallel (SwapTVClient mutates the process-global tvClient).
+// TestSharedUserTokens exercises the plex.tv shared_servers call: a
+// host-rewriting transport points the hardcoded plex.tv URL at a local server,
+// injected on the Client itself (Options.TVClient) rather than swapped into a
+// package global, so this test and its subtests run parallel.
 func TestSharedUserTokens(t *testing.T) {
+	t.Parallel()
+
 	newTVClient := func(t *testing.T, h http.HandlerFunc) *Client {
 		t.Helper()
 		srv := httptest.NewServer(h)
@@ -724,12 +744,14 @@ func TestSharedUserTokens(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+		tv := &http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}
 		base, _ := url.Parse("http://plex.local:32400")
-		return newClientFromHTTP(t, base, "admin-token", nil)
+		return newClientForTV(t, base, "admin-token", tv)
 	}
 
 	t.Run("happy path parses servers and sends auth", func(t *testing.T) {
+		t.Parallel()
+
 		var gotToken, gotAccept, gotReqURI string
 		c := newTVClient(t, func(w http.ResponseWriter, r *http.Request) {
 			gotToken = r.Header.Get("X-Plex-Token")
@@ -759,6 +781,8 @@ func TestSharedUserTokens(t *testing.T) {
 	})
 
 	t.Run("non-200 status returns error", func(t *testing.T) {
+		t.Parallel()
+
 		c := newTVClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 		})
@@ -768,6 +792,8 @@ func TestSharedUserTokens(t *testing.T) {
 	})
 
 	t.Run("malformed XML returns error", func(t *testing.T) {
+		t.Parallel()
+
 		c := newTVClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`<MediaContainer><SharedServer`))
 		})
@@ -777,6 +803,9 @@ func TestSharedUserTokens(t *testing.T) {
 	})
 }
 
+// Serial (no t.Parallel): allocates a 10 MB body. The four *Cap* tests in this
+// file stay serial so their buffers do not stack up concurrently — the reason is
+// memory, not a shared global.
 func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(bytes.Repeat([]byte("a"), (10<<20)+1))
@@ -786,9 +815,9 @@ func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+	tv := &http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}
 	base, _ := url.Parse("http://plex.local:32400")
-	c := newClientFromHTTP(t, base, "admin-token", nil)
+	c := newClientForTV(t, base, "admin-token", tv)
 
 	_, stErr := c.SharedUserTokens(t.Context(), "machine-id")
 	if stErr == nil {
@@ -801,6 +830,8 @@ func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
 }
 
 func TestSharedUserTokens_EmptyBodyReturnsNoServers(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -809,9 +840,9 @@ func TestSharedUserTokens_EmptyBodyReturnsNoServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+	tv := &http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}
 	base, _ := url.Parse("http://plex.local:32400")
-	c := newClientFromHTTP(t, base, "admin-token", nil)
+	c := newClientForTV(t, base, "admin-token", tv)
 
 	servers, stErr := c.SharedUserTokens(t.Context(), "machine-id")
 	if stErr != nil {
@@ -895,6 +926,9 @@ func xmlCommentPadding(t *testing.T, n int) []byte {
 // A single cap-sized comment is valid XML but not a plausible plex.tv response,
 // and the preflight rightly refuses it — which would make this test assert the
 // preflight rather than the read cap it exists to pin.
+//
+// Serial (no t.Parallel): allocates a 10 MB body — the reason is memory, not a
+// shared global.
 func TestSharedUserTokens_AcceptsResponseExactlyAtCap(t *testing.T) {
 	const prefix = `<MediaContainer>`
 	const suffix = `</MediaContainer>`
@@ -914,9 +948,9 @@ func TestSharedUserTokens_AcceptsResponseExactlyAtCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(SwapTVClient(&http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}))
+	tv := &http.Client{Transport: plexTVRewriteTransport{http.DefaultTransport, u.Host}}
 	base, _ := url.Parse("http://plex.local:32400")
-	c := newClientFromHTTP(t, base, "admin-token", nil)
+	c := newClientForTV(t, base, "admin-token", tv)
 
 	servers, stErr := c.SharedUserTokens(t.Context(), "machine-id")
 	if stErr != nil {

@@ -3,7 +3,7 @@ package streams
 import (
 	"strings"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 )
 
 // MatchAudio finds the best matching audio stream from candidates against a
@@ -36,12 +36,18 @@ func MatchAudio(ref *Stream, candidates []*Stream) *Stream {
 }
 
 // MatchSubtitle finds the best matching subtitle stream against the reference
-// subtitle, accepting a language within floor. The refAudio parameter is
-// accepted for call-site symmetry with the audio path but is NOT consulted:
-// SubtitleCriteria discards it, because the "no subtitle means no subtitle"
-// policy means the audio language is never used to derive subtitle criteria.
+// subtitle, accepting a language within floor.
 // Returns nil when no match applies, either because the reference had no
 // subtitle or because no candidate meets the derived criteria.
+//
+// It takes no reference-AUDIO parameter, and deliberately so: the "no subtitle
+// means no subtitle" policy means the audio language never derives subtitle
+// criteria, so such a parameter could not affect the result. It used to be here
+// for call-site symmetry with MatchAudio, which bought an adjacent
+// *Stream pair that type-checks transposed — a swap would have matched the
+// audio track as the subtitle reference, with the callers reading
+// (ref.Subtitle, ref.Audio), the reverse of the Pair{Audio, Subtitle} order
+// every other site uses.
 //
 // The order of the three narrowing steps is load-bearing, and the forced flag
 // and the hearing-impaired flag sit on opposite sides of the language grading
@@ -59,8 +65,8 @@ func MatchAudio(ref *Stream, candidates []*Stream) *Stream {
 // nil. That is a regression against plain string equality, which is what this
 // ordering exists to avoid: the preference belongs inside the language the
 // grading chose, not ahead of choosing it.
-func MatchSubtitle(ref, refAudio *Stream, candidates []*Stream, floor langtag.Tier) *Stream {
-	criteria, ok := SubtitleCriteria(ref, refAudio)
+func MatchSubtitle(ref *Stream, candidates []*Stream, floor langtag.Tier) *Stream {
+	criteria, ok := SubtitleCriteria(ref)
 	if !ok {
 		return nil
 	}
@@ -132,11 +138,13 @@ type Criteria struct {
 // at all.
 //
 // Policy: "no subtitle means no subtitle". When the reference episode has no
-// subtitle selected (ref == nil), we never search for forced subs based on the
-// audio language. The user explicitly chose "no subtitles" and we respect that.
+// subtitle selected (ref == nil), no criteria are derived at all — in particular
+// nothing searches for forced subs in the audio language, which this function
+// could not do in any case since it takes no audio stream. The user explicitly
+// chose "no subtitles" and we respect that.
 // The caller's disable-subtitles guard then fires unconditionally when the
 // target has subtitles selected.
-func SubtitleCriteria(ref, _ *Stream) (Criteria, bool) {
+func SubtitleCriteria(ref *Stream) (Criteria, bool) {
 	if ref == nil {
 		return Criteria{}, false
 	}

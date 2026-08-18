@@ -8,6 +8,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // Plex implements api.PlexReadWriter for tests. All methods are
@@ -119,13 +120,13 @@ func (f *Plex) UserFromSession(_ context.Context, _ string) (userID, username st
 }
 
 // SetAudioStream records the call and returns SetAudioErr.
-func (f *Plex) SetAudioStream(_ context.Context, _, _ int) error {
+func (f *Plex) SetAudioStream(_ context.Context, _ plexapi.StreamSelection) error {
 	f.record("SetAudio")
 	return f.SetAudioErr
 }
 
 // SetSubtitleStream records the call and returns SetSubtitleErr.
-func (f *Plex) SetSubtitleStream(_ context.Context, _, _ int) error {
+func (f *Plex) SetSubtitleStream(_ context.Context, _ plexapi.StreamSelection) error {
 	f.record("SetSubtitle")
 	return f.SetSubtitleErr
 }

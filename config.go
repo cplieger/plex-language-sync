@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/langtag"
-	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
+	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/slogx"
 )
 
@@ -30,8 +30,8 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	defaultUpdateLevel       = syncpkg.LevelShow
-	defaultUpdateStrategy    = syncpkg.StrategyAll
+	defaultUpdateLevel       = tracksync.LevelShow
+	defaultUpdateStrategy    = tracksync.StrategyAll
 	defaultSchedulerInterval = 24 * time.Hour
 )
 
@@ -116,11 +116,11 @@ func loadConfig() config {
 		cfg.ignoreLibraries = splitTrim(v)
 	}
 
-	if cfg.updateLevel != syncpkg.LevelShow && cfg.updateLevel != syncpkg.LevelSeason {
+	if cfg.updateLevel != tracksync.LevelShow && cfg.updateLevel != tracksync.LevelSeason {
 		slog.Warn("invalid UPDATE_LEVEL, defaulting to show", "value", cfg.updateLevel)
 		cfg.updateLevel = defaultUpdateLevel
 	}
-	if cfg.updateStrategy != syncpkg.StrategyAll && cfg.updateStrategy != syncpkg.StrategyNext {
+	if cfg.updateStrategy != tracksync.StrategyAll && cfg.updateStrategy != tracksync.StrategyNext {
 		slog.Warn("invalid UPDATE_STRATEGY, defaulting to all", "value", cfg.updateStrategy)
 		cfg.updateStrategy = defaultUpdateStrategy
 	}

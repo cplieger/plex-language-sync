@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // PlexReader is the read side of the Plex HTTP client as consumed by the
@@ -45,8 +46,8 @@ type PlexReader interface {
 // users.Manager.ClientForUser, so the interface must be satisfied by
 // both the admin and per-user clients.
 type PlexWriter interface {
-	SetAudioStream(ctx context.Context, partID, streamID int) error
-	SetSubtitleStream(ctx context.Context, partID, streamID int) error
+	SetAudioStream(ctx context.Context, sel plexapi.StreamSelection) error
+	SetSubtitleStream(ctx context.Context, sel plexapi.StreamSelection) error
 	DisableSubtitles(ctx context.Context, partID int) error
 }
 

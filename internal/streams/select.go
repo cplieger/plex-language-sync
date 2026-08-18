@@ -29,24 +29,25 @@ func streamsByType(ep *Episode, keep func(*Stream) bool) []*Stream {
 }
 
 // Selected returns the currently-selected audio and subtitle streams
-// from the first part of the first media of an episode. Either return
-// may be nil if no stream of that type is marked selected (or if the
-// episode has no media/parts at all).
-func Selected(ep *Episode) (audio, subtitle *Stream) {
+// from the first part of the first media of an episode. Either field of the
+// returned Pair may be nil if no stream of that type is marked selected (or
+// if the episode has no media/parts at all).
+func Selected(ep *Episode) Pair {
 	p := firstPart(ep)
 	if p == nil {
-		return nil, nil
+		return Pair{}
 	}
+	var out Pair
 	for i := range p.Stream {
 		s := &p.Stream[i]
 		if s.IsAudio() && s.Selected {
-			audio = s
+			out.Audio = s
 		}
 		if s.IsSubtitle() && s.Selected {
-			subtitle = s
+			out.Subtitle = s
 		}
 	}
-	return audio, subtitle
+	return out
 }
 
 // Audio returns all audio streams from the first part of the first

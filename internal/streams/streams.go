@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cplieger/langtag"
-	"github.com/cplieger/runesafe"
+	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // Label represents a label tag on a Plex metadata item.
@@ -52,9 +52,9 @@ func (e *Episode) SeasonNum() int {
 	return int(e.ParentIndex)
 }
 
-// EpisodeNum returns the parsed episode index, or 0 when the Index
+// Num returns the parsed episode index, or 0 when the Index
 // field is absent. See SeasonNum for the FlexInt rationale.
-func (e *Episode) EpisodeNum() int {
+func (e *Episode) Num() int {
 	return int(e.Index)
 }
 
@@ -65,7 +65,7 @@ func (e *Episode) ShortName() string {
 	// GrandparentTitle carries the runesafe.Untrusted tag, so %s renders its
 	// sanitized form here — control/bidi runes are neutralized without a
 	// per-site call.
-	return fmt.Sprintf("'%s' (S%02dE%02d)", e.GrandparentTitle, e.SeasonNum(), e.EpisodeNum())
+	return fmt.Sprintf("'%s' (S%02dE%02d)", e.GrandparentTitle, e.SeasonNum(), e.Num())
 }
 
 // Media wraps a list of Parts for an Episode. Plex also sends a numeric
@@ -174,3 +174,36 @@ func (s *Stream) IsAudio() bool { return s.StreamType == StreamTypeAudio }
 
 // IsSubtitle reports whether the stream is a subtitle track.
 func (s *Stream) IsSubtitle() bool { return s.StreamType == StreamTypeSubtitle }
+
+// LanguageChoice is the pair a user's profile records: what they chose to
+// listen to and what they chose to read. Two adjacent bare language codes
+// type-checked in either order, and a swap learns the profile BACKWARDS and
+// persists it, so every later episode gets the subtitle language as its audio
+// preference. Named fields make the transposition visible at the call.
+//
+// Subtitle may be empty (the user chose no subtitles); Audio may not, and an
+// empty Audio is ignored rather than recorded.
+type LanguageChoice struct {
+	// Audio is the language the user selected for the audio track.
+	Audio string
+	// Subtitle is the language the user selected for subtitles, empty when
+	// they chose none.
+	Subtitle string
+}
+
+// Pair is a selected audio stream and its accompanying subtitle stream — the
+// two-stream unit this app propagates. The pair travels through six
+// signatures (Selected returns it, NewIntent takes it, RefStreams returns it,
+// and the sync plane threads it to the write), and as two adjacent
+// *Stream parameters every one of those crossings type-checked in either
+// order. A transposition writes the subtitle stream into the audio slot: the
+// episode ends up with a valid selection nobody asked for, on the wrong track.
+//
+// Subtitle is nil when the user selected no subtitles; Audio nil means
+// nothing was selected at all, which callers treat as "no reference".
+type Pair struct {
+	// Audio is the selected audio stream.
+	Audio *Stream
+	// Subtitle is the selected subtitle stream, nil when none is selected.
+	Subtitle *Stream
+}

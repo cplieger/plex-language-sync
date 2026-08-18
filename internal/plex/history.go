@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cplieger/plexapi"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // History fetches recent play history since the given unix timestamp,

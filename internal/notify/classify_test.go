@@ -139,7 +139,7 @@ func TestBuildStreamCacheKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := BuildStreamCacheKey(tt.userID, tt.ratingKey, tt.audioID, tt.subID)
+			got := BuildStreamCacheKey(StreamSelectionKey{UserID: tt.userID, RatingKey: tt.ratingKey, AudioID: tt.audioID, SubtitleID: tt.subID})
 			if got != tt.want {
 				t.Errorf("BuildStreamCacheKey(%q, %q, %d, %d) = %q, want %q",
 					tt.userID, tt.ratingKey, tt.audioID, tt.subID, got, tt.want)
@@ -166,18 +166,18 @@ func TestBuildStreamCacheKeyDistinguishesSelection(t *testing.T) {
 		subA      = 200
 		subB      = 201
 	)
-	base := BuildStreamCacheKey(userID, ratingKey, audioA, subA)
+	base := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioA, SubtitleID: subA})
 
-	if changedAudio := BuildStreamCacheKey(userID, ratingKey, audioB, subA); changedAudio == base {
+	if changedAudio := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioB, SubtitleID: subA}); changedAudio == base {
 		t.Errorf("changed audio selection must yield a distinct key: both = %q", base)
 	}
-	if changedSub := BuildStreamCacheKey(userID, ratingKey, audioA, subB); changedSub == base {
+	if changedSub := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioA, SubtitleID: subB}); changedSub == base {
 		t.Errorf("changed subtitle selection must yield a distinct key: both = %q", base)
 	}
-	if changedBoth := BuildStreamCacheKey(userID, ratingKey, audioB, subB); changedBoth == base {
+	if changedBoth := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioB, SubtitleID: subB}); changedBoth == base {
 		t.Errorf("changed audio+subtitle selection must yield a distinct key: both = %q", base)
 	}
-	if same := BuildStreamCacheKey(userID, ratingKey, audioA, subA); same != base {
+	if same := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioA, SubtitleID: subA}); same != base {
 		t.Errorf("identical selection must yield an identical key: %q != %q", same, base)
 	}
 }
@@ -333,7 +333,7 @@ func TestBuildStreamCacheKeyByteIdenticalToLegacyFormat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			want := legacyStreamCacheKey(tt.userID, tt.ratingKey, tt.audioID, tt.subID)
-			got := BuildStreamCacheKey(tt.userID, tt.ratingKey, tt.audioID, tt.subID)
+			got := BuildStreamCacheKey(StreamSelectionKey{UserID: tt.userID, RatingKey: tt.ratingKey, AudioID: tt.audioID, SubtitleID: tt.subID})
 			if got != want {
 				t.Errorf("BuildStreamCacheKey(%q, %q, %d, %d) = %q, want %q (byte-identity with the persisted state.json schema is broken)",
 					tt.userID, tt.ratingKey, tt.audioID, tt.subID, got, want)
@@ -388,8 +388,8 @@ func TestBuildStreamCacheKeySeparatorFieldCannotCollide(t *testing.T) {
 				legacyStreamCacheKey(tt.userB, tt.rkB, audioID, subID); legacyA != legacyB {
 				t.Fatalf("premise broken: the legacy form was expected to collide, got %q and %q", legacyA, legacyB)
 			}
-			gotA := BuildStreamCacheKey(tt.userA, tt.rkA, audioID, subID)
-			gotB := BuildStreamCacheKey(tt.userB, tt.rkB, audioID, subID)
+			gotA := BuildStreamCacheKey(StreamSelectionKey{UserID: tt.userA, RatingKey: tt.rkA, AudioID: audioID, SubtitleID: subID})
+			gotB := BuildStreamCacheKey(StreamSelectionKey{UserID: tt.userB, RatingKey: tt.rkB, AudioID: audioID, SubtitleID: subID})
 			if gotA == gotB {
 				t.Errorf("(userID %q, ratingKey %q) and (userID %q, ratingKey %q) must not share a dedup key, both = %q",
 					tt.userA, tt.rkA, tt.userB, tt.rkB, gotA)
@@ -426,7 +426,7 @@ func TestBuildStreamCacheKeyDistinctTuplesDistinctKeys(t *testing.T) {
 	}
 	seen := make(map[string]tuple, len(tuples))
 	for _, tp := range tuples {
-		key := BuildStreamCacheKey(tp.userID, tp.ratingKey, tp.audioID, tp.subID)
+		key := BuildStreamCacheKey(StreamSelectionKey{UserID: tp.userID, RatingKey: tp.ratingKey, AudioID: tp.audioID, SubtitleID: tp.subID})
 		if prev, dup := seen[key]; dup {
 			t.Errorf("distinct tuples %+v and %+v collapsed to the same key %q", prev, tp, key)
 			continue
@@ -450,7 +450,7 @@ func TestBuildStreamCacheKeyLegacyIdentityProperty(t *testing.T) {
 		subID := rapid.Int().Draw(t, "subID")
 
 		want := legacyStreamCacheKey(userID, ratingKey, audioID, subID)
-		got := BuildStreamCacheKey(userID, ratingKey, audioID, subID)
+		got := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioID, SubtitleID: subID})
 		if got != want {
 			t.Fatalf("BuildStreamCacheKey(%q, %q, %d, %d) = %q, want legacy %q",
 				userID, ratingKey, audioID, subID, got, want)

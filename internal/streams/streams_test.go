@@ -40,7 +40,7 @@ func TestEpisodeMethods(t *testing.T) {
 	if got := ep.SeasonNum(); got != 2 {
 		t.Errorf("seasonNum() = %d, want 2", got)
 	}
-	if got := ep.EpisodeNum(); got != 5 {
+	if got := ep.Num(); got != 5 {
 		t.Errorf("episodeNum() = %d, want 5", got)
 	}
 	if got := ep.ShortName(); got != "'Breaking Bad' (S02E05)" {
@@ -51,7 +51,7 @@ func TestEpisodeMethods(t *testing.T) {
 func TestEpisodeMethodsZero(t *testing.T) {
 	// Zero-valued FlexInt matches the semantics of the previous
 	// json.Number-backed fields when the JSON field was absent or
-	// null: SeasonNum and EpisodeNum both return 0. Malformed
+	// null: SeasonNum and Num both return 0. Malformed
 	// on-wire inputs (e.g. "abc") now fail FlexInt.UnmarshalJSON
 	// at decode time rather than silently falling through to 0;
 	// that path is covered in flex_test.go.
@@ -59,7 +59,7 @@ func TestEpisodeMethodsZero(t *testing.T) {
 	if got := ep.SeasonNum(); got != 0 {
 		t.Errorf("seasonNum() = %d, want 0", got)
 	}
-	if got := ep.EpisodeNum(); got != 0 {
+	if got := ep.Num(); got != 0 {
 		t.Errorf("episodeNum() = %d, want 0", got)
 	}
 }

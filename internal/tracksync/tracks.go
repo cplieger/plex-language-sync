@@ -1,4 +1,7 @@
-// Package sync holds the per-episode track-synchronization orchestrator.
+// Package tracksync holds the per-episode track-synchronization
+// orchestrator. Named for the capability, not "sync": the old name shadowed
+// the standard library, forcing a stdsync alias inside it and a syncpkg
+// alias at every consumer.
 //
 // The package is organized around two planes:
 //
@@ -18,7 +21,7 @@
 //     language profile (ApplyLanguageProfile).
 //
 // Inviolate contracts preserved (see refactor-agent-guide.md):
-//   - Plex HTTP URL paths and query parameters — the sync package never
+//   - Plex HTTP URL paths and query parameters — this package never
 //     constructs URLs directly; it calls through api.PlexReader /
 //     api.PlexWriter, so the concrete plex.Client's verbatim path
 //     strings remain the single source of truth (inviolate item 1/9).
@@ -29,11 +32,11 @@
 //     reference") are byte-for-byte identical to the pre-extraction
 //     log lines (inviolate item 5).
 //
-// Consumer note: sync depends on api.PlexReader, api.PlexWriter,
+// Consumer note: tracksync depends on api.PlexReader, api.PlexWriter,
 // api.Cache, and api.UserLookup (not on the concrete internal/plex,
 // internal/cache, or internal/users types). This keeps the package
 // trivially testable with in-memory fakes.
-package sync
+package tracksync
 
 import (
 	"context"
@@ -41,10 +44,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // Config captures the subset of application configuration the Syncer
@@ -74,7 +78,7 @@ const (
 	StrategyNext = "next"
 )
 
-// Syncer owns the per-episode orchestration. Construct via NewSyncer in
+// Syncer owns the per-episode orchestration. Construct via New in
 // the composition root; *Syncer is safe for concurrent use because all
 // mutation goes through api.Cache (which is itself safe for concurrent
 // use) and the Plex clients handled below are concurrency-safe (net/http
@@ -87,17 +91,32 @@ type Syncer struct {
 	cfg        Config
 }
 
-// NewSyncer constructs a Syncer with the given collaborators. Callers
-// must supply a non-nil PlexReader, Cache, UserLookup, and
-// UserClientFunc; fields are intentionally unexported so composition
-// only happens here.
-func NewSyncer(cfg Config, reader api.PlexReader, c api.Cache, lookup api.UserLookup, userClient api.UserClientFunc) *Syncer {
+// Deps carries New's collaborators. A struct rather than a positional list:
+// four of the five are interfaces this package declares, so a transposition
+// among the ones with compatible method sets would type-check, and the
+// composition root wires them exactly once. All four are required.
+type Deps struct {
+	// Plex reads sessions, metadata and history.
+	Plex api.PlexReader
+	// Cache persists learned profiles and recorded intents.
+	Cache api.Cache
+	// Users resolves a play session's account to a known user.
+	Users api.UserLookup
+	// UserClient returns the per-user write client for a username; the write
+	// path is user-scoped because Plex records selection writes against the
+	// requesting token.
+	UserClient api.UserClientFunc
+}
+
+// New constructs a Syncer from cfg and deps. Fields stay unexported so
+// composition only happens here.
+func New(cfg Config, deps Deps) *Syncer {
 	return &Syncer{
 		cfg:        cfg,
-		plex:       reader,
-		cache:      c,
-		users:      lookup,
-		userClient: userClient,
+		plex:       deps.Plex,
+		cache:      deps.Cache,
+		users:      deps.Users,
+		userClient: deps.UserClient,
 	}
 }
 
@@ -119,8 +138,8 @@ func (s *Syncer) ObserveAndPropagate(
 	trigger string,
 ) {
 	username := s.users.Name(userID)
-	refAudio, refSub := streams.Selected(reference)
-	if refAudio == nil {
+	ref := streams.Selected(reference)
+	if ref.Audio == nil {
 		slog.Debug("no audio stream selected on reference, skipping",
 			"episode", reference.ShortName(), "user", username)
 		return
@@ -137,7 +156,7 @@ func (s *Syncer) ObserveAndPropagate(
 	}
 
 	// Learn language profile from the user's active choice.
-	s.learnProfileFromReference(userID, refAudio, refSub)
+	s.learnProfileFromReference(userID, ref)
 
 	// Record the per-show intent — the app's own durable record of this
 	// user's choice, captured at the only moment it is attributable.
@@ -148,10 +167,10 @@ func (s *Syncer) ObserveAndPropagate(
 	// for THIS show is exactly what it should remember.)
 	if showKey := reference.GrandparentRatingKey; showKey != "" {
 		s.cache.RecordIntent(userID, showKey,
-			streams.NewIntent(refAudio, refSub, time.Now().Unix()))
+			streams.NewIntent(ref, time.Now().Unix()))
 	}
 
-	s.propagate(ctx, userClient, username, reference, refAudio, refSub, trigger)
+	s.propagate(ctx, userClient, username, reference, ref, trigger)
 }
 
 // ReconcileWithIntent is the RECONCILE-PLANE entry point (scheduler
@@ -205,8 +224,7 @@ func (s *Syncer) ReconcileWithIntent(
 		return
 	}
 
-	refAudio, refSub := intent.RefStreams()
-	s.propagate(ctx, userClient, username, episode, refAudio, refSub, trigger)
+	s.propagate(ctx, userClient, username, episode, intent.RefStreams(), trigger)
 }
 
 // propagate is the shared propagation core for both planes: it applies
@@ -219,7 +237,7 @@ func (s *Syncer) propagate(
 	userClient api.PlexReadWriter,
 	username string,
 	anchor *streams.Episode,
-	refAudio, refSub *streams.Stream,
+	ref streams.Pair,
 	trigger string,
 ) {
 	showRatingKey := anchor.GrandparentRatingKey
@@ -254,7 +272,7 @@ func (s *Syncer) propagate(
 			break
 		}
 		ep := &episodes[i]
-		if s.UpdateEpisodeStreams(ctx, userClient, username, ep.RatingKey, refAudio, refSub) {
+		if s.UpdateEpisodeStreams(ctx, userClient, username, ep.RatingKey, ref) {
 			changes++
 		}
 	}
@@ -265,8 +283,8 @@ func (s *Syncer) propagate(
 			"user", username,
 			"show", anchor.GrandparentTitle,
 			"reference", anchor.ShortName(),
-			"audio", streams.Desc(refAudio),
-			"subtitle", streams.Desc(refSub),
+			"audio", streams.Desc(ref.Audio),
+			"subtitle", streams.Desc(ref.Subtitle),
 			"episodes_updated", changes,
 			"episodes_total", len(episodes))
 	}
@@ -279,7 +297,7 @@ func (s *Syncer) UpdateEpisodeStreams(
 	ctx context.Context,
 	userClient api.PlexReadWriter,
 	username, ratingKey string,
-	refAudio, refSub *streams.Stream,
+	ref streams.Pair,
 ) bool {
 	full, err := userClient.Episode(ctx, plex.RatingKey(ratingKey))
 	if err != nil {
@@ -292,11 +310,11 @@ func (s *Syncer) UpdateEpisodeStreams(
 		return false
 	}
 
-	curAudio, curSub := streams.Selected(full)
+	cur := streams.Selected(full)
 	changed := false
 
-	changed = s.applyAudioStream(ctx, userClient, username, full, partID, refAudio, curAudio) || changed
-	changed = s.applySubtitleStream(ctx, userClient, username, full, partID, refAudio, refSub, curSub) || changed
+	changed = s.applyAudioStream(ctx, userClient, username, full, partID, ref, cur.Audio) || changed
+	changed = s.applySubtitleStream(ctx, userClient, username, full, partID, ref, cur.Subtitle) || changed
 	return changed
 }
 
@@ -306,18 +324,19 @@ func (s *Syncer) applyAudioStream(
 	username string,
 	ep *streams.Episode,
 	partID int,
-	ref, cur *streams.Stream,
+	ref streams.Pair,
+	curAudio *streams.Stream,
 ) bool {
-	matched := streams.MatchAudio(ref, streams.Audio(ep))
-	if matched == nil || (cur != nil && matched.ID == cur.ID) {
+	matched := streams.MatchAudio(ref.Audio, streams.Audio(ep))
+	if matched == nil || (curAudio != nil && matched.ID == curAudio.ID) {
 		return false
 	}
-	if err := userClient.SetAudioStream(ctx, partID, matched.ID); err != nil {
+	if err := userClient.SetAudioStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: matched.ID}); err != nil {
 		slog.Warn("failed to set audio stream",
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
 	}
-	logSubstitution(ep, username, kindAudio, ref, matched)
+	logSubstitution(ep, username, kindAudio, ref.Audio, matched)
 	return true
 }
 
@@ -327,19 +346,20 @@ func (s *Syncer) applySubtitleStream(
 	username string,
 	ep *streams.Episode,
 	partID int,
-	refAudio, refSub, curSub *streams.Stream,
+	ref streams.Pair,
+	curSub *streams.Stream,
 ) bool {
-	if streams.ShouldSkipSubtitleForCommentary(refAudio, streams.Audio(ep)) {
+	if streams.ShouldSkipSubtitleForCommentary(ref.Audio, streams.Audio(ep)) {
 		return false
 	}
 
 	// Policy: "no subtitle means no subtitle." If the reference episode
 	// has no subtitle selected, disable any subtitle currently selected
 	// on the target. streams.MatchSubtitle will return nil for
-	// refSub==nil (see streams.SubtitleCriteria) so we never auto-
+	// ref.Subtitle==nil (see streams.SubtitleCriteria) so we never auto-
 	// enable forced subs in the audio language — that would override the
 	// user's explicit choice of "no subtitles".
-	if refSub == nil {
+	if ref.Subtitle == nil {
 		if curSub == nil {
 			return false
 		}
@@ -351,7 +371,7 @@ func (s *Syncer) applySubtitleStream(
 		return true
 	}
 
-	matched := streams.MatchSubtitle(refSub, refAudio, streams.Subtitle(ep), s.cfg.SubtitleFloor)
+	matched := streams.MatchSubtitle(ref.Subtitle, streams.Subtitle(ep), s.cfg.SubtitleFloor)
 	if matched == nil {
 		// Reference has a subtitle selected but no matching sub on
 		// target. Leave the target's current selection alone — we have
@@ -361,12 +381,12 @@ func (s *Syncer) applySubtitleStream(
 	if curSub != nil && matched.ID == curSub.ID {
 		return false
 	}
-	if err := userClient.SetSubtitleStream(ctx, partID, matched.ID); err != nil {
+	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: matched.ID}); err != nil {
 		slog.Warn("failed to set subtitle stream",
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
 	}
-	logSubstitution(ep, username, kindSubtitle, refSub, matched)
+	logSubstitution(ep, username, kindSubtitle, ref.Subtitle, matched)
 	return true
 }
 
@@ -391,7 +411,7 @@ func logSubstitution(ep *streams.Episode, username, kind string, ref, matched *s
 		slog.Debug("track language matched", attrs...)
 		return
 	}
-	if reason, ok := langtag.Reason(ref.Lang(), matched.Lang()); ok {
+	if reason, ok := langtag.Prefer(ref.Lang()).Reason(matched.Lang()); ok {
 		attrs = append(attrs, "reason", reason)
 	}
 	slog.Info("track language substituted", attrs...)
@@ -423,33 +443,33 @@ func logAttrs(ep *streams.Episode, username, kind string, ref, matched *streams.
 //
 // Placed after the exported methods of *Syncer to satisfy funcorder
 // (ObserveAndPropagate is its only caller).
-func (s *Syncer) learnProfileFromReference(userID string, refAudio, refSub *streams.Stream) {
-	if !s.cfg.LanguageProfiles || refAudio == nil || refAudio.LanguageCode == "" {
+func (s *Syncer) learnProfileFromReference(userID string, ref streams.Pair) {
+	if !s.cfg.LanguageProfiles || ref.Audio == nil || ref.Audio.LanguageCode == "" {
 		return
 	}
 	// Do not learn language profiles from commentary/descriptive tracks.
 	// These tracks have atypical subtitle pairings that should not be
 	// generalized to other shows.
-	if streams.ContainsDescriptive(strings.ToLower(refAudio.TitleForMatch())) {
+	if streams.ContainsDescriptive(strings.ToLower(ref.Audio.TitleForMatch())) {
 		return
 	}
 	subLang := ""
-	if refSub != nil {
-		subLang = refSub.LanguageCode
+	if ref.Subtitle != nil {
+		subLang = ref.Subtitle.LanguageCode
 	}
-	s.cache.LearnLanguageProfile(userID, refAudio.LanguageCode, subLang)
+	s.cache.LearnLanguageProfile(userID, streams.LanguageChoice{Audio: ref.Audio.LanguageCode, Subtitle: subLang})
 }
 
 // filterEpisodesAfter returns the subset of episodes strictly after the
 // reference episode's (season, index) pair.
 func filterEpisodesAfter(episodes []streams.Episode, ref *streams.Episode) []streams.Episode {
 	refSeason := ref.SeasonNum()
-	refEp := ref.EpisodeNum()
+	refEp := ref.Num()
 	var out []streams.Episode
 	for i := range episodes {
 		ep := &episodes[i]
 		sNum := ep.SeasonNum()
-		eNum := ep.EpisodeNum()
+		eNum := ep.Num()
 		if sNum > refSeason || (sNum == refSeason && eNum > refEp) {
 			out = append(out, *ep)
 		}

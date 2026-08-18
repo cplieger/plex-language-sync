@@ -3,7 +3,7 @@ package streams
 import (
 	"testing"
 
-	"github.com/cplieger/langtag"
+	"github.com/cplieger/langtag/v2"
 )
 
 // TestAudioAdmitsOnlyTheChosenLanguage is the whole audio contract in one table.
@@ -82,7 +82,7 @@ func TestSubtitleDefaultFloorAdmits(t *testing.T) {
 			t.Parallel()
 			ref := &Stream{StreamType: StreamTypeSubtitle, LanguageTag: tc.refTag}
 			cand := &Stream{ID: 7, StreamType: StreamTypeSubtitle, LanguageTag: tc.candTag}
-			got := MatchSubtitle(ref, nil, []*Stream{cand}, defaultFloor)
+			got := MatchSubtitle(ref, []*Stream{cand}, defaultFloor)
 			if tc.admit != (got != nil) {
 				t.Errorf("MatchSubtitle(%s, [%s], %v) admitted=%v, want %v",
 					tc.refTag, tc.candTag, defaultFloor, got != nil, tc.admit)
@@ -117,7 +117,7 @@ func TestSubtitleFloorsAreReachableInOrder(t *testing.T) {
 			ref := &Stream{StreamType: StreamTypeSubtitle, LanguageTag: tc.refTag}
 			cand := &Stream{ID: 7, StreamType: StreamTypeSubtitle, LanguageTag: tc.candTag}
 			for _, floor := range floors {
-				admitted := MatchSubtitle(ref, nil, []*Stream{cand}, floor) != nil
+				admitted := MatchSubtitle(ref, []*Stream{cand}, floor) != nil
 				want := floor >= tc.floor
 				if admitted != want {
 					t.Errorf("MatchSubtitle(%s, [%s], %v) admitted=%v, want %v (first admitting floor is %v)",
@@ -154,7 +154,7 @@ func TestNoMatchMeansNoMatch(t *testing.T) {
 		t.Errorf("MatchAudio(nb, [en sv ja]) = ID %d, want nil", got.ID)
 	}
 	for _, floor := range floors {
-		if got := MatchSubtitle(subRef, audRef, subCands, floor); got != nil {
+		if got := MatchSubtitle(subRef, subCands, floor); got != nil {
 			t.Errorf("MatchSubtitle(nb, [en sv], %v) = ID %d, want nil", floor, got.ID)
 		}
 	}

@@ -15,7 +15,7 @@ func RunCacheContract(t *testing.T, c api.Cache) {
 	t.Helper()
 
 	t.Run("SetGet_roundtrip", func(t *testing.T) {
-		c.LearnLanguageProfile("u1", "eng", "fra")
+		c.LearnLanguageProfile("u1", streams.LanguageChoice{Audio: "eng", Subtitle: "fra"})
 		got, ok := c.SubtitleLangForAudio("u1", "eng")
 		if !ok || got != "fra" {
 			t.Errorf("SubtitleLangForAudio = (%q, %v), want (fra, true)", got, ok)
@@ -101,11 +101,10 @@ func intentContract(t *testing.T, c api.Cache) {
 	t.Helper()
 
 	t.Run("intent_roundtrip", func(t *testing.T) {
-		in := streams.NewIntent(
-			&streams.Stream{LanguageCode: langJPN, Codec: "eac3", Channels: 6},
-			&streams.Stream{LanguageCode: langENG, Codec: "ass", Forced: false},
-			1700000000,
-		)
+		in := streams.NewIntent(streams.Pair{
+			Audio:    &streams.Stream{LanguageCode: langJPN, Codec: "eac3", Channels: 6},
+			Subtitle: &streams.Stream{LanguageCode: langENG, Codec: "ass", Forced: false},
+		}, 1700000000)
 		c.RecordIntent("u1", "show-42", in)
 		got, ok := c.IntentFor("u1", "show-42")
 		if !ok {
@@ -124,8 +123,7 @@ func intentContract(t *testing.T, c api.Cache) {
 	})
 
 	t.Run("intent_nil_subtitle_roundtrip", func(t *testing.T) {
-		c.RecordIntent("u1", "show-43", streams.NewIntent(
-			&streams.Stream{LanguageCode: langENG}, nil, 1700000001))
+		c.RecordIntent("u1", "show-43", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: langENG}, Subtitle: nil}, 1700000001))
 		got, ok := c.IntentFor("u1", "show-43")
 		if !ok || got.Subtitle != nil {
 			t.Errorf("IntentFor = (%+v, %v), want ok with nil Subtitle (no-subtitles intent)", got, ok)
@@ -141,10 +139,8 @@ func intentEdgeContract(t *testing.T, c api.Cache) {
 	t.Helper()
 
 	t.Run("intent_rerecord_replaces", func(t *testing.T) {
-		c.RecordIntent("u1", "show-44", streams.NewIntent(
-			&streams.Stream{LanguageCode: langJPN}, nil, 1))
-		c.RecordIntent("u1", "show-44", streams.NewIntent(
-			&streams.Stream{LanguageCode: langFRA}, nil, 2))
+		c.RecordIntent("u1", "show-44", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: langJPN}, Subtitle: nil}, 1))
+		c.RecordIntent("u1", "show-44", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: langFRA}, Subtitle: nil}, 2))
 		got, _ := c.IntentFor("u1", "show-44")
 		if got.Audio.LanguageCode != langFRA || got.ObservedAt != 2 {
 			t.Errorf("re-record did not replace: %+v", got)
@@ -155,8 +151,8 @@ func intentEdgeContract(t *testing.T, c api.Cache) {
 		if _, ok := c.IntentFor("nobody", "show-42"); ok {
 			t.Error("IntentFor unknown user = ok=true, want false")
 		}
-		c.RecordIntent("", "show-42", streams.NewIntent(&streams.Stream{LanguageCode: "x"}, nil, 1))
-		c.RecordIntent("u1", "", streams.NewIntent(&streams.Stream{LanguageCode: "x"}, nil, 1))
+		c.RecordIntent("", "show-42", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "x"}, Subtitle: nil}, 1))
+		c.RecordIntent("u1", "", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "x"}, Subtitle: nil}, 1))
 		c.RecordIntent("u1", "show-nil", nil)
 		if _, ok := c.IntentFor("", "show-42"); ok {
 			t.Error("empty-user intent was stored; RecordIntent must ignore empty keys")

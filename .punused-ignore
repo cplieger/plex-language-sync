@@ -33,9 +33,9 @@
 # FlexInt — streams.Episode.Index and .ParentIndex
 # (internal/streams/streams.go:41-42), plex.HistoryItem.AccountID and .ViewedAt
 # (internal/plex/types.go:74,78). Those decode on the production fetch path
-# (internal/plex/library.go, fetchMetadata[streams.Episode]) and production
-# reads the results: Episode.SeasonNum/EpisodeNum (streams.go:49-56) feed the
-# season/episode comparison in internal/sync/tracks.go:393-399. Delete the
+# (internal/plex/library.go, fetchEpisodeList) and production
+# reads the results: Episode.SeasonNum/Num (streams.go:47-58) feed the
+# season/episode comparison in internal/tracksync/tracks.go:465-471. Delete the
 # method and every quoted Plex index ("14") starts failing to decode.
 method (*FlexInt).UnmarshalJSON is used in test only
 
@@ -52,7 +52,7 @@ method (*FlexInt).UnmarshalJSON is used in test only
 # still fails the gate.
 
 # fakeapi.NewCache — the in-memory api.Cache fake. 113 call sites across three
-# other packages' tests (internal/sync, internal/scheduler, internal/users).
+# other packages' tests (internal/tracksync, internal/deepscan, internal/users).
 function NewCache is used in test only
 
 # fakeapi.RunCacheContract — the shared api.Cache contract, run against BOTH
@@ -63,16 +63,21 @@ function NewCache is used in test only
 function RunCacheContract is used in test only
 
 # fakeapi.(*Plex).CallNames — reader for the fake's ordered call log; 73
-# assertion sites in internal/sync and internal/scheduler tests pin "the pass
+# assertion sites in internal/tracksync and internal/deepscan tests pin "the pass
 # made exactly these Plex calls, in this order" (the shared-reference
 # cost-collapse invariant among them).
 method (*Plex).CallNames is used in test only
 
 # plexclient.NewFromHTTP — builds a real *plex.Client aimed at an
 # httptest.Server. It lives here exactly so internal/plex exports only
-# plex.NewClient; 26 call sites (main_test.go, internal/users/manager_test.go)
+# plex.NewClient; 28 call sites (main_test.go, internal/users/manager_test.go)
 # are in packages that cannot see an internal/plex test helper.
 function NewFromHTTP is used in test only
+
+# plexclient.Options — NewFromHTTP's named-field parameter. Test-only for the
+# same structural reason as NewFromHTTP itself: it names the two HTTP clients
+# so the pair cannot be passed transposed.
+type Options is used in test only
 
 # ---------------------------------------------------------------------------
 # Interface satisfaction.
@@ -88,24 +93,3 @@ function NewFromHTTP is used in test only
 # Production reaches the real implementation through the same interface
 # (main.go:491 -> internal/plex/history.go:22).
 method (*Plex).UserFromSession is unused
-
-# ---------------------------------------------------------------------------
-# Test seam that cannot leave its package.
-# Structural: Go visibility, not a punused blind spot.
-#
-# plex.SwapTVClient swaps the package-level `tvClient` (internal/plex/
-# shared.go:14) that SharedUserTokens hands to plexapi.NewTV, so plex.tv
-# lookups can be aimed at a local httptest server; production leaves it nil and
-# gets the library's hardened default (30s timeout, refuse-all redirects, OS
-# trust store). EU1001 is accurate — only tests call it — but the remedy used
-# for NewClientFromHTTP above does not apply here: `tvClient` is unexported, so
-# no other package can write it, and the seam has 4 in-package call sites
-# (internal/plex/client_test.go) plus a cross-package one
-# (internal/users/manager_test.go:239, wrapped as swapPlexTVClient and used by
-# 10 tests), so it must stay exported for the latter to compile. The only way
-# to remove the export is to widen RefreshTokens, InitialRefreshWithRetry and
-# RefreshLoop to take a shared-token-fetcher interface instead of *plex.Client
-# — three production signatures changed to relocate test plumbing, which also
-# happens to be the change that would let those 10 tests run in parallel. Left
-# as a human call rather than done under a dead-code sweep.
-function SwapTVClient is used in test only

@@ -8,7 +8,7 @@ package plex
 
 import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // Plex wire-protocol constants, re-exported from the library so consumers

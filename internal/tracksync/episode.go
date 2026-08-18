@@ -1,11 +1,11 @@
-package sync
+package tracksync
 
 import (
 	"context"
 	"errors"
 	"log/slog"
 	"slices"
-	stdsync "sync"
+	"sync"
 
 	"github.com/cplieger/plex-language-sync/internal/api"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -63,7 +63,7 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 	// their own observed choice, not the household-ambient selection), so
 	// the fetch chain runs only when the first intent-less user is
 	// reached, and not at all once every user has an intent.
-	refOnce := stdsync.OnceValue(func() *EpisodeRef {
+	refOnce := sync.OnceValue(func() *EpisodeRef {
 		return s.FindEpisodeReference(ctx, episode)
 	})
 
@@ -139,8 +139,8 @@ func (s *Syncer) FindEpisodeReference(
 		return nil
 	}
 
-	audio, sub := streams.Selected(ref)
-	if audio == nil {
+	sel := streams.Selected(ref)
+	if sel.Audio == nil {
 		// Reference found but has no selected audio — treat as
 		// no-reference so callers fall through to language-profile
 		// path.
@@ -156,7 +156,7 @@ func (s *Syncer) FindEpisodeReference(
 		"searched", searched,
 		"reference", ref.ShortName())
 
-	return &EpisodeRef{Episode: ref, Audio: audio, Subtitle: sub}
+	return &EpisodeRef{Episode: ref, Audio: sel.Audio, Subtitle: sel.Subtitle}
 }
 
 // applyEpisodeForUser seeds a single new/updated episode for a single
@@ -184,15 +184,15 @@ func (s *Syncer) applyEpisodeForUser(
 	username := s.users.Name(userID)
 
 	if intent, ok := s.cache.IntentFor(userID, episode.GrandparentRatingKey); ok {
-		refAudio, refSub := intent.RefStreams()
-		if s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, refAudio, refSub) {
+		intentRef := intent.RefStreams()
+		if s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, intentRef) {
 			slog.Info("new/updated episode language set",
 				"trigger", trigger,
 				"user", username,
 				"episode", episode.ShortName(),
 				"source", "intent",
-				"audio", streams.Desc(refAudio),
-				"subtitle", streams.Desc(refSub))
+				"audio", streams.Desc(intentRef.Audio),
+				"subtitle", streams.Desc(intentRef.Subtitle))
 		}
 		return
 	}
@@ -209,7 +209,7 @@ func (s *Syncer) applyEpisodeForUser(
 		return
 	}
 
-	changed := s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, ref.Audio, ref.Subtitle)
+	changed := s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, streams.Pair{Audio: ref.Audio, Subtitle: ref.Subtitle})
 	if changed {
 		slog.Info("new/updated episode language set",
 			"trigger", trigger,
@@ -259,7 +259,7 @@ func findReferenceEpisode(
 			}
 			continue
 		}
-		if audio, _ := streams.Selected(full); audio != nil {
+		if streams.Selected(full).Audio != nil {
 			return full, searched, fetchErrors
 		}
 	}
