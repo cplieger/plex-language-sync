@@ -13,12 +13,13 @@
 package main
 
 import (
+	"cmp"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/cplieger/envx"
+	"github.com/cplieger/envx/v2"
 	"github.com/cplieger/langtag"
 	syncpkg "github.com/cplieger/plex-language-sync/internal/sync"
 	"github.com/cplieger/slogx"
@@ -95,13 +96,13 @@ func loadConfig() config {
 	cfg := config{
 		plexURL:          requireEnv("PLEX_URL"),
 		plexToken:        requireEnv("PLEX_TOKEN"),
-		updateLevel:      envx.String("UPDATE_LEVEL", defaultUpdateLevel),
-		updateStrategy:   envx.String("UPDATE_STRATEGY", defaultUpdateStrategy),
+		updateLevel:      cmp.Or(envx.String("UPDATE_LEVEL"), defaultUpdateLevel),
+		updateStrategy:   cmp.Or(envx.String("UPDATE_STRATEGY"), defaultUpdateStrategy),
 		triggerOnPlay:    envx.Bool("TRIGGER_ON_PLAY", true),
 		triggerOnScan:    envx.Bool("TRIGGER_ON_SCAN", true),
 		languageProfiles: envx.Bool("LANGUAGE_PROFILES", true),
 		debug:            debug,
-		caCertPath:       envx.String("PLEX_CA_CERT_PATH", ""),
+		caCertPath:       envx.String("PLEX_CA_CERT_PATH"),
 		subtitleTier:     loadSubtitleTier(),
 	}
 	cfg.schedulerInterval, cfg.schedulerEnabled = loadSchedulerInterval()
@@ -137,7 +138,7 @@ func loadConfig() config {
 // a floor outright, and this app substitutes the documented default so a
 // mistyped value degrades to normal behavior rather than to no matching at all.
 func loadSubtitleTier() langtag.Tier {
-	raw := envx.String("SUBTITLE_MATCH_TIER", "")
+	raw := envx.String("SUBTITLE_MATCH_TIER")
 	if raw == "" {
 		return defaultSubtitleTier
 	}
@@ -196,15 +197,15 @@ func logConfig(cfg *config) {
 // what keeps that true across the trim — envx already rejects a blank
 // secret FILE, but a padded KEY would otherwise trim down to an empty
 // string and start the app with no URL or token at all.
-func requireEnv(key string) string {
+func requireEnv(key envx.Key) string {
 	v, err := envx.Secret(key)
 	if err != nil {
-		slog.Error("required environment variable is missing or unreadable", "key", key, "error", err)
+		slog.Error("required environment variable is missing or unreadable", "key", string(key), "error", err)
 		os.Exit(1)
 	}
 	v = strings.TrimSpace(v)
 	if v == "" {
-		slog.Error("required environment variable is blank", "key", key)
+		slog.Error("required environment variable is blank", "key", string(key))
 		os.Exit(1)
 	}
 	return v
