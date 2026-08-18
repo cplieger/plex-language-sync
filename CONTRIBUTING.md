@@ -23,7 +23,7 @@ business logic under `internal/`.
   events on `TRIGGER_ON_PLAY` / `TRIGGER_ON_SCAN` and forwards them to
   the syncer.
 - `config.go`: env-var parsing, defaults, `_FILE`-suffix Docker-secret
-  handling, and `SCHEDULER_INTERVAL` (Go duration) parsing.
+  handling, and `DEEP_SCAN_INTERVAL` (Go duration) parsing.
 - **Interfaces live at the consumer, not in a shared package.** Each
   package declares the methods it actually calls: `tracksync` asks for 3
   Plex reads, 3 Plex writes and 4 cache methods; `deepscan` asks for 4
@@ -55,7 +55,7 @@ A few things are deliberately stable; change them only with intent, not
 incidentally:
 
 - The env-var contract (names, defaults, boolean parsing, `_FILE` secret
-  handling, `SCHEDULER_INTERVAL` parsing) in `config.go`.
+  handling, `DEEP_SCAN_INTERVAL` parsing) in `config.go`.
 - The on-disk cache directory `/config` and its split-file layout
   (`profiles.json`, `tokens.json`, `state.json`; `cacheDir` in
   `main.go`), including migration of a legacy `cache.json`.

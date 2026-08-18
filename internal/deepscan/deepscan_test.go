@@ -1171,7 +1171,7 @@ func (p *sinceCapturePlex) History(ctx context.Context, since int64) ([]plex.His
 }
 
 // TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun pins the extended
-// look-back window: when the previous run is older than 24h (SCHEDULER_INTERVAL
+// look-back window: when the previous run is older than 24h (DEEP_SCAN_INTERVAL
 // > 24h, or a restart after a long downtime), the replay look-back extends to
 // the full since-last-run gap instead of the fixed 24h floor, so the span
 // between 24h and the interval is not silently skipped by the safety net.
@@ -1376,7 +1376,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 
 // TestDeepAnalysisCore_CapsLookback pins the maxDeepAnalysisLookback cap: a
 // marker far older than the cap (a long outage or a very large
-// SCHEDULER_INTERVAL) must not grow the non-paginated History/RecentlyAdded
+// DEEP_SCAN_INTERVAL) must not grow the non-paginated History/RecentlyAdded
 // window without bound. The look-back is clamped to ~30 days regardless of how
 // old the previous run is.
 func TestDeepAnalysisCore_CapsLookback(t *testing.T) {

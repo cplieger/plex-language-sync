@@ -325,7 +325,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T)
 
 // TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile pins the
 // no-reference language-profile fallback in the fan-out path: when a show has
-// no prior episode with a selection (ref == nil) and LANGUAGE_PROFILES is
+// no prior episode with a selection (ref == nil) and LEARN_LANGUAGE_PROFILES is
 // enabled, a new episode receives the user's learned audio->subtitle profile
 // applied per user. This is the documented "applies your habits to brand-new
 // shows" feature; a regression that skipped the fallback branch would leave

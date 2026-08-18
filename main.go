@@ -9,7 +9,7 @@
 //     listener and internal/tracksync. It gates on cfg.triggerOnPlay /
 //     cfg.triggerOnScan and forwards relevant events to the syncer.
 //
-// Env-var contract, SCHEDULER_INTERVAL parsing, and _FILE-suffix secret
+// Env-var contract, DEEP_SCAN_INTERVAL parsing, and _FILE-suffix secret
 // handling live in config.go. Business logic lives under internal/{streams,
 // plex, cache, notify, users, sync, scheduler}.
 package main

@@ -928,7 +928,7 @@ func TestObserveAndPropagate(t *testing.T) {
 // of the ignore gate would learn jpn→"" here and fail the SubtitleLangForAudio
 // assertion.
 //
-// given an ignored show (SKIP label) and LANGUAGE_PROFILES enabled
+// given an ignored show (SKIP label) and LEARN_LANGUAGE_PROFILES enabled
 // when ObserveAndPropagate runs on a jpn-audio reference of that show
 // then the user's profile has no learned entry for jpn and no episodes are
 // fetched or written.
@@ -970,7 +970,7 @@ func TestObserveAndPropagate_IgnoredShowDoesNotLearnProfile(t *testing.T) {
 // learn call). A mutant that always returned early before learnProfileFrom
 // Reference would pass the ignore test but fail this one.
 //
-// given a non-ignored show and LANGUAGE_PROFILES enabled
+// given a non-ignored show and LEARN_LANGUAGE_PROFILES enabled
 // when ObserveAndPropagate runs on a jpn-audio reference
 // then the user's profile records jpn (subtitle empty, no sub on the ref).
 func TestObserveAndPropagate_NonIgnoredShowStillLearnsProfile(t *testing.T) {

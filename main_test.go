@@ -128,7 +128,7 @@ func TestLoadSchedulerInterval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("SCHEDULER_INTERVAL", tt.val)
+			t.Setenv("DEEP_SCAN_INTERVAL", tt.val)
 			gotInterval, gotEnabled := loadSchedulerInterval()
 			if gotInterval != tt.wantInterval {
 				t.Errorf("loadSchedulerInterval(%q) interval = %v, want %v", tt.val, gotInterval, tt.wantInterval)
@@ -151,11 +151,11 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "all")
 	t.Setenv("TRIGGER_ON_PLAY", "true")
 	t.Setenv("TRIGGER_ON_SCAN", "false")
-	t.Setenv("LANGUAGE_PROFILES", "false")
-	t.Setenv("SCHEDULER_INTERVAL", "12h")
+	t.Setenv("LEARN_LANGUAGE_PROFILES", "false")
+	t.Setenv("DEEP_SCAN_INTERVAL", "12h")
 	t.Setenv("IGNORE_LABELS", "SKIP,NOPE")
 	t.Setenv("IGNORE_LIBRARIES", "Music,Photos")
-	t.Setenv("DEBUG", "false")
+	t.Setenv("LOG_LEVEL", "info")
 
 	cfg := loadConfig()
 
@@ -198,11 +198,11 @@ func TestLoadConfigDefaults(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("LEARN_LANGUAGE_PROFILES", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
+	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 
@@ -236,12 +236,12 @@ func TestLoadConfigInvalidUpdateLevel(t *testing.T) {
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_LEVEL", "invalid")
 	t.Setenv("UPDATE_STRATEGY", "invalid")
-	t.Setenv("SCHEDULER_INTERVAL", "notaduration")
+	t.Setenv("DEEP_SCAN_INTERVAL", "notaduration")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
+	t.Setenv("LOG_LEVEL", "")
 
 	cfg := loadConfig()
 
@@ -252,7 +252,7 @@ func TestLoadConfigInvalidUpdateLevel(t *testing.T) {
 		t.Errorf("invalid updateStrategy should default to all, got %q", cfg.updateStrategy)
 	}
 	if cfg.schedulerInterval != 24*time.Hour {
-		t.Errorf("invalid SCHEDULER_INTERVAL should default to 24h, got %v", cfg.schedulerInterval)
+		t.Errorf("invalid DEEP_SCAN_INTERVAL should default to 24h, got %v", cfg.schedulerInterval)
 	}
 }
 
@@ -261,12 +261,12 @@ func TestLoadConfigInvalidUpdateStrategy(t *testing.T) {
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_STRATEGY", "random")
 	t.Setenv("UPDATE_LEVEL", "")
-	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
+	t.Setenv("LOG_LEVEL", "")
 
 	cfg := loadConfig()
 	if cfg.updateStrategy != "all" {
@@ -279,12 +279,12 @@ func TestLoadConfigValidNextStrategy(t *testing.T) {
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_STRATEGY", "next")
 	t.Setenv("UPDATE_LEVEL", "")
-	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
+	t.Setenv("LOG_LEVEL", "")
 
 	cfg := loadConfig()
 	if cfg.updateStrategy != "next" {
@@ -292,24 +292,50 @@ func TestLoadConfigValidNextStrategy(t *testing.T) {
 	}
 }
 
-func TestLoadConfigDebugMode(t *testing.T) {
+func TestLoadConfigLogLevel(t *testing.T) {
 	t.Setenv("PLEX_URL", "http://plex:32400")
 	t.Setenv("PLEX_TOKEN", "test-token")
 	t.Setenv("UPDATE_LEVEL", "")
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("LEARN_LANGUAGE_PROFILES", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "true")
+	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("PLEX_URL_FILE", "")
 	t.Setenv("PLEX_TOKEN_FILE", "")
 
 	cfg := loadConfig()
-	if !cfg.debug {
-		t.Error("debug should be true")
+	if cfg.logLevel != slog.LevelDebug {
+		t.Errorf("logLevel = %v, want DEBUG", cfg.logLevel)
+	}
+}
+
+// TestLoadConfigLogLevelUnrecognized pins the fallback half of the LOG_LEVEL
+// contract: an unparseable value must degrade to info rather than to slog's
+// zero Level (which is info by coincidence, not by decision) or to a refused
+// start. The warning itself goes out through the handler slogx.Setup installed
+// on stderr, so this asserts the resolved level, not the log line.
+func TestLoadConfigLogLevelUnrecognized(t *testing.T) {
+	t.Setenv("PLEX_URL", "http://plex:32400")
+	t.Setenv("PLEX_TOKEN", "test-token")
+	t.Setenv("UPDATE_LEVEL", "")
+	t.Setenv("UPDATE_STRATEGY", "")
+	t.Setenv("TRIGGER_ON_PLAY", "")
+	t.Setenv("TRIGGER_ON_SCAN", "")
+	t.Setenv("LEARN_LANGUAGE_PROFILES", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
+	t.Setenv("IGNORE_LABELS", "")
+	t.Setenv("IGNORE_LIBRARIES", "")
+	t.Setenv("LOG_LEVEL", "verbose")
+	t.Setenv("PLEX_URL_FILE", "")
+	t.Setenv("PLEX_TOKEN_FILE", "")
+
+	cfg := loadConfig()
+	if cfg.logLevel != slog.LevelInfo {
+		t.Errorf("logLevel = %v for an unrecognized LOG_LEVEL, want INFO", cfg.logLevel)
 	}
 }
 
@@ -332,11 +358,11 @@ func TestLoadConfigWithFileSecrets(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("LEARN_LANGUAGE_PROFILES", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
+	t.Setenv("LOG_LEVEL", "")
 
 	cfg := loadConfig()
 
@@ -478,11 +504,11 @@ func TestLoadConfigTrimsFileSecrets(t *testing.T) {
 	t.Setenv("UPDATE_STRATEGY", "")
 	t.Setenv("TRIGGER_ON_PLAY", "")
 	t.Setenv("TRIGGER_ON_SCAN", "")
-	t.Setenv("LANGUAGE_PROFILES", "")
-	t.Setenv("SCHEDULER_INTERVAL", "")
+	t.Setenv("LEARN_LANGUAGE_PROFILES", "")
+	t.Setenv("DEEP_SCAN_INTERVAL", "")
 	t.Setenv("IGNORE_LABELS", "")
 	t.Setenv("IGNORE_LIBRARIES", "")
-	t.Setenv("DEBUG", "")
+	t.Setenv("LOG_LEVEL", "")
 
 	cfg := loadConfig()
 
