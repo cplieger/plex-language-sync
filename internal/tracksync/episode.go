@@ -119,7 +119,8 @@ func (s *Syncer) FindEpisodeReference(
 	}
 
 	ref, searched, fetchErrors := findReferenceEpisode(
-		ctx, s.plex, episodes, episode.RatingKey, maxRefSearchDepth)
+		ctx, s.plex, episodes, episode.RatingKey, maxRefSearchDepth,
+	)
 
 	if ref == nil {
 		if fetchErrors > 0 && ctx.Err() == nil {
