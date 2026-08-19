@@ -243,8 +243,7 @@ func TestDoJSON_ResponseExceedingCapErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("get() on an over-cap response must return an error, not silently truncate")
 	}
-	var tooLarge *plexapi.ResponseTooLargeError
-	if !errors.As(err, &tooLarge) {
+	if _, ok := errors.AsType[*plexapi.ResponseTooLargeError](err); !ok {
 		t.Errorf("get() error = %v, want *plexapi.ResponseTooLargeError", err)
 	}
 	// The legacy alert string is the APP's Loki contract, emitted by the
@@ -823,8 +822,7 @@ func TestSharedUserTokens_ResponseExceedingCapErrors(t *testing.T) {
 	if stErr == nil {
 		t.Fatal("SharedUserTokens() on an over-cap response must return an error")
 	}
-	var tooLarge *plexapi.ResponseTooLargeError
-	if !errors.As(stErr, &tooLarge) {
+	if _, ok := errors.AsType[*plexapi.ResponseTooLargeError](stErr); !ok {
 		t.Errorf("SharedUserTokens() error = %v, want *plexapi.ResponseTooLargeError", stErr)
 	}
 }

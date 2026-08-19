@@ -217,14 +217,12 @@ func TestCacheCheckAndMarkAtomic(t *testing.T) {
 	const goroutines = 200
 	var winners atomic.Int64
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 	for range goroutines {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if c.CheckAndMark("contended-key") {
 				winners.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := winners.Load(); got != 1 {

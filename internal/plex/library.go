@@ -9,7 +9,7 @@ import (
 
 // ShowSections returns the TV-show library sections.
 func (c *Client) ShowSections(ctx context.Context) ([]Section, error) {
-	sections, err := fetchSections(ctx, c, plexapi.SectionsPath())
+	sections, err := c.fetchSections(ctx, plexapi.SectionsPath())
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func (c *Client) Episode(ctx context.Context, rk RatingKey) (*streams.Episode, e
 	if err != nil {
 		return nil, err
 	}
-	eps, err := fetchMetadata[streams.Episode](ctx, c, path)
+	eps, err := c.fetchMetadata[streams.Episode](ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (c *Client) ShowEpisodes(ctx context.Context, rk RatingKey) ([]streams.Epis
 	if err != nil {
 		return nil, err
 	}
-	return fetchMetadata[streams.Episode](ctx, c, path)
+	return c.fetchMetadata[streams.Episode](ctx, path)
 }
 
 // SeasonEpisodes returns the episodes of a single season (children).
@@ -55,7 +55,7 @@ func (c *Client) SeasonEpisodes(ctx context.Context, rk RatingKey) ([]streams.Ep
 	if err != nil {
 		return nil, err
 	}
-	return fetchMetadata[streams.Episode](ctx, c, path)
+	return c.fetchMetadata[streams.Episode](ctx, path)
 }
 
 // ShowMetadata fetches the show-level metadata (labels) for a show.
@@ -70,7 +70,7 @@ func (c *Client) ShowMetadata(ctx context.Context, rk RatingKey) (*Show, error) 
 	if err != nil {
 		return nil, err
 	}
-	shows, err := fetchMetadata[Show](ctx, c, path)
+	shows, err := c.fetchMetadata[Show](ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -93,5 +93,5 @@ func (c *Client) RecentlyAdded(ctx context.Context, sectionKey RatingKey, sinceU
 	if err != nil {
 		return nil, err
 	}
-	return fetchEpisodeList(ctx, c, path)
+	return c.fetchEpisodeList(ctx, path)
 }
