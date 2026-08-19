@@ -72,7 +72,7 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 
 	tokensCopy := make(map[string]string, len(newShared))
 	for uid, info := range newShared {
-		tokensCopy[uid.String()] = info.Token
+		tokensCopy[uid.String()] = string(info.Token)
 	}
 	m.mu.Unlock()
 
@@ -108,7 +108,7 @@ func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]rec
 		newShared[uid] = record{
 			ID:    uid,
 			Name:  s.Username,
-			Token: s.AccessToken,
+			Token: plex.Token(s.AccessToken),
 		}
 	}
 	return newShared

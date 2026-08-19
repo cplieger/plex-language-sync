@@ -43,9 +43,12 @@ func (i ID) String() string { return string(i) }
 // can carry a secret must not be handed across a package boundary, and nothing
 // outside this package has ever needed one. Callers get Account instead.
 type record struct {
-	ID    ID
-	Name  string
-	Token string
+	ID   ID
+	Name string
+	// Token is plex.Token (the library's credential type), not a string: it is
+	// compared against (*Client).Token() and handed to ForToken, so carrying
+	// the type keeps both operations type-checked instead of casting at each.
+	Token plex.Token
 }
 
 // Account is a user's identity as every other package sees it: an ID and a
@@ -121,7 +124,7 @@ func (m *Manager) LoadFromCache() {
 			continue
 		}
 		if _, exists := m.shared[uid]; !exists {
-			m.shared[uid] = record{ID: uid, Token: token, Name: "user-" + uidStr}
+			m.shared[uid] = record{ID: uid, Token: plex.Token(token), Name: "user-" + uidStr}
 		}
 	}
 }

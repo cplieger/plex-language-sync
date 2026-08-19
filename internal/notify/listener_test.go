@@ -21,6 +21,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )
 
@@ -162,11 +163,11 @@ func TestNotificationRoundTripJSON(t *testing.T) {
 type fakePlexClient struct {
 	base   *url.URL
 	client *http.Client
-	token  string
+	token  plexapi.Token
 }
 
-func (f *fakePlexClient) BaseURL() *url.URL { return f.base }
-func (f *fakePlexClient) Token() string     { return f.token }
+func (f *fakePlexClient) BaseURL() *url.URL    { return f.base }
+func (f *fakePlexClient) Token() plexapi.Token { return f.token }
 
 // RedirectPolicy mirrors the production accessor: the policy off the
 // fake's own client when one was supplied, nil otherwise (net/http's
