@@ -512,22 +512,18 @@ func TestCache_ConcurrentLearnAndRead(t *testing.T) {
 
 	const N = 50
 	var wg sync.WaitGroup
-	wg.Add(N * 3)
 	for i := range N {
 		userID := strconv.Itoa(i % 5)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			c.LearnLanguageProfile(userID, streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			_, _ = c.SubtitleLangForAudio(userID, "jpn")
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			c.MarkProcessed("play:" + userID + ":abc")
 			_ = c.WasRecentlyProcessed("play:" + userID + ":abc")
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -549,16 +545,13 @@ func TestCache_ConcurrentLearnAndSetUserTokens(t *testing.T) {
 
 	const N = 30
 	var wg sync.WaitGroup
-	wg.Add(N * 2)
 	for range N {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = c.UserTokens()
-		}()
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			c.LearnLanguageProfile("2", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
-		}()
+		})
 	}
 	wg.Wait()
 }

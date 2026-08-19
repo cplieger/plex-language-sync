@@ -384,8 +384,7 @@ func startupBackoff(attempt int) time.Duration {
 // errors are fatal; dial/DNS/timeout errors, 5xx (a Plex still starting up),
 // and 429/408 (throttle/timeout signals) are treated as transient.
 func isFatalStartupError(err error) bool {
-	var statusErr *plex.HTTPStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*plex.HTTPStatusError](err); ok {
 		// 429 (Too Many Requests) and 408 (Request Timeout) are throttle/timeout
 		// signals, not config/auth errors: treat them as transient so a busy or
 		// slow Plex backs off and retries rather than exiting and crash-looping.
@@ -400,12 +399,10 @@ func isFatalStartupError(err error) bool {
 	}
 	// TLS/certificate misconfiguration (e.g. a self-signed cert without
 	// PLEX_CA_CERT_PATH): will not recover without a config change.
-	var certErr *tls.CertificateVerificationError
-	if errors.As(err, &certErr) {
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
 		return true
 	}
-	var unknownAuthority x509.UnknownAuthorityError
-	if errors.As(err, &unknownAuthority) {
+	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
 		return true
 	}
 	// Transport errors (connection refused, DNS failure, timeout): Plex is

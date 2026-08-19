@@ -15,7 +15,7 @@ import (
 // contract. Transport, hardening, and the envelope decode are the
 // library's (plexapi.FetchMetadata); the builder-typed path carries the
 // endpoint's read-cap class, so a listing endpoint cannot land here.
-func fetchMetadata[T any](ctx context.Context, c *Client, path plexapi.Path) ([]T, error) {
+func (c *Client) fetchMetadata[T any](ctx context.Context, path plexapi.Path) ([]T, error) {
 	items, err := plexapi.FetchMetadata[T](ctx, c.Client, path)
 	return items, warnIfOverCap(err, string(path))
 }
@@ -26,7 +26,7 @@ func fetchMetadata[T any](ctx context.Context, c *Client, path plexapi.Path) ([]
 // (streams.Episode), and a type parameter with one argument is a parameter
 // that documents flexibility nothing uses. The library's FetchMetadataList
 // stays generic — genuinely so, across the fleet.
-func fetchEpisodeList(ctx context.Context, c *Client, path plexapi.ListPath) ([]streams.Episode, error) {
+func (c *Client) fetchEpisodeList(ctx context.Context, path plexapi.ListPath) ([]streams.Episode, error) {
 	items, err := plexapi.FetchMetadataList[streams.Episode](ctx, c.Client, path)
 	return items, warnIfOverCap(err, string(path))
 }
@@ -34,7 +34,7 @@ func fetchEpisodeList(ctx context.Context, c *Client, path plexapi.ListPath) ([]
 // fetchSections is fetchMetadata for responses whose container field is
 // named "Directory" (library sections). Concrete for the same reason as
 // fetchEpisodeList: one instantiation, Section.
-func fetchSections(ctx context.Context, c *Client, path plexapi.Path) ([]Section, error) {
+func (c *Client) fetchSections(ctx context.Context, path plexapi.Path) ([]Section, error) {
 	items, err := plexapi.FetchDirectory[Section](ctx, c.Client, path)
 	return items, warnIfOverCap(err, string(path))
 }
@@ -45,8 +45,7 @@ func fetchSections(ctx context.Context, c *Client, path plexapi.Path) ([]Section
 // grep for it), so the APP owns the string; the library reports the
 // condition via the typed error. Returns err unchanged for the caller.
 func warnIfOverCap(err error, path string) error {
-	var tooLarge *plexapi.ResponseTooLargeError
-	if errors.As(err, &tooLarge) {
+	if tooLarge, ok := errors.AsType[*plexapi.ResponseTooLargeError](err); ok {
 		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",
 			"path", path, "cap_bytes", tooLarge.Limit)
 	}

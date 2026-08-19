@@ -188,18 +188,15 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 
 	const rounds = 200
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for r := range rounds {
 			tok := plex.Token("tok-" + string(rune('A'+r%26)))
 			m.mu.Lock()
 			m.shared["2"] = record{ID: "2", Name: "u2", Token: tok}
 			m.mu.Unlock()
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for range rounds {
 			c := m.ClientForUser("2", adminClient)
 			if c == nil {
@@ -214,7 +211,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 				return
 			}
 		}
-	}()
+	})
 	wg.Wait()
 }
 
@@ -632,13 +629,11 @@ func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing
 	got := make([]*plex.Client, n)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(n)
 	for i := range n {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			got[i] = m.ClientForUser("2", adminClient)
-		}()
+		})
 	}
 	close(start) // release all goroutines together to overlap the build window
 	wg.Wait()
