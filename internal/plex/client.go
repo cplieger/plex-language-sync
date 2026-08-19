@@ -39,10 +39,17 @@ type Client struct {
 	TVClient *http.Client
 }
 
+// Token is plexapi's Plex-token type, re-exported so packages that already
+// depend on this wrapper (internal/users) need not import plexapi for one
+// conversion. An alias, not a new type: it IS the library's type, and a second
+// distinct one would add a conversion without adding a guarantee.
+type Token = plexapi.Token
+
 // Options configures NewClient. The old signature was three adjacent
 // strings, and a transposition put the token where the CA path belongs — the
 // library then reports the value it could not read, so the token would have
 // reached the startup log.
+//
 // Field order is govet fieldalignment's, not editorial.
 type Options struct {
 	// TVClient overrides the HTTP client used for plex.tv (shared-server)
@@ -56,19 +63,15 @@ type Options struct {
 	// the scheme and warns when it is plain http to a non-local host (the
 	// token would transit unencrypted).
 	ServerURL string
-	// Token authenticates every request.
-	Token string
+	// Token authenticates every request. Typed, like every other token this
+	// package handles: leaving it a string would have made the root
+	// constructor the one place the credential arrives untyped.
+	Token Token
 	// CACertPath, when non-empty, pins the PEM file at that path as the sole
 	// TLS trust anchor (verification stays ON) — the setup for a self-signed
 	// Plex. Empty uses the OS trust store.
 	CACertPath string
 }
-
-// Token is plexapi's Plex-token type, re-exported so packages that already
-// depend on this wrapper (internal/users) need not import plexapi for one
-// conversion. An alias, not a new type: it IS the library's type, and a second
-// distinct one would add a conversion without adding a guarantee.
-type Token = plexapi.Token
 
 // NewClient validates opts.ServerURL and returns a Client.
 func NewClient(opts Options) (*Client, error) {
@@ -76,7 +79,7 @@ func NewClient(opts Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	api, err := plexapi.New(opts.ServerURL, plexapi.Token(opts.Token), apiOpts...)
+	api, err := plexapi.New(opts.ServerURL, opts.Token, apiOpts...)
 	if err != nil {
 		return nil, err
 	}

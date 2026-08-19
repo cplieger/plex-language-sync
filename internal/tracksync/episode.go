@@ -184,7 +184,7 @@ func (s *Syncer) applyEpisodeForUser(
 
 	if intent, ok := s.cache.IntentFor(userID, episode.GrandparentRatingKey); ok {
 		intentRef := intent.RefStreams()
-		if s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, intentRef) {
+		if s.UpdateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), intentRef) {
 			slog.Info("new/updated episode language set",
 				"trigger", trigger,
 				"user", username,
@@ -208,7 +208,7 @@ func (s *Syncer) applyEpisodeForUser(
 		return
 	}
 
-	changed := s.UpdateEpisodeStreams(ctx, userClient, username, episode.RatingKey, streams.Pair{Audio: ref.Audio, Subtitle: ref.Subtitle})
+	changed := s.UpdateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), streams.Pair{Audio: ref.Audio, Subtitle: ref.Subtitle})
 	if changed {
 		slog.Info("new/updated episode language set",
 			"trigger", trigger,

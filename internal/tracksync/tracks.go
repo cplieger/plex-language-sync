@@ -284,7 +284,7 @@ func (s *Syncer) propagate(
 			break
 		}
 		ep := &episodes[i]
-		if s.UpdateEpisodeStreams(ctx, userClient, username, ep.RatingKey, ref) {
+		if s.UpdateEpisodeStreams(ctx, userClient, username, plex.RatingKey(ep.RatingKey), ref) {
 			changes++
 		}
 	}
@@ -305,13 +305,21 @@ func (s *Syncer) propagate(
 // UpdateEpisodeStreams applies reference audio/subtitle streams to a
 // single episode using the provided per-user client. Returns true when
 // any change was written.
+//
+// ratingKey is plex.RatingKey, not a string, and that closes the second half
+// of this signature's hazard: username and ratingKey were adjacent and both
+// strings, so a transposed pair compiled and looked up the episode whose
+// rating key is a username. Every method on plexReader already takes the
+// typed key, so the conversion belongs at the caller, where a wire-decoded
+// Episode.RatingKey becomes one.
 func (s *Syncer) UpdateEpisodeStreams(
 	ctx context.Context,
 	userClient PlexReadWriter,
-	username, ratingKey string,
+	username string,
+	ratingKey plex.RatingKey,
 	ref streams.Pair,
 ) bool {
-	full, err := userClient.Episode(ctx, plex.RatingKey(ratingKey))
+	full, err := userClient.Episode(ctx, ratingKey)
 	if err != nil {
 		slog.Warn("failed to reload episode", "key", ratingKey, "user", username, "error", err)
 		return false
