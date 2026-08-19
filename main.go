@@ -79,7 +79,7 @@ func run() int {
 
 	// NewClient warns (via the shared library) when the URL is plain http
 	// to a non-local host — the X-Plex-Token would transit unencrypted.
-	client, err := plex.NewClient(plex.Options{ServerURL: cfg.plexURL, Token: cfg.plexToken, CACertPath: cfg.caCertPath})
+	client, err := plex.NewClient(plex.Options{ServerURL: cfg.plexURL, Token: plex.Token(cfg.plexToken), CACertPath: cfg.caCertPath})
 	if err != nil {
 		slog.Error("cannot initialize plex client", "error", err)
 		return 1
