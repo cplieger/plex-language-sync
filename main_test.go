@@ -960,7 +960,8 @@ func TestSkipUnattributedPlayEvent_singleSkipDoesNotWarn(t *testing.T) {
 
 	adapter.skipUnattributedPlayEvent(
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-A"},
-		errUnattributedNoClient)
+		errUnattributedNoClient,
+	)
 
 	out := buf.String()
 	if strings.Contains(out, "level=WARN") {

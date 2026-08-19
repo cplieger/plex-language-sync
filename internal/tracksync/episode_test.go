@@ -166,7 +166,8 @@ func TestFindReferenceEpisode_CountsFetchErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ref, searched, fetchErrors := findReferenceEpisode(
-				t.Context(), tc.plex, episodes, "exclude-none", maxRefSearchDepth)
+				t.Context(), tc.plex, episodes, "exclude-none", maxRefSearchDepth,
+			)
 			if ref != nil {
 				t.Errorf("ref = %+v, want nil (no candidate has selected audio)", ref)
 			}
