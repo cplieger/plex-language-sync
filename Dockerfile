@@ -1,5 +1,5 @@
 # check=error=true
-FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
+FROM golang:1.27.0-alpine@sha256:7d5cbf6833f7331dafd25a2e8b9673477f559759ff8ed4ca8efabe6795ad08db AS builder
 # GOTOOLCHAIN=auto: a Renovate dep bump requiring a newer Go downloads that toolchain
 # instead of failing the build (org convention, go.md/ci-cd.md); still reproducible
 # because go.mod pins the toolchain version. `local` would hard-fail such a build.
