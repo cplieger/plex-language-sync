@@ -64,13 +64,19 @@ type Options struct {
 	CACertPath string
 }
 
+// Token is plexapi's Plex-token type, re-exported so packages that already
+// depend on this wrapper (internal/users) need not import plexapi for one
+// conversion. An alias, not a new type: it IS the library's type, and a second
+// distinct one would add a conversion without adding a guarantee.
+type Token = plexapi.Token
+
 // NewClient validates opts.ServerURL and returns a Client.
 func NewClient(opts Options) (*Client, error) {
 	apiOpts, err := caOptions(opts.CACertPath)
 	if err != nil {
 		return nil, err
 	}
-	api, err := plexapi.New(opts.ServerURL, opts.Token, apiOpts...)
+	api, err := plexapi.New(opts.ServerURL, plexapi.Token(opts.Token), apiOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +89,7 @@ func NewClient(opts Options) (*Client, error) {
 // writes against the requesting token's user, so per-user writes must go
 // through a per-user client. Derivation is pure (no I/O, cannot fail):
 // the CA pin and transport were established once at NewClient time.
-func (c *Client) ForToken(token string) *Client {
+func (c *Client) ForToken(token plexapi.Token) *Client {
 	return &Client{Client: c.Client.ForToken(token), TVClient: c.TVClient}
 }
 

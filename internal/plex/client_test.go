@@ -26,21 +26,21 @@ import (
 // swapping it aims the server client at plex.tv and vice versa — the test
 // would then pass or fail for the wrong reason. No call site needs both, so
 // the pair never has to exist.
-func newClientForServer(t *testing.T, baseURL *url.URL, token string, hc *http.Client) *Client {
+func newClientForServer(t *testing.T, baseURL *url.URL, token plexapi.Token, hc *http.Client) *Client {
 	t.Helper()
 	return newClient(t, baseURL, token, plexapi.WithHTTPClient(hc))
 }
 
 // newClientForTV builds a Client whose plex.tv (shared-server) lookups go
 // through tv, leaving the server client on the library's hardened default.
-func newClientForTV(t *testing.T, baseURL *url.URL, token string, tv *http.Client) *Client {
+func newClientForTV(t *testing.T, baseURL *url.URL, token plexapi.Token, tv *http.Client) *Client {
 	t.Helper()
 	c := newClient(t, baseURL, token)
 	c.TVClient = tv
 	return c
 }
 
-func newClient(t *testing.T, baseURL *url.URL, token string, opts ...plexapi.Option) *Client {
+func newClient(t *testing.T, baseURL *url.URL, token plexapi.Token, opts ...plexapi.Option) *Client {
 	t.Helper()
 	api, err := plexapi.New(baseURL.String(), token, opts...)
 	if err != nil {

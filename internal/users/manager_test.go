@@ -192,7 +192,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for r := range rounds {
-			tok := "tok-" + string(rune('A'+r%26))
+			tok := plex.Token("tok-" + string(rune('A'+r%26)))
 			m.mu.Lock()
 			m.shared["2"] = record{ID: "2", Name: "u2", Token: tok}
 			m.mu.Unlock()

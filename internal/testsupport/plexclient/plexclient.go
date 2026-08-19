@@ -49,7 +49,7 @@ type Options struct {
 // parsed by the caller, so construction can only fail on a non-http(s)
 // scheme, which is a fixture bug and should fail the test loudly at the
 // point of construction.
-func NewFromHTTP(baseURL *url.URL, token string, opts Options) *plex.Client {
+func NewFromHTTP(baseURL *url.URL, token plexapi.Token, opts Options) *plex.Client {
 	var apiOpts []plexapi.Option
 	if opts.HTTP != nil {
 		apiOpts = append(apiOpts, plexapi.WithHTTPClient(opts.HTTP))

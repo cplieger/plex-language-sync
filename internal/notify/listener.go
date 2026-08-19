@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // wsTypeTimeline is the NotificationContainer.Type value Plex uses for
@@ -71,7 +72,7 @@ type Handler interface {
 // nil means net/http's default follow behavior.
 type PlexClient interface {
 	BaseURL() *url.URL
-	Token() string
+	Token() plexapi.Token
 	RedirectPolicy() func(*http.Request, []*http.Request) error
 	BaseTransport() *http.Transport
 }
@@ -217,7 +218,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 	slog.Debug("connecting to websocket", "url", wsURL.String())
 
 	opts := &websocket.DialOptions{
-		HTTPHeader: http.Header{"X-Plex-Token": {l.client.Token()}},
+		HTTPHeader: http.Header{"X-Plex-Token": {string(l.client.Token())}},
 		HTTPClient: l.dialClient(),
 	}
 
