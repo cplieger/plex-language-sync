@@ -60,18 +60,13 @@ services:
     restart: unless-stopped
     stop_grace_period: 20s  # headroom for the final cache save (see Graceful shutdown)
     # Override with PUID/PGID in .env; defaults to 1000:1000.
-    user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
+    user: "${PUID:-1000}:${PGID:-1000}"  # must own the /config host dir
 
     environment:
       PLEX_URL: "http://plex:32400"  # full URL including scheme and port
       PLEX_TOKEN: "your-plex-token"  # admin token from Plex Web settings
       UPDATE_LEVEL: "show"  # show = entire show, season = current season only
       UPDATE_STRATEGY: "all"  # all = every episode, next = future episodes only
-      TRIGGER_ON_PLAY: "true"
-      TRIGGER_ON_SCAN: "true"
-      LEARN_LANGUAGE_PROFILES: "true"  # learn and apply audio→subtitle pairs for new shows
-      SUBTITLE_MATCH_TIER: "same-language"  # how far a subtitle substitution may reach
-      DEEP_SCAN_INTERVAL: "24h"  # deep-scan cadence (Go duration); off/disabled/0 disables
 
     volumes:
       - "/path/to/plex-language-sync/config:/config"
