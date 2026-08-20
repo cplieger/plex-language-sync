@@ -128,7 +128,7 @@ func run() int {
 	// Reap any temp orphaned by an interrupted Save so they don't accumulate
 	// on the persistent /config volume. Best-effort: a cleanup failure is
 	// non-fatal at startup, so log at Warn and continue.
-	if _, err := atomicfile.CleanupStaleTemps(cacheDir, time.Hour); err != nil {
+	if _, err := atomicfile.CleanupStaleTemps(ctx, cacheDir, time.Hour); err != nil {
 		slog.Warn("stale temp cleanup failed", "path", cacheDir, "error", err)
 	}
 
