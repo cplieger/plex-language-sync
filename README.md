@@ -34,7 +34,7 @@ It also learns your habits. If you always watch anime in Japanese with English s
 - Configurable scope: entire show or current season only
 - Configurable range: all episodes or future episodes only
 - Ignore specific shows via Plex labels or entire libraries
-- Scheduled daily deep analysis as a safety net: re-applies
+- Scheduled daily deep scan as a safety net: re-applies
   the per-show selections recorded from your playback, so a
   missed real-time event is repaired without guessing your
   choice from the server's current state
@@ -46,7 +46,7 @@ It also learns your habits. If you always watch anime in Japanese with English s
 ### Why this design
 
 - **Single binary, small footprint.** Written in Go; the only third-party runtime libraries are `coder/websocket` and `golang.org/x/sync` (the rest are the project's own support modules). No Python runtime, no YAML config files, no notification frameworks; just a distroless container that does one job well.
-- **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65532) on `gcr.io/distroless/static` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
+- **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65532) on `gcr.io/distroless/static-debian13` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
 
 ## Quick start
 
@@ -58,6 +58,7 @@ services:
     image: ghcr.io/cplieger/plex-language-sync:latest
     container_name: plex-language-sync
     restart: unless-stopped
+    stop_grace_period: 20s  # headroom for the final cache save (see Graceful shutdown)
     # Override with PUID/PGID in .env; defaults to 1000:1000.
     user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
 
@@ -73,7 +74,7 @@ services:
       DEEP_SCAN_INTERVAL: "24h"  # deep-scan cadence (Go duration); off/disabled/0 disables
 
     volumes:
-      - /path/to/plex-language-sync/config:/config
+      - "/path/to/plex-language-sync/config:/config"
 ```
 
 ## Configuration reference
@@ -211,6 +212,7 @@ groups:
           sum by (container) (count_over_time(
             {container="plex-language-sync"} |= `user resolution stalled` [30m]
           )) > 0
+        for: 0m
         labels:
           severity: warning
         annotations:
@@ -264,7 +266,7 @@ All dependencies are updated automatically via [Renovate](https://github.com/ren
 | Dependency | Source |
 | --- | --- |
 | golang | [Go](https://hub.docker.com/_/golang) |
-| gcr.io/distroless/static:nonroot | [Distroless](https://github.com/GoogleContainerTools/distroless) |
+| gcr.io/distroless/static-debian13:nonroot | [Distroless](https://github.com/GoogleContainerTools/distroless) |
 
 ## Credits
 

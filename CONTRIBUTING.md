@@ -18,21 +18,21 @@ The code is split between a composition root at the module root and
 business logic under `internal/`.
 
 - `main.go`: composition root. `run()` constructs the Plex client,
-  cache, user manager, syncer, and scheduler, wires them together, and
-  starts the WebSocket listener. `notifyAdapter` is the glue that gates
-  events on `TRIGGER_ON_PLAY` / `TRIGGER_ON_SCAN` and forwards them to
-  the syncer.
+  cache, user manager, syncer, and the deep-scan loop, wires them
+  together, and starts the WebSocket listener. `notifyAdapter` is the
+  glue that gates events on `TRIGGER_ON_PLAY` / `TRIGGER_ON_SCAN` and
+  forwards them to the syncer.
 - `config.go`: env-var parsing, defaults, `_FILE`-suffix Docker-secret
   handling, and `DEEP_SCAN_INTERVAL` (Go duration) parsing.
 - **Interfaces live at the consumer, not in a shared package.** Each
   package declares the methods it actually calls: `tracksync` asks for 3
   Plex reads, 3 Plex writes and 4 cache methods; `deepscan` asks for 4
   reads and 3 cache methods; `users` asks for 2; `ignore` asks for 1.
-  There is deliberately no `internal/api`-style contract package — it
-  handed every consumer a menu several times larger than its order, and
-  a test fake then had to implement methods the subject never called (one
-  stub implemented eight and panicked in seven). Adding a dependency
-  means adding the one method you need to your own package's interface.
+  There is deliberately no `internal/api`-style contract package: a
+  shared interface hands each consumer more methods than it calls, and a
+  test fake must then implement methods the subject never calls. To add a
+  dependency, add the one method you need to your own package's
+  interface.
   `main.go` stays the single wiring layer.
   The one exception is `cache.Contract`, the full persisted surface: it
   exists solely so `cache.RunContract` can run the same suite against the
@@ -42,9 +42,9 @@ business logic under `internal/`.
   matching/scoring, persistent cache, WebSocket listener, multi-user
   token management, propagation logic, periodic deep scan, ignore policy).
 
-A daily scheduler runs a deep analysis as a safety net for missed
-real-time events; the WebSocket listener reconnects with exponential
-backoff. The persistent cache lives under `/config`, split by retention
+A daily deep scan runs as a safety net for missed real-time events; the
+WebSocket listener reconnects with exponential backoff. The persistent
+cache lives under `/config`, split by retention
 class into `profiles.json`, `tokens.json`, and `state.json` (a legacy
 `cache.json` is migrated on first start); each file is written via
 atomic temp-file + rename.
@@ -60,8 +60,8 @@ incidentally:
   (`profiles.json`, `tokens.json`, `state.json`; `cacheDir` in
   `main.go`), including migration of a legacy `cache.json`.
 
-The in-memory representation behind these may evolve freely; the
-external surface should not drift.
+The in-memory representation behind these can change freely; the
+external surface must not drift.
 
 ## Local development
 
@@ -78,8 +78,8 @@ table-driven cases with property-based tests via
 logic (stream scoring, codec ranking, profile learning, episode
 filtering, cache lifecycle, config parsing, backoff math) is unit- and
 property-tested; the I/O-bound runtime paths (WebSocket connection
-management, Plex HTTP calls, the main loop, scheduler tick loop, cache
-file I/O) are intentionally not unit-tested and are validated in
+management, Plex HTTP calls, the main loop, the deep-scan tick loop,
+cache file I/O) are intentionally not unit-tested and are validated in
 production via the healthcheck and structured logging. When you add
 logic, add it to a package that can be tested without live Plex.
 
