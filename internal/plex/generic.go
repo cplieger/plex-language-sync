@@ -13,7 +13,8 @@ import (
 // Metadata-envelope kernel into the app's own item type T (the
 // internal/streams domain model), attaching this app's over-cap WARN
 // contract. Transport, hardening, and the envelope decode are the
-// library's (plexapi's (*Client).FetchMetadata generic method); the
+// library's (plexapi's (*Client).FetchMetadata generic method, promoted
+// through the embed); the
 // builder-typed path carries the endpoint's read-cap class, so a listing
 // endpoint cannot land here.
 //
@@ -22,7 +23,7 @@ import (
 // can never satisfy an interface, so anything abstracting over the Plex read
 // path abstracts over these non-generic wrappers instead.
 func (c *Client) fetchMetadata[T any](ctx context.Context, path plexapi.Path) ([]T, error) {
-	items, err := c.Client.FetchMetadata[T](ctx, path)
+	items, err := c.FetchMetadata[T](ctx, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
@@ -33,7 +34,7 @@ func (c *Client) fetchMetadata[T any](ctx context.Context, path plexapi.Path) ([
 // that documents flexibility nothing uses. The library's FetchMetadataList
 // stays generic — genuinely so, across the fleet.
 func (c *Client) fetchEpisodeList(ctx context.Context, path plexapi.ListPath) ([]streams.Episode, error) {
-	items, err := c.Client.FetchMetadataList[streams.Episode](ctx, path)
+	items, err := c.FetchMetadataList[streams.Episode](ctx, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
@@ -41,7 +42,7 @@ func (c *Client) fetchEpisodeList(ctx context.Context, path plexapi.ListPath) ([
 // named "Directory" (library sections). Concrete for the same reason as
 // fetchEpisodeList: one instantiation, Section.
 func (c *Client) fetchSections(ctx context.Context, path plexapi.Path) ([]Section, error) {
-	items, err := c.Client.FetchDirectory[Section](ctx, path)
+	items, err := c.FetchDirectory[Section](ctx, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
