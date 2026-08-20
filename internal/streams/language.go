@@ -64,7 +64,7 @@ func classifyReference(raw string) (langtag.Tag, languageMatch) {
 func selectByLanguage(candidates []*Stream, wantRaw string, floor langtag.Tier) []*Stream {
 	want, mode := classifyReference(wantRaw)
 	if mode == langGraded {
-		out, _, ok := langtag.Best(langtag.Prefer(want), candidates, (*Stream).Lang, floor)
+		out, _, ok := langtag.Prefer(want).Best(candidates, (*Stream).Lang, floor)
 		if !ok {
 			return nil
 		}

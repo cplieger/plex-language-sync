@@ -13,10 +13,16 @@ import (
 // Metadata-envelope kernel into the app's own item type T (the
 // internal/streams domain model), attaching this app's over-cap WARN
 // contract. Transport, hardening, and the envelope decode are the
-// library's (plexapi.FetchMetadata); the builder-typed path carries the
-// endpoint's read-cap class, so a listing endpoint cannot land here.
+// library's (plexapi's (*Client).FetchMetadata generic method); the
+// builder-typed path carries the endpoint's read-cap class, so a listing
+// endpoint cannot land here.
+//
+// This wrapper is also the app's seam over a surface that cannot have one:
+// the library's decoders are generic methods (Go 1.27), and a generic method
+// can never satisfy an interface, so anything abstracting over the Plex read
+// path abstracts over these non-generic wrappers instead.
 func (c *Client) fetchMetadata[T any](ctx context.Context, path plexapi.Path) ([]T, error) {
-	items, err := plexapi.FetchMetadata[T](ctx, c.Client, path)
+	items, err := c.Client.FetchMetadata[T](ctx, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
@@ -27,7 +33,7 @@ func (c *Client) fetchMetadata[T any](ctx context.Context, path plexapi.Path) ([
 // that documents flexibility nothing uses. The library's FetchMetadataList
 // stays generic — genuinely so, across the fleet.
 func (c *Client) fetchEpisodeList(ctx context.Context, path plexapi.ListPath) ([]streams.Episode, error) {
-	items, err := plexapi.FetchMetadataList[streams.Episode](ctx, c.Client, path)
+	items, err := c.Client.FetchMetadataList[streams.Episode](ctx, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
@@ -35,7 +41,7 @@ func (c *Client) fetchEpisodeList(ctx context.Context, path plexapi.ListPath) ([
 // named "Directory" (library sections). Concrete for the same reason as
 // fetchEpisodeList: one instantiation, Section.
 func (c *Client) fetchSections(ctx context.Context, path plexapi.Path) ([]Section, error) {
-	items, err := plexapi.FetchDirectory[Section](ctx, c.Client, path)
+	items, err := c.Client.FetchDirectory[Section](ctx, path)
 	return items, warnIfOverCap(err, string(path))
 }
 
