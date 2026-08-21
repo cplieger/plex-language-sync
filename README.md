@@ -178,6 +178,42 @@ alerts.
 groups:
   - name: plex-language-sync
     rules:
+      # The deadman. Both rules below fire on a record the app LOGGED, so a
+      # wedged deep-scan loop logs nothing at all while the WebSocket plane
+      # stays connected and healthy, and neither notices. This one fires on
+      # silence instead, keyed on the reconcile plane's completion line.
+      #
+      # 50h, not 30h, and the size comes from the RESTART behaviour rather than
+      # the interval. The startup pass runs only when the last completion is
+      # already older than one interval; otherwise it starts a fresh interval
+      # from boot. So a restart shortly before the deadline defers the next pass
+      # by almost a full interval, and two consecutive completions can sit ~47h
+      # apart with nothing wrong. 50h absorbs one such restart plus runtime. It
+      # does NOT absorb repeated restarts inside the interval, which no
+      # completion-only window can; a container that restart-loops needs its own
+      # alert, not a wider window here.
+      #
+      # DROP this rule if you set DEEP_SCAN_INTERVAL to off/disabled/0, which
+      # runs the app WebSocket-only with no periodic pass, so there is no
+      # heartbeat to miss and the rule would fire forever.
+      - alert: PlexLanguageSyncDeepScanStalled
+        expr: |
+          absent_over_time({container="plex-language-sync"} |= `deep analysis completed` [50h])
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "no plex-language-sync deep-analysis heartbeat in 50h"
+          description: >
+            The reconcile plane logs `deep analysis completed` at the end of
+            every pass, and none has arrived in 50h (DEEP_SCAN_INTERVAL defaults
+            to 24h). The usual cause is the periodic safety net wedged, so
+            replayed history items stop being reconciled while the container
+            stays healthy and connected. Check the container logs for the last
+            `scheduled deep analysis starting` line and whether it finished. An
+            absence rule cannot tell that apart from a container that never
+            started or was renamed, or a log pipeline that stopped shipping this
+            stream, so rule those out first.
       - alert: PlexLanguageSyncErrorLog
         expr: |
           sum by (container) (count_over_time(
