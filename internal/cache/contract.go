@@ -158,8 +158,8 @@ func intentContract(t *testing.T, c Contract) {
 	intentEdgeContract(t, c)
 }
 
-// intentEdgeContract covers the ledger's edges: replace-on-rerecord and
-// the nil/empty-key guards.
+// intentEdgeContract covers the ledger's edges: replace-on-rerecord, the
+// per-show independence of two entries, and the nil/empty-key guards.
 func intentEdgeContract(t *testing.T, c Contract) {
 	t.Helper()
 
@@ -171,6 +171,8 @@ func intentEdgeContract(t *testing.T, c Contract) {
 			t.Errorf("re-record did not replace: %+v", got)
 		}
 	})
+
+	intentPerShowContract(t, c)
 
 	t.Run("intent_missing_nil_and_empty_keys", func(t *testing.T) {
 		if _, ok := c.IntentFor("nobody", "show-42"); ok {
@@ -187,6 +189,36 @@ func intentEdgeContract(t *testing.T, c Contract) {
 		}
 		if _, ok := c.IntentFor("u1", "show-nil"); ok {
 			t.Error("nil intent was stored; RecordIntent must ignore nil")
+		}
+	})
+}
+
+// intentPerShowContract covers the ledger's per-show independence: two shows
+// recorded for one user are two entries, and neither write disturbs the other.
+// Split out of intentEdgeContract to keep that function's cognitive complexity
+// under the gate.
+func intentPerShowContract(t *testing.T, c Contract) {
+	t.Helper()
+
+	t.Run("intent_second_show_keeps_the_first", func(t *testing.T) {
+		// A store that reset its per-user map on every write would keep only
+		// the newest show, and the loss would stay invisible until a user
+		// played an episode of an older one.
+		c.RecordIntent("u3", "show-70", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: langJPN}, Subtitle: nil}, 70))
+		c.RecordIntent("u3", "show-71", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: langFRA}, Subtitle: nil}, 71))
+		first, ok := c.IntentFor("u3", "show-70")
+		if !ok {
+			t.Fatal("IntentFor(u3, show-70) = ok=false after a second show was recorded, want the first show's intent")
+		}
+		if first.Audio.LanguageCode != langJPN {
+			t.Errorf("IntentFor(u3, show-70) audio = %q, want %q", first.Audio.LanguageCode, langJPN)
+		}
+		second, ok := c.IntentFor("u3", "show-71")
+		if !ok {
+			t.Fatal("IntentFor(u3, show-71) = ok=false, want the second show's intent")
+		}
+		if second.Audio.LanguageCode != langFRA {
+			t.Errorf("IntentFor(u3, show-71) audio = %q, want %q", second.Audio.LanguageCode, langFRA)
 		}
 	})
 }

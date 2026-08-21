@@ -1289,3 +1289,53 @@ func TestObserveAndPropagate_stopsOnCancelledContext(t *testing.T) {
 		t.Errorf("SetAudio called %d times on a cancelled context; want 0 (the mid-loop ctx guard must break before applying changes)", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// logSubstitution — which track changes reach INFO
+// ---------------------------------------------------------------------------
+
+// TestLogSubstitution_levelByKindAndDistance pins the log-level policy for an
+// applied track change, which is the only record a user's surprising subtitle
+// leaves. Two rules meet here: a subtitle that crossed a language boundary is
+// worth an operator's attention at INFO, and everything else — any audio match,
+// and a subtitle inside the user's own language — is routine and stays at DEBUG.
+// Getting either wrong is quietly expensive: audio at INFO emits a line per
+// episode for a regional variant nobody would notice, and a cross-language
+// subtitle at DEBUG loses the one line that explains a complaint.
+// Not parallel: it swaps the process-global default logger.
+func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
+	tests := []struct {
+		name      string
+		kind      string
+		refLang   string
+		matchLang string
+		wantLevel string
+		wantMsg   string
+	}{
+		{"audio within one language is routine", kindAudio, "nob", "nor", "level=DEBUG", `msg="track language matched"`},
+		{"audio across languages is still routine", kindAudio, "nob", "nno", "level=DEBUG", `msg="track language matched"`},
+		{"subtitle within one language is routine", kindSubtitle, "nob", "nor", "level=DEBUG", `msg="track language matched"`},
+		{"subtitle across languages is recorded", kindSubtitle, "nob", "nno", "level=INFO", `msg="track language substituted"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+			logSubstitution(ep, "alice", tt.kind,
+				&streams.Stream{LanguageCode: tt.refLang},
+				&streams.Stream{LanguageCode: tt.matchLang})
+
+			out := buf.String()
+			if !strings.Contains(out, tt.wantLevel) {
+				t.Errorf("logSubstitution(%s, %s->%s) logged %q, want %s", tt.kind, tt.refLang, tt.matchLang, out, tt.wantLevel)
+			}
+			if !strings.Contains(out, tt.wantMsg) {
+				t.Errorf("logSubstitution(%s, %s->%s) logged %q, want %s", tt.kind, tt.refLang, tt.matchLang, out, tt.wantMsg)
+			}
+		})
+	}
+}

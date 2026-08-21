@@ -55,6 +55,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -135,6 +136,42 @@ func TestLoadSchedulerInterval(t *testing.T) {
 			}
 			if gotEnabled != tt.wantEnabled {
 				t.Errorf("loadSchedulerInterval(%q) enabled = %v, want %v", tt.val, gotEnabled, tt.wantEnabled)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// loadSubtitleTier
+// ---------------------------------------------------------------------------
+
+// TestLoadSubtitleTier pins how far a subtitle substitution may reach. The tier
+// is the app's single language-safety knob: it decides whether a user asking for
+// Norwegian can be handed Nynorsk, so an operator who sets it must get the tier
+// they named, and one who mistypes it must get the documented default rather
+// than TierNone — which langtag refuses as a floor because it would accept every
+// language as a substitute for every other.
+func TestLoadSubtitleTier(t *testing.T) {
+	tests := []struct {
+		name string
+		val  string
+		want langtag.Tier
+	}{
+		{"unset takes the default", "", defaultSubtitleTier},
+		{"identical", "identical", langtag.TierIdentical},
+		{"same-language", "same-language", langtag.TierSameLanguage},
+		{"other-script", "other-script", langtag.TierOtherScript},
+		{"intelligible", "intelligible", langtag.TierIntelligible},
+		{"shared-literacy", "shared-literacy", langtag.TierSharedLiteracy},
+		{"underscore spelling is accepted", "same_language", langtag.TierSameLanguage},
+		{"typo falls back to the default", "intelligable", defaultSubtitleTier},
+		{"none is not a floor", "none", defaultSubtitleTier},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SUBTITLE_MATCH_TIER", tt.val)
+			if got := loadSubtitleTier(); got != tt.want {
+				t.Errorf("loadSubtitleTier() with SUBTITLE_MATCH_TIER=%q = %v, want %v", tt.val, got, tt.want)
 			}
 		})
 	}

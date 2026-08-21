@@ -61,6 +61,38 @@ func (f *fakeIgnore) ShouldSkipEpisode(_ context.Context, _ *streams.Episode) bo
 var _ skipChecker = (*fakeIgnore)(nil)
 
 // ---------------------------------------------------------------------------
+// worker pool sizing
+// ---------------------------------------------------------------------------
+
+// TestWorkerCount pins the pool-size seam the deterministic tests in this file
+// rest on: an unset pool means the production concurrency, and an explicit pool
+// means exactly that many workers. A fallback that also swallowed 1 would turn
+// every "workers = 1" test here into a concurrent run, where the shared
+// consecutive-error counter has no well-defined order — the tests would still
+// pass, and would stop testing what they say they test.
+func TestWorkerCount(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		workers int
+		want    int
+	}{
+		{"unset falls back to the production pool", 0, deepAnalysisConcurrency},
+		{"one means serial", 1, 1},
+		{"explicit pool is honoured", 3, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := &Scheduler{workers: tt.workers}
+			if got := s.workerCount(); got != tt.want {
+				t.Errorf("workerCount() with workers=%d = %d, want %d", tt.workers, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // processRecentHistory — circuit breaker
 // ---------------------------------------------------------------------------
 
@@ -165,6 +197,50 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	}
 	if got, want := syncer.changeCalls.Load(), int64(len(episodeByKey)); got != want {
 		t.Errorf("ChangeTracks called %d times; want %d (one per resolved episode)", got, want)
+	}
+}
+
+// TestHistoryWorker_TrippedBreakerDrainsWithoutFetching pins the worker's half
+// of the circuit breaker. Once the shared counter has REACHED the threshold, a
+// worker still holding queued items empties the queue without doing any work,
+// which is what lets a feeder blocked on a send finish and close the channel.
+// Driving the worker directly is what makes the threshold exact: in a full pass
+// the feeder carries the same guard on the same counter, so which side of the
+// boundary a queued item lands on is a race.
+func TestHistoryWorker_TrippedBreakerDrainsWithoutFetching(t *testing.T) {
+	t.Parallel()
+	plx := &fakeapi.Plex{EpisodeErr: errors.New("fetch failed")}
+	sched := New(
+		Config{Enable: true},
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) EpisodeReader { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
+	)
+
+	work := make(chan plex.HistoryItem, 2)
+	work <- plex.HistoryItem{AccountID: 1, RatingKey: "1", Type: plex.TypeEpisode}
+	work <- plex.HistoryItem{AccountID: 1, RatingKey: "2", Type: plex.TypeEpisode}
+	close(work)
+
+	var consecutiveErrors, totalErrors atomic.Int32
+	consecutiveErrors.Store(maxConsecutiveErrors) // the breaker has just tripped
+	var unknownUsers sync.Map
+
+	sched.historyWorker(t.Context(), work, &consecutiveErrors, &totalErrors, &unknownUsers)
+
+	if got := plx.Calls.Load(); got != 0 {
+		t.Errorf("historyWorker made %d Plex calls with the counter at the %d-error threshold; want 0 (drain, do not work)",
+			got, maxConsecutiveErrors)
+	}
+	if got := len(work); got != 0 {
+		t.Errorf("historyWorker left %d items queued; want 0 (the drain is what releases the feeder)", got)
+	}
+	if got := totalErrors.Load(); got != 0 {
+		t.Errorf("totalErrors = %d after a drain-only pass; want 0 (no fetch was attempted, so nothing failed)", got)
 	}
 }
 
@@ -439,6 +515,43 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 	sched.Run(t.Context())
 	if plx.Calls.Load() != 0 {
 		t.Errorf("Run(disabled) made %d Plex calls; want 0", plx.Calls.Load())
+	}
+}
+
+// TestRun_NonPositiveIntervalIsDisabled pins the interval half of the enable
+// gate. The Enable=false test above short-circuits before the interval is ever
+// read, so nothing else covers a configured-but-unusable interval: without this
+// gate a zero period reaches the scheduling loop, where the meaning of "every
+// 0" is whatever the loop happens to do with it.
+func TestRun_NonPositiveIntervalIsDisabled(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		interval time.Duration
+	}{
+		{"zero", 0},
+		{"negative", -time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plx := &fakeapi.Plex{}
+			sched := New(
+				Config{Enable: true, Interval: tt.interval},
+				Deps{
+					Plex:       plx,
+					Cache:      fakeapi.NewCache(),
+					UserClient: func(_ string) EpisodeReader { return plx },
+					Sync:       &fakeSyncer{},
+					SaveCache:  nil,
+				},
+			)
+			sched.Run(t.Context())
+			if got := plx.Calls.Load(); got != 0 {
+				t.Errorf("Run(Enable=true, Interval=%v) made %d Plex calls; want 0 (a non-positive interval disables the scheduler)",
+					tt.interval, got)
+			}
+		})
 	}
 }
 
@@ -1215,6 +1328,42 @@ func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 	}
 }
 
+// TestDeepAnalysisCore_LookbackFloorIsOneDayOnFirstRun pins the 24h floor at
+// the other end of the same window calculation: with no previous run recorded —
+// first boot, or a state.json that was reset — the replay still covers a full
+// recent day. This is the arm the two older deepAnalysisCore tests exercise but
+// never assert: a floor that collapsed would leave the safety-net pass fetching
+// an empty window and repairing nothing, silently, forever.
+func TestDeepAnalysisCore_LookbackFloorIsOneDayOnFirstRun(t *testing.T) {
+	t.Parallel()
+	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
+	c := fakeapi.NewCache() // zero last-run marker -> the floor decides the window
+	sched := New(
+		Config{Enable: true},
+		Deps{
+			Plex:       plx,
+			Cache:      c,
+			UserClient: func(_ string) EpisodeReader { return plx.Plex },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
+	)
+
+	sched.deepAnalysisCore(t.Context())
+	after := time.Now()
+
+	windowStart := time.Unix(plx.historySince.Load(), 0)
+	lookback := after.Sub(windowStart)
+	if lookback < 23*time.Hour {
+		t.Errorf("first-run look-back = %v, want ~24h; a window this short leaves recent plays unswept (window start %v)",
+			lookback, windowStart.UTC())
+	}
+	if lookback > 25*time.Hour {
+		t.Errorf("first-run look-back = %v, want ~24h; the floor must not widen the window on its own (window start %v)",
+			lookback, windowStart.UTC())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // deepAnalysisCore — watermark-on-cancel guard (h-f1 resolution)
 // ---------------------------------------------------------------------------
@@ -1454,5 +1603,48 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 
 	if got := c.LastSchedulerRun(); !got.After(prev) {
 		t.Errorf("pass with scattered below-breaker item failures did not advance the marker: got %v, still <= previous run %v (accepted-loss failures must not block completion)", got.UTC(), prev.UTC())
+	}
+}
+
+// TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning pins the negative half of
+// both partial-failure summaries: a pass where every fetch succeeded raises
+// neither. Both lines are WARNs an operator (and a Loki alert) reads as "this
+// sweep lost items", so one that also fired on a healthy pass would make the
+// signal worthless — and the healthy pass is the one that runs every day.
+// Not parallel: captureSlog mutates the process-global default logger.
+func TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning(t *testing.T) {
+	plx := &fakeapi.Plex{
+		HistoryItems: []plex.HistoryItem{
+			{AccountID: 1, RatingKey: "100", Type: plex.TypeEpisode},
+		},
+		Sections: []plex.Section{{Key: "1", Title: "TV"}},
+		RecentlyAddedBySec: map[string][]streams.Episode{
+			"1": {{RatingKey: "200"}},
+		},
+		EpisodeByKey: map[string]*streams.Episode{
+			"100": {RatingKey: "100"},
+			"200": {RatingKey: "200"},
+		},
+	}
+	sched := New(
+		Config{Enable: true},
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			UserClient: func(_ string) EpisodeReader { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  nil,
+		},
+	)
+
+	out := captureSlog(t, func() {
+		sched.deepAnalysisCore(t.Context())
+	})
+
+	if strings.Contains(out, "recent-history replay incomplete") {
+		t.Errorf("a pass with no failed history item raised the replay-incomplete WARN; log: %q", out)
+	}
+	if strings.Contains(out, "recently-added sweep incomplete") {
+		t.Errorf("a pass with no failed section raised the sweep-incomplete WARN; log: %q", out)
 	}
 }
