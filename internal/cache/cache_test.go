@@ -465,6 +465,122 @@ func TestCacheLoadMigrationSaveFailureKeepsLegacy(t *testing.T) {
 	}
 }
 
+// TestCacheLoadMigrationAnnouncesCompletion pins the migration's operator
+// signal: the on-disk layout changes once in a deploy's life, and a successful
+// change says so at INFO. Every failure on that path warns instead, so an
+// operator who finds neither line knows the migration never ran at all.
+func TestCacheLoadMigrationAnnouncesCompletion(t *testing.T) {
+	dir := t.TempDir()
+	legacyWrite(t, dir, Data{
+		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "eng"}},
+	})
+
+	c := New()
+	out := captureSlog(t, func() {
+		if err := c.Load(dir); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "cache migrated to split layout") {
+		t.Errorf("Load() over a legacy cache.json logged %q, want the migration-complete notice", out)
+	}
+}
+
+// TestCacheLoadMigratesLegacyIntents pins the intent section of the legacy
+// read-forward contract: a union cache.json carrying an intents section seeds
+// the ledger, exactly as its profiles and tokens sections do. Intents are
+// irreplaceable learned state, so dropping them at the migration would
+// silently un-learn every show a user has watched, with nothing in the log to
+// say so.
+func TestCacheLoadMigratesLegacyIntents(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	legacyWrite(t, dir, Data{
+		Intents: map[string]map[string]streams.Intent{
+			"1": {"42": *streams.NewIntent(streams.Pair{
+				Audio:    &streams.Stream{LanguageCode: "jpn"},
+				Subtitle: &streams.Stream{LanguageCode: "eng"},
+			}, 1700000000)},
+		},
+	})
+
+	c := New()
+	if err := c.Load(dir); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	got, ok := c.IntentFor("1", "42")
+	if !ok {
+		t.Fatal("IntentFor(1, 42) after legacy migration = ok=false, want the legacy ledger entry")
+	}
+	if got.Audio.LanguageCode != "jpn" {
+		t.Errorf("migrated intent audio = %q, want jpn", got.Audio.LanguageCode)
+	}
+	if got.Subtitle == nil || got.Subtitle.LanguageCode != "eng" {
+		t.Errorf("migrated intent subtitle = %+v, want eng", got.Subtitle)
+	}
+}
+
+// TestCacheLoadLeavesAuthoritativeSplitFilesUntouched pins that Load is a read
+// path. When the split layout is already complete, the only thing owed is
+// removing the leftover legacy file: re-encoding the three split files would
+// put a write — and every failure mode of one — on a boot that had nothing to
+// migrate. The files are written here in compact form, which Save never
+// produces, so any rewrite is visible in the bytes.
+func TestCacheLoadLeavesAuthoritativeSplitFilesUntouched(t *testing.T) {
+	dir := t.TempDir()
+	written := map[string][]byte{
+		profilesFile: mustCompactJSON(t, &profilesData{
+			LanguageProfiles: map[string]map[string]string{"1": {"jpn": "eng"}},
+		}),
+		tokensFile: mustCompactJSON(t, &tokensData{UserTokens: map[string]string{"2": "new-tok"}}),
+		stateFile:  mustCompactJSON(t, &stateData{LastSchedulerRun: 2000000000}),
+	}
+	for name, raw := range written {
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+			t.Fatalf("setup: write %s: %v", name, err)
+		}
+	}
+	legacyWrite(t, dir, Data{
+		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "STALE"}},
+	})
+
+	loaded := New()
+	out := captureSlog(t, func() {
+		if err := loaded.Load(dir); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	for _, name := range splitFiles {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !bytes.Equal(raw, written[name]) {
+			t.Errorf("Load() rewrote %s: on disk %q, want the untouched %q", name, raw, written[name])
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, legacyCacheFile)); !os.IsNotExist(err) {
+		t.Errorf("stale legacy cache.json not removed (stat err = %v)", err)
+	}
+	if !strings.Contains(out, "split layout is authoritative") {
+		t.Errorf("Load() logged %q, want the stale-leftover removal reported as such and not as a migration", out)
+	}
+}
+
+// mustCompactJSON marshals v without indentation, so a file written from it
+// differs byte-for-byte from anything Save (MarshalIndent) would write.
+func mustCompactJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("setup: marshal %T: %v", v, err)
+	}
+	return raw
+}
+
 // --- PBT: JSON round-trip preserves LastSchedulerRun + map lengths ---
 
 func TestCacheDataJSONRoundTrip(t *testing.T) {
@@ -743,8 +859,35 @@ func TestCacheLoadStatErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() with a non-ErrNotExist stat error = nil, want the error propagated")
 	}
+	// Load's contract is that the error JOINS every per-section failure, so
+	// the message tells an operator which sections started fresh. Here all
+	// four are unreadable; a message naming only some of them would report a
+	// partial reset as a total one, or hide a reset section entirely.
+	for _, name := range []string{legacyCacheFile, profilesFile, tokensFile, stateFile} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("Load() error = %q, want it to name the unreadable %s", err, name)
+		}
+	}
 	if c.data.ProcessedEpisodes == nil {
 		t.Error("Load() left ProcessedEpisodes nil on the stat-error return; maps must be reset first")
+	}
+}
+
+// TestCacheLoadFreshDirAnnouncesFreshStart pins the first-boot diagnostic: a
+// cache dir with no files at all is normal, and Load says so at INFO. It is
+// the only line that distinguishes "this deploy has learned nothing yet" from
+// "a section was reset", which every other path reports at WARN — an operator
+// reading the log must not have to guess which happened.
+func TestCacheLoadFreshDirAnnouncesFreshStart(t *testing.T) {
+	dir := t.TempDir()
+	var c Cache
+	out := captureSlog(t, func() {
+		if err := c.Load(dir); err != nil {
+			t.Fatalf("Load() on a fresh dir = %v, want nil", err)
+		}
+	})
+	if !strings.Contains(out, "cache files not found, starting fresh") {
+		t.Errorf("Load() on an empty dir logged %q, want the fresh-start notice", out)
 	}
 }
 
