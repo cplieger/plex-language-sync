@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )
 
@@ -475,7 +476,7 @@ func TestFindSubtitleByLanguage(t *testing.T) {
 				t.Fatalf("FindSubtitleByLanguage(streams, %q) = nil, want stream %d",
 					tt.langCode, tt.wantID)
 			}
-			if got.ID != tt.wantID {
+			if int(got.ID) != tt.wantID {
 				t.Errorf("FindSubtitleByLanguage(streams, %q).ID = %d, want %d",
 					tt.langCode, got.ID, tt.wantID)
 			}
@@ -525,7 +526,7 @@ func TestFindSubtitleByLanguageNeverPanics(t *testing.T) {
 		streams := make([]*Stream, nStreams)
 		for i := range nStreams {
 			streams[i] = &Stream{
-				ID:           rapid.IntRange(1, 1000).Draw(t, fmt.Sprintf("id_%d", i)),
+				ID:           plexapi.FlexInt(rapid.IntRange(1, 1000).Draw(t, fmt.Sprintf("id_%d", i))),
 				StreamType:   3,
 				LanguageCode: rapid.StringMatching(`[a-z]{0,3}`).Draw(t, fmt.Sprintf("lang_%d", i)),
 			}
@@ -564,7 +565,7 @@ func TestFindSubtitleByLanguage_ReturnsHighestCodecScorePBT(t *testing.T) {
 		candidates := make([]*Stream, n)
 		for i := range n {
 			candidates[i] = &Stream{
-				ID:           i + 1,
+				ID:           plexapi.FlexInt(i + 1),
 				StreamType:   3,
 				LanguageCode: rapid.SampledFrom([]string{"eng", "fra", "kor"}).Draw(t, fmt.Sprintf("lang_%d", i)),
 				Codec:        rapid.SampledFrom(codecs).Draw(t, fmt.Sprintf("codec_%d", i)),
@@ -603,7 +604,7 @@ func TestFilterByLanguage_InvariantPBT(t *testing.T) {
 		streams := make([]*Stream, n)
 		for i := range n {
 			streams[i] = &Stream{
-				ID:           i + 1,
+				ID:           plexapi.FlexInt(i + 1),
 				LanguageCode: rapid.SampledFrom(langs).Draw(t, fmt.Sprintf("lang_%d", i)),
 			}
 		}

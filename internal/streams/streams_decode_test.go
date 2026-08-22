@@ -14,6 +14,11 @@ import (
 // on Episode/Media/Part/Stream map the real Plex field names or that
 // FlexInt works when embedded in Episode.
 //
+// One stream id arrives QUOTED. That is /status/sessions' shape for
+// Media/Part/Stream ids, and it is what Stream embedding plexapi.Stream
+// buys: the field is plexapi.FlexInt, so a quoted id decodes instead of
+// failing the whole MediaContainer the way the app's former `ID int` did.
+//
 // The payload deliberately carries fields the structs do NOT declare
 // (librarySectionID, the Media id) — real Plex sends them, and the
 // non-strict decoder must ignore them rather than fail.
@@ -34,7 +39,7 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 				"Stream": [
 					{"id": 1, "streamType": 1, "selected": true},
 					{"id": 2, "streamType": 2, "languageCode": "eng", "selected": false},
-					{"id": 3, "streamType": 2, "languageCode": "jpn", "selected": true},
+					{"id": "3", "streamType": 2, "languageCode": "jpn", "selected": true},
 					{"id": 4, "streamType": 3, "languageCode": "eng", "selected": true},
 					{"id": 5, "streamType": 3, "languageCode": "jpn", "selected": false}
 				]
@@ -63,7 +68,10 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 	sel := Selected(&ep)
 	audio, sub := sel.Audio, sel.Subtitle
 	if audio == nil || audio.ID != 3 {
-		t.Errorf("Selected() audio = %v, want stream ID=3", audio)
+		t.Errorf("Selected() audio = %v, want stream ID=3 (quoted id \"3\" on the wire)", audio)
+	}
+	if got := ID(audio); got != 3 {
+		t.Errorf("ID(Selected().Audio) = %d, want 3: the persisted dedup key narrows the wire FlexInt back to int", got)
 	}
 	if sub == nil || sub.ID != 4 {
 		t.Errorf("Selected() subtitle = %v, want stream ID=4", sub)

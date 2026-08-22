@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )
 
@@ -108,7 +109,7 @@ func TestMatchAudioStream(t *testing.T) {
 			got := MatchAudio(tt.ref, tt.candidates)
 			gotID := 0
 			if got != nil {
-				gotID = got.ID
+				gotID = int(got.ID)
 			}
 			if gotID != tt.wantID {
 				t.Errorf("MatchAudio() got ID=%d, want ID=%d", gotID, tt.wantID)
@@ -178,7 +179,7 @@ func TestMatchSubtitleStream(t *testing.T) {
 			got := MatchSubtitle(tt.ref, tt.candidates, langtag.TierIdentical)
 			gotID := 0
 			if got != nil {
-				gotID = got.ID
+				gotID = int(got.ID)
 			}
 			if gotID != tt.wantID {
 				t.Errorf("MatchSubtitle() got ID=%d, want ID=%d", gotID, tt.wantID)
@@ -393,7 +394,7 @@ func TestMatchAudioStreamNeverPanics(t *testing.T) {
 		candidates := make([]*Stream, nCandidates)
 		for i := range nCandidates {
 			candidates[i] = &Stream{
-				ID:           i + 1,
+				ID:           plexapi.FlexInt(i + 1),
 				StreamType:   2,
 				LanguageCode: rapid.SampledFrom([]string{"eng", "jpn", "kor", ""}).Draw(t, fmt.Sprintf("lang_%d", i)),
 			}
@@ -417,7 +418,7 @@ func TestMatchSubtitleStreamNeverPanics(t *testing.T) {
 		candidates := make([]*Stream, nCandidates)
 		for i := range nCandidates {
 			candidates[i] = &Stream{
-				ID:              i + 1,
+				ID:              plexapi.FlexInt(i + 1),
 				StreamType:      3,
 				LanguageCode:    rapid.SampledFrom([]string{"eng", "jpn", "kor", ""}).Draw(t, fmt.Sprintf("lang_%d", i)),
 				Forced:          rapid.Bool().Draw(t, fmt.Sprintf("forced_%d", i)),
@@ -476,7 +477,7 @@ func TestMatchAudioStream_LanguageInvariantPBT(t *testing.T) {
 		candidates := make([]*Stream, nCandidates)
 		for i := range nCandidates {
 			candidates[i] = &Stream{
-				ID:           i + 1,
+				ID:           plexapi.FlexInt(i + 1),
 				StreamType:   2,
 				LanguageCode: rapid.SampledFrom([]string{"eng", "jpn", "kor", "fra", ""}).Draw(t, fmt.Sprintf("lang_%d", i)),
 				Codec:        rapid.SampledFrom([]string{"aac", "eac3", "dts"}).Draw(t, fmt.Sprintf("codec_%d", i)),
@@ -501,7 +502,7 @@ func TestMatchSubtitleStream_LanguageInvariantPBT(t *testing.T) {
 		candidates := make([]*Stream, nCandidates)
 		for i := range nCandidates {
 			candidates[i] = &Stream{
-				ID:              i + 1,
+				ID:              plexapi.FlexInt(i + 1),
 				StreamType:      3,
 				LanguageCode:    rapid.SampledFrom([]string{"eng", "jpn", "kor", "fra"}).Draw(t, fmt.Sprintf("lang_%d", i)),
 				Forced:          rapid.Bool().Draw(t, fmt.Sprintf("f_%d", i)),
@@ -612,7 +613,7 @@ func TestMatchSubtitle_ForcedOnly(t *testing.T) {
 			got := MatchSubtitle(tt.ref, tt.candidates, langtag.TierIdentical)
 			gotID := 0
 			if got != nil {
-				gotID = got.ID
+				gotID = int(got.ID)
 			}
 			if gotID != tt.wantID {
 				t.Errorf("MatchSubtitle() got ID=%d, want ID=%d", gotID, tt.wantID)

@@ -351,7 +351,7 @@ func (s *Syncer) applyAudioStream(
 	if matched == nil || (curAudio != nil && matched.ID == curAudio.ID) {
 		return false
 	}
-	if err := userClient.SetAudioStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: matched.ID}); err != nil {
+	if err := userClient.SetAudioStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: int(matched.ID)}); err != nil {
 		slog.Warn("failed to set audio stream",
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false
@@ -401,7 +401,7 @@ func (s *Syncer) applySubtitleStream(
 	if curSub != nil && matched.ID == curSub.ID {
 		return false
 	}
-	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: matched.ID}); err != nil {
+	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: int(matched.ID)}); err != nil {
 		slog.Warn("failed to set subtitle stream",
 			"episode", ep.ShortName(), "user", username, "error", err)
 		return false

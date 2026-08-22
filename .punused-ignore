@@ -101,3 +101,40 @@ function NewFromHTTP is used in test only
 # because a shared 8-method PlexReader interface demanded a method nothing
 # called. Deleting the shared interface removed the demand, and the method with
 # it — the adjudication was load-bearing only for a design that is gone.)
+
+
+# ---------------------------------------------------------------------------
+# The Plex stream-type enum, after internal/streams adopted plexapi.Stream.
+# Structural: production stopped naming the enum, and the names exist for the
+# construction sites.
+#
+# streams.Stream now embeds plexapi.Stream, which promotes the two predicates
+# this package used to declare byte-identically (IsAudio, IsSubtitle) — and
+# those two were the last production readers of the local enum. Production
+# reads a stream's kind only through the promoted methods now, so the three
+# names below are named by tests alone: 145 construction sites in
+# internal/streams' own tests, 67 in internal/tracksync's, plus
+# streams_test.go's `const streamTypeVideo StreamType = 1`. They stay as
+# aliases onto plexapi's declarations because the alternative is rewriting
+# those 212 sites onto the library's spelling to say the same thing — easing a
+# move to a new home is exactly what the rulebook (§11) licenses an alias for,
+# and StreamTypeAudio is the app's own vocabulary at every one of them.
+class StreamType is used in test only
+constant StreamTypeAudio is used in test only
+constant StreamTypeSubtitle is used in test only
+
+# ---------------------------------------------------------------------------
+# The embedded field. A FALSE POSITIVE, not a test-only export.
+# Blind spot: punused asks gopls for references to the field, and every use of
+# an embedding goes through PROMOTION.
+#
+# `streams.Stream` embeds `plexapi.Stream` as an anonymous field, so every
+# reader spells `s.LanguageCode` / `s.IsAudio()` and encoding/json decodes
+# into the promoted fields; all of those reference the INNER declarations in
+# plexapi, never the anonymous field itself. Nothing in this repo writes
+# `s.Stream` and nothing should. Delete the field and the package stops
+# compiling, which is the test this verdict fails. Reach worth knowing: the
+# pattern carries no file, so it would also silence streams.Part.Stream if
+# that field ever went unreferenced — it is referenced from firstPart and
+# streamsByType today (internal/streams/select.go).
+field Stream is unused
