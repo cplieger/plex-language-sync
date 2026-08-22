@@ -54,6 +54,12 @@ method (*FlexInt).UnmarshalJSON is used in test only
 # packages cannot live in one. Entries are per-symbol rather than one
 # directory-wide pattern, so a fixture that becomes genuinely unreferenced
 # still fails the gate.
+#
+# A fixture FUNCTION needs an entry; its parameter TYPES do not. cache.Contract
+# and plexclient.Options are each named in their own function's signature in
+# the same non-test file, and gopls counts that as a reference, so punused
+# never reports either. Both carried an entry here and both reported as
+# matching nothing on every run.
 
 # fakeapi.NewCache — the in-memory cache fake. 113 call sites across three
 # other packages' tests (internal/tracksync, internal/deepscan, internal/users).
@@ -69,8 +75,7 @@ function RunContract is used in test only
 # cache.Contract — RunContract's parameter: the full persisted surface, and the
 # only wide interface in this app. Test-only BY DESIGN — no production consumer
 # depends on it, which is the whole point; each declares the 4, 3 or 2 methods
-# it actually calls at its own package.
-type Contract is used in test only
+# it actually calls at its own package. No entry: see the section header.
 
 # fakeapi.(*Plex).CallNames — reader for the fake's ordered call log; 73
 # assertion sites in internal/tracksync and internal/deepscan tests pin "the pass
@@ -86,8 +91,7 @@ function NewFromHTTP is used in test only
 
 # plexclient.Options — NewFromHTTP's named-field parameter. Test-only for the
 # same structural reason as NewFromHTTP itself: it names the two HTTP clients
-# so the pair cannot be passed transposed.
-type Options is used in test only
+# so the pair cannot be passed transposed. No entry: see the section header.
 
 # ---------------------------------------------------------------------------
 # Interface satisfaction.
