@@ -4,16 +4,17 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // sub builds a subtitle stream with the language fields Plex actually supplies.
 func sub(id int, code, tag string) *Stream {
-	return &Stream{ID: id, StreamType: StreamTypeSubtitle, LanguageCode: code, LanguageTag: tag}
+	return &Stream{ID: plexapi.FlexInt(id), StreamType: StreamTypeSubtitle, LanguageCode: code, LanguageTag: tag}
 }
 
 // aud builds an audio stream with the language fields Plex actually supplies.
 func aud(id int, code, tag string) *Stream {
-	return &Stream{ID: id, StreamType: StreamTypeAudio, LanguageCode: code, LanguageTag: tag}
+	return &Stream{ID: plexapi.FlexInt(id), StreamType: StreamTypeAudio, LanguageCode: code, LanguageTag: tag}
 }
 
 // TestMatchSubtitleFixesReportedBug is the regression test for the issue that
@@ -79,7 +80,7 @@ func TestMatchSubtitleDistinguishesRegionalSpanish(t *testing.T) {
 			if got == nil {
 				t.Fatalf("MatchSubtitle(%s ref, [es-419 es-ES]) = nil, want ID %d", tc.refTag, tc.wantID)
 			}
-			if got.ID != tc.wantID {
+			if int(got.ID) != tc.wantID {
 				t.Errorf("MatchSubtitle(%s ref, [es-419 es-ES]) = ID %d, want ID %d", tc.refTag, got.ID, tc.wantID)
 			}
 		})

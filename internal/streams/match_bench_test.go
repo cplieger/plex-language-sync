@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // This file holds the allocation contracts for match.go — the two entry points
@@ -293,7 +294,7 @@ func TestMatchAudioAllocationCountIsIndependentOfTitleLength(t *testing.T) {
 		streams := costStreams(candidates, func(i int, s *Stream) {
 			title := costTitle(size)
 			s.DisplayTitle, s.ExtendedDisplayTitle = title, title
-			s.ID = i + 1
+			s.ID = plexapi.FlexInt(i + 1)
 		})
 		ref := streams[0]
 		if MatchAudio(ref, streams) == nil {

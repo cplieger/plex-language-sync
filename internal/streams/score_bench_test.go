@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // This file measures what stream selection COSTS, and it holds two kinds of
@@ -93,7 +94,7 @@ func makeStreams(n int) []*Stream {
 	ss := make([]*Stream, n)
 	for i := range n {
 		ss[i] = &Stream{
-			ID:                   i + 1,
+			ID:                   plexapi.FlexInt(i + 1),
 			StreamType:           StreamTypeAudio,
 			LanguageCode:         "eng",
 			Codec:                "aac",
@@ -229,7 +230,7 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 			// The best score arrives last, so the loop updates on the final
 			// iteration having walked everything.
 			"winner last": func(s *Stream) int {
-				if s.ID == len(streams) {
+				if int(s.ID) == len(streams) {
 					return 100
 				}
 				return 0
@@ -239,11 +240,11 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 			// implementation would allocate hardest on.
 			"all tied": func(_ *Stream) int { return 7 },
 			// A new best on every iteration.
-			"strictly ascending": func(s *Stream) int { return s.ID },
+			"strictly ascending": func(s *Stream) int { return int(s.ID) },
 			// Nothing above zero: the case the seed-from-the-first-element
 			// design exists to handle, and the one that would need a sentinel
 			// or a result slice if it were seeded any other way.
-			"all negative": func(s *Stream) int { return -s.ID },
+			"all negative": func(s *Stream) int { return -int(s.ID) },
 			// The real scorer FindSubtitleByLanguage passes.
 			"subtitle codec score": func(s *Stream) int { return SubtitleCodecScore(s.Codec) },
 		}
@@ -451,7 +452,7 @@ func TestSelectionDoesNotMutateItsCandidateSlice(t *testing.T) {
 		_ = FilterByLanguage(candidates, "eng", langtag.TierSameLanguage)
 		_ = FilterByBoolPref(candidates, true, (*Stream).IsSubtitle)
 		_ = FindSubtitleByLanguage(candidates, "eng", langtag.TierSameLanguage)
-		_ = BestByScore(candidates, func(s *Stream) int { return s.ID })
+		_ = BestByScore(candidates, func(s *Stream) int { return int(s.ID) })
 	}
 
 	if got := streamValues(candidates); !slices.Equal(got, before) {

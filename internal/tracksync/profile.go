@@ -108,7 +108,7 @@ func applyProfileSubtitle(
 	if bestSub == nil || (curSub != nil && curSub.ID == bestSub.ID) {
 		return false
 	}
-	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: bestSub.ID}); err != nil {
+	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: int(bestSub.ID)}); err != nil {
 		slog.Warn("failed to set subtitle via profile",
 			"episode", target.ShortName(), "user", username, "error", err)
 		return false

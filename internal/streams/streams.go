@@ -2,8 +2,11 @@
 // plex-language-sync along with the Plex value types it operates on.
 //
 // The types here mirror the JSON wire format returned by the Plex
-// HTTP API; JSON struct tags are part of Plex's API contract
-// (inviolate) and must not change during refactors.
+// HTTP API; the JSON struct tags on Label, Episode, Media and Part are
+// part of Plex's API contract (inviolate) and must not change during
+// refactors. Stream's tags are no longer this package's to change:
+// Stream embeds plexapi.Stream, so the library owns that half of the
+// contract.
 //
 // Callers (the internal/plex HTTP client, composition root, and tests)
 // import this package; it has no dependencies on other internal
@@ -15,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 	"github.com/cplieger/runesafe/v2"
 )
 
@@ -78,52 +82,65 @@ type Media struct {
 // Part wraps a list of Streams for a Media.
 type Part struct {
 	Stream []Stream `json:"Stream"`
-	ID     int      `json:"id"`
+	// ID stays int where the embedded plexapi.Stream's is a
+	// number-or-quoted-string FlexInt. The asymmetry is deliberate, not an
+	// oversight: /status/sessions is the only endpoint that quotes these ids
+	// and the app decodes no session into this graph (its plex.Session
+	// declares nothing below Player), so the four endpoints that do reach
+	// Part all send a bare number. Widening it was priced and declined;
+	// revisit if a session payload ever decodes into Episode.
+	ID int `json:"id"`
 }
 
 // StreamType identifies the kind of stream (video, audio, subtitle).
-// The underlying int values match the Plex API wire format and
-// unmarshal directly from JSON integers without a custom decoder.
-type StreamType int
+// It is an alias for plexapi.StreamType, which types the promoted
+// Stream.StreamType field: one definition of the Plex wire enum, and
+// the app's own spelling stays valid at every construction site.
+type StreamType = plexapi.StreamType
 
 // StreamTypeAudio and StreamTypeSubtitle enumerate the stream-type
-// integer values the app acts on. Plex also uses 1 for video, but the
-// app only ever asks "is this audio?" / "is this a subtitle?" (see
-// IsAudio, IsSubtitle, Audio, Subtitle) — a video stream is simply
-// whatever answers no to both, so nothing here needs to name it.
+// integer values the app acts on, aliased onto plexapi's constants.
+// Plex also uses 1 for video, but the app only ever asks "is this
+// audio?" / "is this a subtitle?" (see Audio, Subtitle, and the
+// IsAudio / IsSubtitle predicates Stream promotes from plexapi) — a
+// video stream is simply whatever answers no to both, so nothing here
+// needs to name it. Aliasing the type imports no constants, so
+// plexapi.StreamTypeVideo stays out of this package's namespace.
 const (
-	StreamTypeAudio    StreamType = 2
-	StreamTypeSubtitle StreamType = 3
+	StreamTypeAudio    = plexapi.StreamTypeAudio
+	StreamTypeSubtitle = plexapi.StreamTypeSubtitle
 )
 
 // Stream is a single audio / subtitle / video stream on a Part.
+//
+// plexapi.Stream is EMBEDDED, not held as a named field, because
+// promoting its surface is the entire intent — that is the rulebook's
+// stated exception to composition-over-embedding. Promoted are the 14
+// wire fields (identical in name, tag and type to the ones this type
+// used to declare, save a wider FlexInt ID) and the IsAudio / IsSubtitle
+// predicates this package used to duplicate byte for byte; select.go
+// takes the latter two as method values. The outer type exists only to
+// carry what Go forbids declaring on a foreign type: Lang, languageRaw,
+// HasNoLanguage (below) and TitleForMatch (describe.go).
+//
+// A Go 1.27 composite literal may key a promoted field, so
+// Stream{LanguageCode: …, StreamType: …} keeps working unchanged.
 type Stream struct {
-	// LanguageCode is Plex's ISO 639-2/B code ("nob", "spa"). Kept for log
-	// output and for the persisted intent projection.
-	LanguageCode string `json:"languageCode"`
-	// LanguageTag is Plex's BCP 47 tag ("nb", "es-419"). Strictly more
-	// informative than LanguageCode, which cannot express a region: a movie
-	// carrying both a European and a Latin American Spanish subtitle reports
-	// languageCode="spa" for both and distinguishes them only here.
-	LanguageTag          string     `json:"languageTag"`
-	DisplayTitle         string     `json:"displayTitle"`
-	ExtendedDisplayTitle string     `json:"extendedDisplayTitle"`
-	Title                string     `json:"title"`
-	Codec                string     `json:"codec"`
-	AudioChannelLayout   string     `json:"audioChannelLayout"`
-	ID                   int        `json:"id"`
-	StreamType           StreamType `json:"streamType"`
-	Channels             int        `json:"channels"`
-	Selected             bool       `json:"selected"`
-	Forced               bool       `json:"forced"`
-	HearingImpaired      bool       `json:"hearingImpaired"`
-	VisualImpaired       bool       `json:"visualImpaired"`
+	plexapi.Stream
 }
 
 // Lang returns the stream's canonical language, preferring Plex's BCP 47
 // languageTag over the coarser languageCode. The zero Tag means Plex reported
 // no usable language for the track, which is a real case: a track with no
 // language metadata at all, and one Plex labels "unknown".
+//
+// The preference order is the whole reason this method exists. LanguageTag is
+// strictly more informative than LanguageCode, which cannot express a region:
+// a movie carrying both a European and a Latin American Spanish subtitle
+// reports languageCode="spa" for both and distinguishes them only in the tag.
+// LanguageCode is still read — it is what the log output and the persisted
+// intent projection carry — but it decides a language only when the tag is
+// absent or unparseable.
 //
 // Not memoized. Stream values are copied into and out of slices all over this
 // package, so a cached field would either be silently stale after a copy or
@@ -168,12 +185,6 @@ func (s *Stream) languageRaw() string {
 func (s *Stream) HasNoLanguage() bool {
 	return strings.TrimSpace(s.LanguageTag) == "" && strings.TrimSpace(s.LanguageCode) == ""
 }
-
-// IsAudio reports whether the stream is an audio track.
-func (s *Stream) IsAudio() bool { return s.StreamType == StreamTypeAudio }
-
-// IsSubtitle reports whether the stream is a subtitle track.
-func (s *Stream) IsSubtitle() bool { return s.StreamType == StreamTypeSubtitle }
 
 // LanguageChoice is the pair a user's profile records: what they chose to
 // listen to and what they chose to read. Two adjacent bare language codes

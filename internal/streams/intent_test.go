@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )
 
@@ -23,7 +24,7 @@ func drawIntentStream(t *rapid.T, label string) *Stream {
 		HearingImpaired:      rapid.Bool().Draw(t, label+"_hi"),
 		VisualImpaired:       rapid.Bool().Draw(t, label+"_vi"),
 		// Episode-local identity fields the projection must NOT carry:
-		ID:         rapid.IntRange(1, 999).Draw(t, label+"_id"),
+		ID:         plexapi.FlexInt(rapid.IntRange(1, 999).Draw(t, label+"_id")),
 		StreamType: StreamTypeAudio,
 		Selected:   true,
 	}

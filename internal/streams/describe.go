@@ -38,12 +38,14 @@ func Desc(s *Stream) string {
 }
 
 // ID returns s.ID or 0 when s is nil. Used to build stable dedup keys
-// from a (possibly absent) current audio/subtitle selection.
+// from a (possibly absent) current audio/subtitle selection. The return
+// stays int — plexapi widened Stream.ID to FlexInt, and narrowing here
+// is what keeps the persisted dedup key byte-identical.
 func ID(s *Stream) int {
 	if s == nil {
 		return 0
 	}
-	return s.ID
+	return int(s.ID)
 }
 
 // descriptiveTerms is the set of keywords that mark an audio track as
