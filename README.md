@@ -253,15 +253,22 @@ groups:
             events to a user. It identifies the viewer by joining each
             playback notification against the server's active sessions,
             and it skips an event it cannot attribute rather than
-            writing a language choice under the wrong identity, so a
-            stall means playback is being watched and nothing is
-            propagating. Check that PLEX_TOKEN still has admin rights
-            and that the active-session endpoint answers. Individual
-            skips are expected and log at DEBUG: the server announces
-            playback a few seconds before a session becomes queryable,
-            and an idle web client re-announces a finished item for as
-            long as its tab stays open. The app logs "user resolution
-            recovered" once playback is attributed again.
+            writing a language choice under the wrong identity. Read the
+            `cause` field first, because the two grounds have different
+            remedies. `sessions_unreadable`: the active-session list
+            could not be read for the whole run, so check that
+            PLEX_TOKEN still has admin rights and that the endpoint
+            answers. `all_clients_absent`: the list read correctly every
+            time and no client in the run was in it, so the join is
+            failing. A run that stays on ONE client never fires this
+            alert, because one client missing from a readable list is
+            that client, not the resolver: the server announces playback
+            a few seconds before a session becomes queryable, an idle
+            web client re-announces a finished item for as long as its
+            tab stays open, and a client whose session the server
+            removed mid-playback keeps announcing it. Individual skips
+            log at DEBUG. The app logs "user resolution recovered" once
+            playback is attributed again.
 ```
 
 The thresholds, windows, and `severity` labels are starting points;
