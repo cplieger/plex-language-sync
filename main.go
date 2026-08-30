@@ -571,12 +571,24 @@ var errUnattributedNoClient = errors.New("event carries no client identifier")
 // state that is: resolution failing across the board, which leaves the
 // app silently attributing no playback at all. That is what the run
 // counter reports, once per stall rather than once per notification.
+//
+// The run also has to distinguish those two benign shapes from the
+// actionable one, because a count alone cannot. See resolveStallCounter.
 func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
 	slog.Debug("play event: skipping, user not attributed",
 		"client", ev.ClientIdentifier, "key", ev.RatingKey,
 		"state", ev.State, "error", cause)
-	if stalled, consecutive := n.resolveStalls.miss(); stalled {
+
+	// A skip is either an ABSENCE (the session list was read and did not
+	// carry this client, or the notification named no client to look up)
+	// or an UNREADABLE session list. Only the second is evidence about
+	// resolution itself.
+	absent := errors.Is(cause, errUnattributedNoClient) ||
+		errors.Is(cause, plex.ErrNoSessionForClient)
+
+	if stalled, consecutive, why := n.resolveStalls.miss(ev.ClientIdentifier, !absent); stalled {
 		slog.Warn("play event: user resolution stalled; no playback has been attributed for a sustained run",
+			"cause", string(why),
 			"consecutive_failures", consecutive,
 			"last_client", ev.ClientIdentifier, "last_key", ev.RatingKey)
 	}
@@ -593,8 +605,48 @@ func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause err
 // minutes of playback at Plex's ~10s notification cadence.
 const resolveStallThreshold = 20
 
+// stallCause names why a run of unattributed play events is reportable.
+// It rides on the Warn line so the operator is told which of the two
+// states to go and look at, because they have different remedies.
+type stallCause string
+
+const (
+	// causeSessionsUnreadable: the active-session list itself could not
+	// be read, so no client can be attributed whatever it is doing. The
+	// operator-actionable state, and the one the published alert's
+	// advice fits: a token that lost its rights, or Plex not answering.
+	causeSessionsUnreadable stallCause = "sessions_unreadable"
+
+	// causeAllClientsAbsent: the list was read every time and no client
+	// in the run appeared in it. Reportable only across more than one
+	// client, because a readable list that never carries ANY client is a
+	// real fault, while one client missing from it is that client.
+	causeAllClientsAbsent stallCause = "all_clients_absent"
+)
+
 // resolveStallCounter counts consecutive unattributed play events so a
-// stall is reported once instead of once per notification.
+// stall is reported once instead of once per notification, and decides
+// which runs are worth reporting at all.
+//
+// A count on its own is not evidence that resolution is broken, and
+// treating it as such produced a false alert on 2026-08-30: Plex removed
+// a WAN client's session mid-film ("Client stopped playback"), the client
+// kept announcing the same paused ratingKey every 20s, and 20 skips
+// accumulated in under 10 minutes with nobody else watching, so no
+// success arrived to clear the run. /status/sessions answered correctly
+// throughout and the token was fine, which is everything the alert told
+// the operator to go and check.
+//
+// So a run escalates on one of two grounds, never on length alone:
+//
+//   - the session list could not be READ, sustained across the whole
+//     threshold. Nothing can be attributed while that holds, whether one
+//     client is playing or twenty, so this arm needs no client spread
+//     and closes the single-viewer case a spread rule would miss.
+//   - the list was read and NO client in the run was in it, across more
+//     than one client. One client absent from a readable list is that
+//     client (a start race, a stale tab, a removed session); every
+//     client absent is the join failing.
 //
 // Guarded by a mutex rather than left to the listener's serial dispatch:
 // notify.Handler explicitly permits a handler to hand work to a
@@ -605,25 +657,57 @@ const resolveStallThreshold = 20
 // resolvePlayEventUser be exercised by tests that build no composition
 // root; production wiring always supplies one.
 type resolveStallCounter struct {
+	// client is the first client identifier in the run and clientSeen
+	// distinguishes "not set yet" from an event that named no client,
+	// which is itself a valid (empty) identifier.
+	client string
+	// mu guards every field of this struct.
 	mu     sync.Mutex
 	misses int
-	warned bool
+	// unreadableRun is the tail of the run that could not read the
+	// session list. Reset by any readable miss, so a single transient
+	// read failure inside an otherwise-benign run cannot escalate it.
+	unreadableRun int
+	clientSeen    bool
+	multiClient   bool
+	warned        bool
 }
 
 // miss records an unattributed event and reports whether this is the one
-// that crosses resolveStallThreshold. True at most once per stall.
-func (c *resolveStallCounter) miss() (stalled bool, consecutive int) {
+// that makes the run reportable, with the ground for reporting it. True
+// at most once per run.
+func (c *resolveStallCounter) miss(client string, sessionsUnreadable bool) (stalled bool, consecutive int, cause stallCause) {
 	if c == nil {
-		return false, 0
+		return false, 0, ""
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.misses++
-	if c.misses >= resolveStallThreshold && !c.warned {
-		c.warned = true
-		return true, c.misses
+	if sessionsUnreadable {
+		c.unreadableRun++
+	} else {
+		c.unreadableRun = 0
 	}
-	return false, c.misses
+	switch {
+	case !c.clientSeen:
+		c.client, c.clientSeen = client, true
+	case client != c.client:
+		c.multiClient = true
+	}
+
+	if c.warned {
+		return false, c.misses, ""
+	}
+	switch {
+	case c.unreadableRun >= resolveStallThreshold:
+		c.warned = true
+		return true, c.misses, causeSessionsUnreadable
+	case c.multiClient && c.misses >= resolveStallThreshold:
+		c.warned = true
+		return true, c.misses, causeAllClientsAbsent
+	}
+	return false, c.misses, ""
 }
 
 // success clears the run and reports whether it ended a stall that was
@@ -636,7 +720,9 @@ func (c *resolveStallCounter) success() (recovered bool, after int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	after, recovered = c.misses, c.warned
-	c.misses, c.warned = 0, false
+	c.misses, c.unreadableRun = 0, 0
+	c.client, c.clientSeen, c.multiClient = "", false, false
+	c.warned = false
 	return recovered, after
 }
 

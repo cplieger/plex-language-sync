@@ -514,6 +514,26 @@ func TestUserFromSession_NoMatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("UserFromSession() on no match should return error")
 	}
+	// The caller escalates a run of unreadable session lists and stays
+	// quiet for a run of absences from one client, so it has to tell the
+	// two apart by sentinel rather than by message text.
+	if !errors.Is(err, ErrNoSessionForClient) {
+		t.Errorf("UserFromSession() on a readable list with no match = %v, want it to match ErrNoSessionForClient; without the sentinel the caller reads an ordinary absence as the session list being unreadable and pages for it", err)
+	}
+}
+
+func TestUserFromSession_ReadFailureIsNotAnAbsence(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	_, _, err := c.UserFromSession(t.Context(), "mac-X")
+	if err == nil {
+		t.Fatal("UserFromSession() should return an error when the session list cannot be read")
+	}
+	if errors.Is(err, ErrNoSessionForClient) {
+		t.Errorf("a session list that could not be read = %v, but it matches ErrNoSessionForClient; that collapses the operator-actionable failure into the benign one and the stall signal then never reports a bad token", err)
+	}
 }
 
 // --- Tests: Identity (embedded library method) ---
