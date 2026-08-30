@@ -13,7 +13,7 @@ require (
 	github.com/cplieger/langtag/v2 v2.0.0
 	github.com/cplieger/plexapi/v2 v2.0.5
 	github.com/cplieger/runesafe/v2 v2.0.0
-	github.com/cplieger/scheduler/v4 v4.0.0
+	github.com/cplieger/scheduler/v4 v4.0.1
 	github.com/cplieger/slogx v1.6.3
 	golang.org/x/sync v0.22.0
 	pgregory.net/rapid v1.3.0
