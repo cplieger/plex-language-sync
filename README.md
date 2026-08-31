@@ -9,6 +9,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/plex-language-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/plex-language-sync)
 [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/plex-language-sync/releases)
 
+<!-- hub-overview BEGIN -->
 Set your preferred audio and subtitle languages per show, and Plex applies them to every new episode automatically.
 
 ## What it does
@@ -47,6 +48,7 @@ It also learns your habits. If you always watch anime in Japanese with English s
 
 - **Single binary, small footprint.** Written in Go; the only third-party runtime libraries are `coder/websocket` and `golang.org/x/sync` (the rest are the project's own support modules). No Python runtime, no YAML config files, no notification frameworks; just a distroless container that does one job well.
 - **Rootless and minimal attack surface.** Runs as `nonroot` (UID 65532) on `gcr.io/distroless/static-debian13` with no shell, no package manager, and no inbound network listener. The only outbound connections are to your Plex server and plex.tv.
+<!-- hub-overview END -->
 
 ## Quick start
 
