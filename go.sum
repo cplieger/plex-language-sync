@@ -2,8 +2,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/cplieger/atomicfile/v3 v3.0.1 h1:F5MZQ8Tvn9K0imJ59rFVofgtnGR5Gtf94Ivk9v3gC7o=
 github.com/cplieger/atomicfile/v3 v3.0.1/go.mod h1:jhxOw5RQn5pYB0eAo5SLRPXKYChRxT/bW/TnTcLZa78=
-github.com/cplieger/envx/v2 v2.0.2 h1:1h1R7clxAytDAIxNd0U2rfTJj2cLOspK2KPp9o+3YAA=
-github.com/cplieger/envx/v2 v2.0.2/go.mod h1:/Y8/5UOZs2e9LDFCKZK9egNm9jaVFlJ0NHVrrlPAlFQ=
+github.com/cplieger/envx/v2 v2.0.3 h1:5FPj605yQWeYxGsKd1ZDisLfrOPIFRuLq6le2dNoYdQ=
+github.com/cplieger/envx/v2 v2.0.3/go.mod h1:f01hl0r7CXNpFQvzV4CrSFYTZJjCJxsjOEKaBwcc2iw=
 github.com/cplieger/health v1.7.1 h1:ILSppuW9uMeKb04jtobFC0bV47pjU2S6fER7CKzNpBI=
 github.com/cplieger/health v1.7.1/go.mod h1:Llf5jp8eTTQuLBbKbu+o5NgLUqv8dcD+BsqsqWPvEs4=
 github.com/cplieger/httpx/v5 v5.0.3 h1:bMtqn9nQXCD/0AdS2eEsl4K7QjYdANyM3ZyksDxKSug=
@@ -16,8 +16,8 @@ github.com/cplieger/langtag/v2 v2.0.1 h1:lz9i2+aI+NMxlmQMqXW5GqOW7JpsbzK8VnvbuQd
 github.com/cplieger/langtag/v2 v2.0.1/go.mod h1:Uf5/N7juqe4hjuFpHIdHJU0zWm3FeKhepYPY58Q1k9Q=
 github.com/cplieger/pathinside/v2 v2.0.1 h1:tsCGs+7/U1v/c2q7lcHK9UYUbiyYrvjUxL2h46awO2A=
 github.com/cplieger/pathinside/v2 v2.0.1/go.mod h1:M+uGHbsTS0Zb1hqRMbkoMI/3RkryUZRnJ+P0gxhBjyE=
-github.com/cplieger/plexapi/v2 v2.0.6 h1:JCOD3WT2TgzyeQAsSYjJaPH3CGWKckiF/8VTc9uBeQo=
-github.com/cplieger/plexapi/v2 v2.0.6/go.mod h1:f6pgRPmFQriEMscLPQOfUu9TLetES0jQ3Y6CDdQ86gg=
+github.com/cplieger/plexapi/v2 v2.0.7 h1:JqdhD2DR2lIXjKOizbQjq2z30IrqhREjvYhZd45te5Q=
+github.com/cplieger/plexapi/v2 v2.0.7/go.mod h1:8og/b/O2B4U+wlQaF2r2TkMqR7k1vRSsTBYejfCoGYY=
 github.com/cplieger/runesafe/v2 v2.0.1 h1:TWTX4OPjz4pqgidBavkbglEh3XdwrJgq8dC/LFf89u0=
 github.com/cplieger/runesafe/v2 v2.0.1/go.mod h1:cB0JYmCjfU+VzKAFWnhYfJL8OK0+d196ZSwh+Ohr+0k=
 github.com/cplieger/scheduler/v4 v4.0.3 h1:Uzk6Hvd4naheJPDLzyZxvetOmcQbFaxfLD2r+anHeIQ=
