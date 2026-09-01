@@ -9,13 +9,6 @@ import (
 	"github.com/cplieger/plexapi/v2"
 )
 
-// The interfaces below are declared HERE, at the consumer, rather than in a
-// shared contract package. Each names only what this package calls, which is
-// what makes a test fake small enough to be obviously correct: the reads are 3
-// methods of the 8 the Plex client offers, and the cache reads and writes are
-// 4 of its 11 — with the other 7 split between user-token storage and the
-// deep-scan watermark, neither of which this package has any business seeing.
-
 // plexReader is the admin-scoped read surface: resolve one episode, and
 // enumerate a show's or a season's episodes to propagate across.
 type plexReader interface {
@@ -25,9 +18,9 @@ type plexReader interface {
 }
 
 // plexWriter is the stream-selection write surface. Every write is user-scoped:
-// Plex records a selection against the REQUESTING token's user, not
-// server-wide, so these must be called on a per-user client (see
-// PlexReadWriter) and never on the admin client as a fallback.
+// Plex records a selection against the requesting token's user, not
+// server-wide, so these must be called on a per-user client and never on the
+// admin client as a fallback.
 type plexWriter interface {
 	SetAudioStream(ctx context.Context, sel plexapi.StreamSelection) error
 	SetSubtitleStream(ctx context.Context, sel plexapi.StreamSelection) error
@@ -43,7 +36,7 @@ type PlexReadWriter interface {
 }
 
 // UserClientFunc returns the per-user read+write Plex client for a userID, or
-// nil when none can be built. Nil means SKIP THE USER: falling back to the
+// nil when none can be built. Nil means skip the user: falling back to the
 // admin client would record the selection against the admin's account and
 // silently drop the target user's preference.
 type UserClientFunc func(userID string) PlexReadWriter
@@ -57,7 +50,6 @@ type cacheStore interface {
 	// (event-plane only: callers record what they witnessed at a resolved
 	// play session, never a reconstructed attribution).
 	RecordIntent(userID, showKey string, intent *streams.Intent)
-	// IntentFor returns the recorded intent for a (user, show) pair.
 	IntentFor(userID, showKey string) (streams.Intent, bool)
 }
 
@@ -68,8 +60,6 @@ type userLookup interface {
 }
 
 // episodeSkipper is the ignore decision: should this episode be left alone.
-// One method, because that is all this package asks — the library-only variant
-// is the deep scan's concern.
 type episodeSkipper interface {
 	ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool
 }

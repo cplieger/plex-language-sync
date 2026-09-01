@@ -55,9 +55,8 @@ type Policy struct {
 // affecting the policy. Nil slices are allowed and produce a policy that
 // always reports "do not skip".
 func New(cfg Config) *Policy {
-	// append([]string(nil), x...) defensively copies x and yields nil for a
-	// nil or empty x (appending zero elements to a nil slice returns nil), so
-	// the empty case needs no len() guard.
+	// append([]string(nil), x...) yields nil for a nil or empty x, so the
+	// empty case needs no len() guard.
 	return &Policy{
 		reader:    cfg.Reader,
 		libraries: append([]string(nil), cfg.Libraries...),
@@ -66,16 +65,13 @@ func New(cfg Config) *Policy {
 }
 
 // IgnoreLibrary reports whether a library section title is on the
-// ignore list. Case-sensitive, matching the pre-extraction behaviour in
-// Syncer.shouldIgnoreLibrary and the deep scan's inline
-// slices.Contains guards.
+// ignore list. Case-sensitive.
 func (p *Policy) IgnoreLibrary(title string) bool {
 	return slices.Contains(p.libraries, title)
 }
 
 // IgnoreShowLabels reports whether any of the show's labels match the
-// ignore list. Case-sensitive equality on label.Tag, mirroring the
-// pre-extraction hasIgnoreLabel helper.
+// ignore list. Case-sensitive equality on label.Tag.
 func (p *Policy) IgnoreShowLabels(labels []streams.Label) bool {
 	for _, label := range labels {
 		if slices.Contains(p.labels, label.Tag) {
@@ -93,15 +89,13 @@ func (p *Policy) IgnoreShowLabels(labels []streams.Label) bool {
 // reach this from paths where the episode reference is absent without
 // guarding at every call site.
 //
-// On ShowMetadata fetch failure the method returns false (do not skip)
-// to match the pre-extraction behaviour in Syncer.shouldIgnoreShow:
+// On ShowMetadata fetch failure the method returns false (do not skip):
 // conservatism here trades a single episode processed against a
 // transient Plex blip for never silently dropping work on a real
 // error.
 //
 // DEBUG log keys ("library ignored", "show ignored") are preserved
-// verbatim from the three pre-extraction emit sites so any Loki
-// query grepping on those strings keeps firing.
+// verbatim so any Loki query grepping on those strings keeps firing.
 func (p *Policy) ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool {
 	if ref == nil {
 		return false

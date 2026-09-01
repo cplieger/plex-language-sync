@@ -175,7 +175,7 @@ func (c *Cache) Load(dir string) error {
 
 // loadLocked resets in-memory state and loads it back from disk under the
 // lock: legacy baseline first (when present), then each split file
-// overlaying its own section. It returns whether an eager migration save
+// overlaying its own section. Returns whether an eager migration save
 // is owed (legacy decoded, split layout incomplete) and the joined
 // per-section error.
 func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
@@ -383,18 +383,16 @@ func fileExists(path string) bool {
 }
 
 // Save atomically writes the three split-layout files into dir (each temp
-// file + rename, 0o600 — tokens live in one of them and the uniform mode
-// keeps the contract simple). Encoding for all three files happens first,
-// under one lock acquisition, so the files are a consistent snapshot and
-// an encode failure (e.g. token encryption) writes nothing at all. Disk
+// file + rename, 0o600). Encoding for all three files happens first, under
+// one lock acquisition, so the files are a consistent snapshot and an
+// encode failure (e.g. token encryption) writes nothing at all. Disk
 // writes then run lock-free so a concurrent MarkProcessed /
-// WasRecentlyProcessed (the listener goroutine) never blocks on the
-// scheduler goroutine's fsync. Write failures are per-file: the remaining
-// files are still attempted and the joined error is returned. Each write
-// is capped at maxCacheSize (the loader's read bound): an over-cap section
-// is refused with atomicfile.ErrFileTooLarge and the previous file stays
-// intact, instead of persisting a file the next boot's bounded read would
-// reject — silently resetting that section.
+// WasRecentlyProcessed never blocks on the scheduler goroutine's fsync.
+// Write failures are per-file: the remaining files are still attempted
+// and the joined error is returned. Each write is capped at
+// maxCacheSize: an over-cap section is refused with
+// atomicfile.ErrFileTooLarge and the previous file stays intact, instead
+// of persisting a file the next boot's bounded read would reject.
 func (c *Cache) Save(dir string) error {
 	profiles, tokens, state, err := c.encodeAllForSave()
 	if err != nil {

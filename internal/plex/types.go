@@ -1,9 +1,7 @@
 // Package plex types: the app-facing container and admin types, plus
 // aliases onto the shared plexapi library where the shapes are the
-// library's own (RatingKey, Section, ServerIdentity, SharedServer). Value
-// types for the stream-selection domain (Episode, Stream, Media, Part,
-// Label) live in internal/streams; this package decodes into them via the
-// generic fetch helpers.
+// library's own. Stream-selection domain types (Episode, Stream, Media,
+// Part, Label) live in internal/streams.
 package plex
 
 import (
@@ -22,11 +20,9 @@ const (
 	SectionTypeShow = plexapi.SectionTypeShow
 )
 
-// RatingKey is the library's validated Plex item identifier. The alias
-// preserves this package's boundary vocabulary (the *Client methods and every
-// consumer's own reader interface take plex.RatingKey); validation semantics —
-// and the exact `invalid rating key %q` error text scrapers grep for — are the
-// library's.
+// RatingKey is the library's validated Plex item identifier, aliased so
+// this package's boundary vocabulary and error text (`invalid rating
+// key %q`, which scrapers grep for) stay the library's.
 type RatingKey = plexapi.RatingKey
 
 // ServerIdentity is the library's GET / identity payload (the app reads
@@ -46,17 +42,12 @@ type User struct {
 	Name string
 }
 
-// Show is the show-level metadata returned by GET /library/metadata/{key}
-// when the key points to a TV show. Split off from Episode so callers
-// asking "what are the show's labels?" don't receive an Episode-typed
-// value.
+// Show is the show-level metadata from GET /library/metadata/{key} when
+// the key points to a TV show. Split off from Episode so a caller
+// asking for show labels doesn't receive an Episode-typed value.
 //
-// Labels are the only thing the one consumer needs (ignore.Policy's
-// ShouldSkipEpisode reads Label; see internal/ignore/policy.go). Plex
-// also sends ratingKey, title, librarySectionTitle and the rest, but the
-// caller already holds the rating key it asked for, and the decoder is
-// non-strict, so those fields are ignored on the wire rather than
-// decoded into unread struct members.
+// Labels are the only field the one consumer (ignore.Policy) reads; the
+// decoder is non-strict so the rest of Plex's fields are ignored.
 type Show struct {
 	Label []streams.Label `json:"Label"`
 }
@@ -78,8 +69,7 @@ type HistoryItem struct {
 	Type         string          `json:"type"`
 	LibraryTitle string          `json:"librarySectionTitle"`
 	AccountID    streams.FlexInt `json:"accountID"`
-	// ViewedAt is the play's unix timestamp — the same field the History
-	// fetch filters on server-side (viewedAt>=N). Consumed by the
-	// reconcile plane's freshness guard; 0 when absent from the response.
+	// ViewedAt is the play's unix timestamp, the same field the History
+	// fetch filters on server-side (viewedAt>=N). 0 when absent.
 	ViewedAt streams.FlexInt `json:"viewedAt"`
 }

@@ -59,17 +59,13 @@ import (
 )
 
 // deepAnalysisConcurrency is the upper bound on in-flight per-item work
-// during a deep-analysis pass. Chosen to keep
-// load on the Plex server modest while still shrinking wall-clock time
-// for large libraries. A higher value trades responsiveness of the
+// during a deep-analysis pass. A higher value trades responsiveness of the
 // Plex server for faster nightly catch-up.
 const deepAnalysisConcurrency = 4
 
 // maxConsecutiveErrors is the circuit-breaker threshold shared across
 // all workers — once this many per-item failures accumulate without an
-// intervening success, the rest of the pass is aborted. Preserves the
-// the earlier single-loop behaviour (5 consecutive errors → abort) but applies
-// it across goroutines atomically.
+// intervening success, the rest of the pass is aborted.
 const maxConsecutiveErrors = 5
 
 // maxDeepAnalysisLookback caps the dynamic look-back window. The window
@@ -96,11 +92,8 @@ type Config struct {
 // concurrent Run calls, but the intended shape is a single Run
 // goroutine per process.
 //
-// Concurrent Run invocations collapse their
-// overlapping deep-analysis triggers onto a single in-flight run via
-// singleflight.Group. Within one Run goroutine the initial catch-up
-// and scheduled ticks are already sequential, so the dedup only
-// matters when Run is driven from more than one goroutine. The
+// Concurrent Run invocations collapse their overlapping deep-analysis
+// triggers onto a single in-flight run via singleflight.Group. The
 // runner goroutine that loses the dedup race still logs a WARN with
 // the "scheduler: deep analysis already in progress, skipping" key so
 // Loki alerts keyed on that string continue to fire.
@@ -150,10 +143,7 @@ type Deps struct {
 	SaveCache CacheSaver
 }
 
-// New constructs a Scheduler from cfg and deps. Deps is passed by value: it is
-// a handful of interface handles wired once at startup, so the one-time copy
-// costs nothing measurable, and a pointer would let a caller mutate the wiring
-// after construction.
+// New constructs a Scheduler from cfg and deps.
 func New(cfg Config, deps Deps) *Scheduler {
 	return &Scheduler{
 		cfg:        cfg,
@@ -294,14 +284,11 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 // intent (or skips — see ReconcileWithIntent); the replay never derives
 // a user's choice from the episode's current selection state.
 //
-// The prior implementation ran a single
-// sequential loop with a local counter tracking consecutive failures.
-// The new implementation fans out per-item work across a bounded
-// worker pool (deepAnalysisConcurrency workers) while preserving the
-// same circuit-breaker semantics (maxConsecutiveErrors) using an
-// atomic counter shared between workers. Successful items reset the
-// counter; once the threshold is reached, every worker returns
-// promptly without processing additional items.
+// Fans out per-item work across a bounded worker pool
+// (deepAnalysisConcurrency workers), sharing the circuit-breaker
+// threshold (maxConsecutiveErrors) via an atomic counter. Successful
+// items reset the counter; once the threshold is reached, every worker
+// returns promptly without processing additional items.
 func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) bool {
 	history, err := s.plex.History(ctx, sinceUnix)
 	if err != nil {
@@ -513,9 +500,7 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 
 // feedEpisodes pushes every episode into work in order, returning false
 // if ctx was cancelled before all were sent (signalling the caller to
-// stop the sweep). Extracted from feedRecentlyAdded so the section loop
-// stays under the cognitive-complexity gate; behaviour (ordering, the
-// break-outer-loop-on-cancel via the old `break feed` label) is preserved.
+// stop the sweep).
 func feedEpisodes(ctx context.Context, work chan<- streams.Episode, episodes []streams.Episode) bool {
 	for i := range episodes {
 		select {
@@ -529,12 +514,12 @@ func feedEpisodes(ctx context.Context, work chan<- streams.Episode, episodes []s
 
 // processRecentlyAddedEpisode handles a single recently-added episode
 // for all users. Fetches the episode's full metadata once via the
-// admin reader, then delegates to
-// ProcessNewOrUpdatedEpisodeAllUsers, which runs a single reference
-// search shared across every user followed by a per-user write path.
-// Plex returns identical metadata regardless of token (verified
-// 2026-04-26 against live API + Tautulli playback history), so the
-// read side is token-independent and writes use the per-user client.
+// admin reader, then delegates to ProcessNewOrUpdatedEpisodeAllUsers,
+// which runs a single reference search shared across every user
+// followed by a per-user write path. Plex returns identical metadata
+// regardless of token (verified 2026-04-26 against live API + Tautulli
+// playback history), so the read side is token-independent and writes
+// use the per-user client.
 func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams.Episode) {
 	full, fetchErr := s.plex.Episode(ctx, plex.RatingKey(ep.RatingKey))
 	if fetchErr != nil {
@@ -555,9 +540,7 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 	// stays the atomic guard that lets exactly one worker reach
 	// ProcessNewOrUpdatedEpisodeAllUsers, so moving it here costs at most a
 	// redundant idempotent fetch if the same RatingKey is enqueued twice
-	// within the recently-added sweep (the history sweep uses a separate
-	// path with no scheduler dedup key) — never
-	// a double write.
+	// within the recently-added sweep — never a double write.
 	cacheKey := cache.KeyPrefixScheduler + ep.RatingKey
 	if !s.cache.CheckAndMark(cacheKey) {
 		return

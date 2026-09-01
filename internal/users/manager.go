@@ -1,19 +1,17 @@
 // Package users owns the per-user state, token storage, and per-user
-// Plex client cache. It is the home of the userManager subsystem that
-// previously lived in main.go and the cross-module typed user-id.
+// Plex client cache.
 //
-// Inviolate contracts preserved (see refactor-agent-guide.md):
+// Inviolate contracts:
 //
-//   - The on-disk cache schema is untouched. The Manager reads and
-//     writes tokens through the tokenStore interface (backed by
-//     internal/cache), never by mutating cache.Data directly.
+//   - The on-disk cache schema is untouched; the Manager reads and writes
+//     tokens through the tokenStore interface, never by mutating cache.Data
+//     directly.
 //   - WARN/ERROR slog keys for token refresh ("failed to refresh shared
 //     user tokens", "shared user tokens refreshed") are byte-for-byte
-//     identical to the pre-extraction log lines.
-//   - Initial-refresh retry semantics (5 attempts, 5s base, 2× backoff,
-//     60s cap, short-circuit on cached users, context-cancel aware) are
-//     preserved; the tunables live on a RefreshConfig value so tests can
-//     shrink them without reaching into package-level globals.
+//     identical across versions; Loki alerts grep them.
+//   - Initial-refresh retry semantics (5 attempts, 5s base, 2x backoff,
+//     60s cap, short-circuit on cached users, context-cancel aware) live on
+//     a RefreshConfig value so tests can shrink them.
 package users
 
 import (
@@ -22,39 +20,33 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
-// ID is the typed user identifier (runtime-types-p2). Plex user IDs are
-// numeric strings, but they are routinely treated as opaque keys — the
-// typed wrapper keeps them from being conflated with other string keys
-// (ratingKey, tokens, session keys) inside this package while still
-// round-tripping through APIs that expect strings.
+// ID is the typed user identifier. Plex user IDs are numeric strings but are
+// routinely treated as opaque keys; the typed wrapper keeps them from being
+// conflated with other string keys (ratingKey, tokens, session keys) inside
+// this package while still round-tripping through APIs that expect strings.
 //
-// The Manager's public methods accept plain strings (rather than ID) so a
-// consumer can declare its own lookup interface without importing this
-// package for the ID type; the typed ID remains available for internal map
-// keys and for callers that want stricter typing at their own boundaries.
+// Public methods accept plain strings rather than ID so a consumer can
+// declare its own lookup interface without importing this package.
 type ID string
 
-// String returns the ID as a plain string for APIs that accept strings
-// (HTTP query params, slog values, cache keys).
+// String returns the ID as a plain string for APIs that accept strings.
 func (i ID) String() string { return string(i) }
 
 // record is the manager's own per-user entry: the typed ID, display name, and
-// Plex access token. Unexported precisely BECAUSE of that token — a struct that
-// can carry a secret must not be handed across a package boundary, and nothing
-// outside this package has ever needed one. Callers get Account instead.
+// Plex access token. Unexported because of that token — a struct that can
+// carry a secret must not cross a package boundary. Callers get Account
+// instead.
 type record struct {
 	ID   ID
 	Name string
-	// Token is plex.Token (the library's credential type), not a string: it is
-	// compared against (*Client).Token() and handed to ForToken, so carrying
-	// the type keeps both operations type-checked instead of casting at each.
+	// Token is plex.Token, not a string: it is compared against
+	// (*Client).Token() and handed to ForToken.
 	Token plex.Token
 }
 
 // Account is a user's identity as every other package sees it: an ID and a
-// display name, and deliberately NO token field. With no field to populate,
-// leaking a token through this struct is structurally impossible rather than
-// merely discouraged. Anything needing to act as a user goes through
+// display name, with no token field, so leaking a token through this struct
+// is structurally impossible. Anything needing to act as a user goes through
 // ClientForUser, which looks the token up internally and never returns it.
 type Account struct {
 	ID   string
@@ -62,10 +54,8 @@ type Account struct {
 }
 
 // tokenStore is the persistence this package needs: read and write the
-// shared-user token map. Two methods, against the eleven of the cache type it
-// is satisfied by — the other nine belong to the profile ledger and the
-// deep-scan watermark, which are no business of user management. Declared here
-// so a test fake implements two methods instead of eleven.
+// shared-user token map. Declared here so a test fake implements two
+// methods instead of the cache's full surface.
 type tokenStore interface {
 	UserTokens() map[string]string
 	SetUserTokens(tokens map[string]string)
@@ -94,8 +84,8 @@ func NewManager(c tokenStore) *Manager {
 }
 
 // Init seeds the manager with the admin user. Safe to call multiple
-// times; existing shared-user state is preserved so a re-init (e.g.,
-// after a token refresh during startup) does not clobber in-flight data.
+// times; existing shared-user state is preserved so a re-init does not
+// clobber in-flight data.
 func (m *Manager) Init(admin *plex.User) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -106,10 +96,10 @@ func (m *Manager) Init(admin *plex.User) {
 	m.clients = make(map[ID]*plex.Client)
 }
 
-// LoadFromCache seeds the shared-user map from cached tokens. The cached
-// entries use synthetic display names ("user-{id}") until a successful
-// plex.tv refresh supplies the real username. Called at startup so the
-// app can operate on per-user tokens when plex.tv is unreachable.
+// LoadFromCache seeds the shared-user map from cached tokens. Cached entries
+// use synthetic display names ("user-{id}") until a successful plex.tv
+// refresh supplies the real username. Called at startup so the app can
+// operate on per-user tokens when plex.tv is unreachable.
 func (m *Manager) LoadFromCache() {
 	tokensCopy := m.cache.UserTokens()
 
@@ -117,9 +107,8 @@ func (m *Manager) LoadFromCache() {
 	defer m.mu.Unlock()
 	for uidStr, token := range tokensCopy {
 		uid := ID(uidStr)
-		// Skip empty tokens: mirror the s.AccessToken == "" guard in
-		// RefreshTokens so a corrupted-cache phantom user never enters
-		// m.shared and never triggers an admin-fallback write.
+		// Mirrors the s.AccessToken == "" guard in RefreshTokens so a
+		// corrupted-cache phantom user never enters m.shared.
 		if uid == m.admin.ID || token == "" {
 			continue
 		}
@@ -130,32 +119,24 @@ func (m *Manager) LoadFromCache() {
 }
 
 // ClientForUser returns a *plex.Client scoped to the given user's token,
-// derived from adminClient via ForToken — a pure same-server derivation
-// that shares the admin client's transport, trust settings, and
-// connection pool (no disk I/O, cannot fail). Derived clients are cached
-// per user until the token rotates.
+// derived from adminClient via ForToken (a pure same-server derivation, no
+// disk I/O, cannot fail). Derived clients are cached per user until the
+// token rotates.
 //
-// Returns the admin client only when the userID matches admin. Returns
-// nil (fail CLOSED) when no per-user identity is available: the user is
-// unknown/departed (absent from the shared-user map, or holding an empty
-// token). The caller must skip the operation rather than write under the
-// admin token — a per-user stream PUT is per-user-scoped on the server,
-// so executing it under the admin token corrupts the ADMIN's own stream
-// selection and still does not apply the intended user's preference.
-// Reachable in steady state (a play event for a user no longer sharing)
-// and via the fan-out race where a concurrent RefreshTokens prunes the
-// user between the users.All() snapshot and this call; in the race the
-// user is re-processed on the next pass once the refresh completes.
+// Returns the admin client when userID matches admin. Returns nil (fail
+// closed) when no per-user identity is available — the user is
+// unknown/departed, or holds an empty token. The caller must skip the
+// operation rather than write under the admin token: a per-user stream PUT
+// is per-user-scoped on the server, so writing under the admin token
+// corrupts the admin's own selection and still drops the intended user's
+// preference.
 //
-// Intentionally SILENT on the nil path: the callers own the "skipping"
-// log and already de-spam it (the scheduler history path guards a single
-// WARN per unknown user per pass via its unknownUsers set;
-// handlePlayEvent WARNs on the naturally rate-limited play path). A
-// per-call WARN here would re-introduce the exact Loki spam that de-spam
-// was built to prevent.
+// Silent on the nil path: callers own the "skipping" log and already
+// de-spam it (the scheduler history path guards one WARN per unknown user
+// per pass; handlePlayEvent WARNs on the naturally rate-limited play path).
 //
-// userID is accepted as a plain string so consumers need not import this
-// package for the ID type; convert to ID internally for map keys.
+// userID is a plain string so consumers need not import this package for
+// the ID type.
 func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.Client {
 	uid := ID(userID)
 
@@ -181,9 +162,7 @@ func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.C
 
 // SharedCount returns the number of shared (non-admin) users currently
 // known. Used by InitialRefreshWithRetry to detect whether a refresh
-// attempt populated any users, independent of whether the plex.tv API
-// call itself succeeded or silently returned an empty shared-servers
-// list.
+// populated any users, independent of whether the plex.tv call succeeded.
 func (m *Manager) SharedCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -191,9 +170,7 @@ func (m *Manager) SharedCount() int {
 }
 
 // All returns the admin plus all shared users as Account values. Account has
-// no token field, so this slice cannot carry one. Callers that need an HTTP
-// client for any user must use ClientForUser (which falls back to the admin
-// client for the admin ID and looks up a shared user's token internally).
+// no token field, so this slice cannot carry one.
 func (m *Manager) All() []Account {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1,14 +1,9 @@
 // config.go owns application configuration and env-var parsing for
 // the composition root.
 //
-// Everything in this file is main-package state that the wiring in
-// run() reads at startup. The env-var contract (names, defaults,
-// boolean parsing, _FILE secret handling, Go-duration DEEP_SCAN_INTERVAL
-// parsing) is stable; the in-memory representation may evolve freely.
-// The former frozen HH:MM SCHEDULER_SCHEDULE_TIME contract was
-// deliberately replaced by a fleet-standard Go-duration interval
-// (DEEP_SCAN_INTERVAL) so the app no longer reads local wall-clock
-// time — see the deepscan package.
+// The env-var contract (names, defaults, boolean parsing, _FILE secret
+// handling, Go-duration DEEP_SCAN_INTERVAL parsing) is stable; the
+// in-memory representation may evolve freely.
 
 package main
 
@@ -84,13 +79,10 @@ type config struct {
 // slog.Error and terminates the process via os.Exit(1).
 func loadConfig() config {
 	// Install the configured handler BEFORE the first envx read so a
-	// malformed value warns through it (logfmt, Loki-parseable) rather than
-	// Go's pre-setup default logger; the level is then set in place once
-	// LOG_LEVEL is parsed. An unrecognized LOG_LEVEL, a typo'd boolean, and
-	// requireEnv errors all get that treatment. Parsing the level after
-	// Setup is what puts its own warning on the configured handler too —
-	// slogx.ParseLevel returns ok rather than logging for exactly that
-	// reason.
+	// malformed value warns through it rather than Go's pre-setup default
+	// logger; the level is set once LOG_LEVEL is parsed. slogx.ParseLevel
+	// returns ok rather than logging so this call can put its own warning
+	// on the configured handler too.
 	levelVar := slogx.Setup(slogx.Options{Level: slog.LevelInfo})
 	rawLevel := envx.String("LOG_LEVEL")
 	logLevel, recognized := slogx.ParseLevel(rawLevel, slog.LevelInfo)
@@ -185,24 +177,17 @@ func logConfig(cfg *config) {
 // the Docker-secrets convention (KEY_FILE pointing at a mounted file,
 // size-bounded), and then trims the result.
 //
-// envx returns a KEY_FILE value with at most ONE trailing line ending
-// removed and every other byte as written — interior whitespace, edge
-// spaces and tabs, a second trailing newline — because a secret MAY
-// legitimately contain whitespace and envx will not guess which. The KEY
-// channel is verbatim for the same reason. That contract is right for a
-// generic getter, so the trimming belongs here instead: both values this
-// app reads through requireEnv (PLEX_URL, PLEX_TOKEN) are values where
-// whitespace is meaningless, and passing it through would produce a
-// malformed URL or a token Plex answers 401 to. Trimming at this boundary
-// covers both channels, so KEY and KEY_FILE cannot resolve to different
-// secrets for the same key.
+// envx returns a KEY_FILE value verbatim except for one trailing line
+// ending, because a secret MAY legitimately contain whitespace. That
+// contract is right for a generic getter, so the trimming belongs here
+// instead: PLEX_URL and PLEX_TOKEN are values where whitespace is
+// meaningless, and passing it through would produce a malformed URL or
+// a token Plex answers 401 to.
 //
-// Missing, unreadable, and whitespace-only values are all fatal: the
-// process cannot work without them, and exiting through the configured
-// slog handler keeps the failure loud and greppable. The blank check is
-// what keeps that true across the trim — envx already rejects a blank
-// secret FILE, but a padded KEY would otherwise trim down to an empty
-// string and start the app with no URL or token at all.
+// Missing, unreadable, and whitespace-only values are all fatal. The
+// blank check keeps that true across the trim — a padded KEY would
+// otherwise trim down to an empty string and start the app with no URL
+// or token at all.
 func requireEnv(key envx.Key) string {
 	v, err := envx.Secret(key)
 	if err != nil {

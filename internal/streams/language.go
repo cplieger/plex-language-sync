@@ -6,27 +6,19 @@ import (
 	"github.com/cplieger/langtag/v2"
 )
 
-// AudioFloor is the language distance the audio path accepts. It is fixed
-// rather than configurable.
+// AudioFloor is the language distance the audio path accepts, fixed rather
+// than configurable.
 //
-// It sits one tier looser than the subtitle default, and the two mean the same
-// thing. Script cannot matter for a spoken track, but langtag infers a script
-// from the region, so two Mandarin tracks tagged zh-CN and zh-TW differ by
-// "script" purely as an artifact of that inference. Both report
-// languageCode="chi" to this app and matched before this change, so flooring
-// audio at TierSameLanguage would stop propagating regional audio that
-// propagates now. Because base-language equality is required either way, tier 2
-// on the audio path admits nothing a listener would notice: it cannot reach
-// another language, only another region of the same one.
-//
-// The tiers above are subtitle-grade claims. Danish and Norwegian are close on
-// the page and far apart aloud, which is exactly the substitution a viewer
-// notices and resents coming out of the speakers.
+// It sits one tier looser than the subtitle default, and the two mean the
+// same thing: script cannot matter for a spoken track, but langtag infers a
+// script from the region, so two Mandarin tracks tagged zh-CN and zh-TW
+// differ by "script" purely as an artifact of that inference. Both report
+// languageCode="chi" and matched before this change, so flooring audio at
+// TierSameLanguage would stop propagating regional audio that propagates now.
 const AudioFloor = langtag.TierOtherScript
 
-// languageMatch is how a reference's language relates to a candidate's when the
-// reference has no language langtag can read. The three cases are genuinely
-// different and folding them together loses behavior.
+// languageMatch is how a reference's language relates to a candidate's when
+// the reference has no language langtag can read.
 type languageMatch uint8
 
 const (
@@ -34,20 +26,16 @@ const (
 	// decides.
 	langGraded languageMatch = iota
 	// langAbsent means Plex supplied no language for the reference. Candidates
-	// with no language either are matches, which is what this app has always
-	// done for untagged media.
+	// with no language either are matches.
 	langAbsent
-	// langUnreadable means the reference carries a language string that names
-	// nothing langtag knows: a private code, a misspelling, a convention local
-	// to one library. Only a candidate carrying the same string matches, which
-	// is exactly what the previous exact-string comparison did. An unrecognised
-	// code is not an absent one, so an untagged track must not stand in for it.
+	// langUnreadable means the reference's language string names nothing
+	// langtag knows. Only a candidate carrying the same string matches; an
+	// unrecognised code is not an absent one.
 	langUnreadable
 )
 
 // classifyReference reports which of the three matching modes applies to a
-// language string, and the tag when one is readable. Shared by every call site
-// so the rule has one implementation rather than one per caller.
+// language string, and the tag when one is readable.
 func classifyReference(raw string) (langtag.Tag, languageMatch) {
 	if tag, ok := langtag.Parse(raw); ok {
 		return tag, langGraded
@@ -60,7 +48,7 @@ func classifyReference(raw string) (langtag.Tag, languageMatch) {
 
 // selectByLanguage narrows candidates to those whose language is an acceptable
 // stand-in for wantRaw, within floor. Every returned candidate sits at the same
-// language distance, so the caller's own scoring decides between them.
+// language distance.
 func selectByLanguage(candidates []*Stream, wantRaw string, floor langtag.Tier) []*Stream {
 	want, mode := classifyReference(wantRaw)
 	if mode == langGraded {
@@ -79,25 +67,21 @@ func selectByLanguage(candidates []*Stream, wantRaw string, floor langtag.Tier) 
 				out = append(out, s)
 			}
 		case langUnreadable:
-			// Compare the coarse code only. The previous implementation
-			// compared exactly this field, so requiring the finer tag to agree
-			// as well would refuse pairs that used to match.
+			// Compare the coarse code only: requiring the finer tag too
+			// would refuse pairs that otherwise match.
 			if s.LanguageCode == wantRaw {
 				out = append(out, s)
 			}
 		case langGraded:
-			// Handled above; listed so the switch is exhaustive.
 		}
 	}
 	return out
 }
 
 // languageDistance reports the tier at which a candidate relates to a
-// reference, agreeing with what selectByLanguage would accept. The two cases
-// that carry no readable tag report TierIdentical when they match at all,
-// because the strings are the same and nothing finer can be said; reporting
-// TierNone for a pair the matcher accepted would make the logged tier
-// contradict the decision it describes.
+// reference, agreeing with what selectByLanguage would accept. An untagged
+// pair reports TierIdentical when it matches at all, since nothing finer can
+// be said; TierNone would contradict the match decision it describes.
 func languageDistance(ref, candidate *Stream) langtag.Tier {
 	if ref == nil || candidate == nil {
 		return langtag.TierNone
