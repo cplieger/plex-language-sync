@@ -1,16 +1,9 @@
 // Package streams holds the pure (I/O-free) stream-selection core for
 // plex-language-sync along with the Plex value types it operates on.
 //
-// The types here mirror the JSON wire format returned by the Plex
-// HTTP API; the JSON struct tags on Label, Episode, Media and Part are
-// part of Plex's API contract (inviolate) and must not change during
-// refactors. Stream's tags are no longer this package's to change:
-// Stream embeds plexapi.Stream, so the library owns that half of the
-// contract.
-//
-// Callers (the internal/plex HTTP client, composition root, and tests)
-// import this package; it has no dependencies on other internal
-// packages so there are no circular-import risks.
+// The JSON struct tags on Label, Episode, Media and Part are part of
+// Plex's API contract and must not change during refactors. Stream
+// embeds plexapi.Stream, so the library owns that half of the contract.
 package streams
 
 import (
@@ -29,16 +22,13 @@ type Label struct {
 
 // Episode is a Plex metadata item of type="episode" (and, by extension,
 // show or season metadata since /library/metadata/{key} is polymorphic).
-// Only the fields the app consumes are declared: the plexapi decoder is
-// non-strict, so Plex's other metadata fields are ignored on the wire
-// rather than decoded into unread struct members.
+// Only consumed fields are declared; the decoder is non-strict.
 type Episode struct {
 	RatingKey       string `json:"ratingKey"`
 	ParentRatingKey string `json:"parentRatingKey"`
-	// The two title fields are Plex metadata sourced from the wild (agents,
-	// filenames), tagged runesafe.Untrusted at this decode boundary: raw
-	// bytes in (matching, e.g. the ignore policy, reads Raw()), sanitized
-	// automatically at every slog/fmt emit.
+	// The two title fields come from the wild (agents, filenames), tagged
+	// runesafe.Untrusted: raw bytes in, sanitized automatically at every
+	// slog/fmt emit.
 	GrandparentTitle     runesafe.Untrusted `json:"grandparentTitle"`
 	LibraryTitle         runesafe.Untrusted `json:"librarySectionTitle"`
 	Type                 string             `json:"type"`
@@ -48,33 +38,26 @@ type Episode struct {
 	ParentIndex          FlexInt            `json:"parentIndex"`
 }
 
-// SeasonNum returns the parsed season index, or 0 when the ParentIndex
-// field is absent. FlexInt decodes both `14` and `"14"` JSON shapes
-// directly to int, so this is now a trivial conversion — no strconv
-// fallback needed.
+// SeasonNum returns the parsed season index, or 0 when ParentIndex is
+// absent.
 func (e *Episode) SeasonNum() int {
 	return int(e.ParentIndex)
 }
 
-// Num returns the parsed episode index, or 0 when the Index
-// field is absent. See SeasonNum for the FlexInt rationale.
+// Num returns the parsed episode index, or 0 when Index is absent.
 func (e *Episode) Num() int {
 	return int(e.Index)
 }
 
-// ShortName returns a concise "'Show' (SxxEyy)" identifier useful for
+// ShortName returns a concise "'Show' (SxxEyy)" identifier for
 // structured log lines.
 func (e *Episode) ShortName() string {
-	// ShortName is log/display vocabulary (every call site is a slog attr).
-	// GrandparentTitle carries the runesafe.Untrusted tag, so %s renders its
-	// sanitized form here — control/bidi runes are neutralized without a
-	// per-site call.
 	return fmt.Sprintf("'%s' (S%02dE%02d)", e.GrandparentTitle, e.SeasonNum(), e.Num())
 }
 
 // Media wraps a list of Parts for an Episode. Plex also sends a numeric
-// media `id`, but the per-user stream-selection write is keyed on the
-// PART id (see FirstPartID), so it is not decoded.
+// media `id`, but selection is keyed on the PART id (see FirstPartID),
+// so it is not decoded.
 type Media struct {
 	Part []Part `json:"Part"`
 }
@@ -82,30 +65,21 @@ type Media struct {
 // Part wraps a list of Streams for a Media.
 type Part struct {
 	Stream []Stream `json:"Stream"`
-	// ID stays int where the embedded plexapi.Stream's is a
-	// number-or-quoted-string FlexInt. The asymmetry is deliberate, not an
-	// oversight: /status/sessions is the only endpoint that quotes these ids
-	// and the app decodes no session into this graph (its plex.Session
-	// declares nothing below Player), so the four endpoints that do reach
-	// Part all send a bare number. Widening it was priced and declined;
-	// revisit if a session payload ever decodes into Episode.
+	// ID stays a bare int where the embedded plexapi.Stream's is a
+	// number-or-quoted-string FlexInt: /status/sessions is the only
+	// endpoint that quotes these ids, and no session decodes into this
+	// graph (plex.Session declares nothing below Player).
 	ID int `json:"id"`
 }
 
-// StreamType identifies the kind of stream (video, audio, subtitle).
-// It is an alias for plexapi.StreamType, which types the promoted
-// Stream.StreamType field: one definition of the Plex wire enum, and
-// the app's own spelling stays valid at every construction site.
+// StreamType identifies the kind of stream (video, audio, subtitle),
+// aliased onto plexapi.StreamType, which types the promoted
+// Stream.StreamType field.
 type StreamType = plexapi.StreamType
 
 // StreamTypeAudio and StreamTypeSubtitle enumerate the stream-type
-// integer values the app acts on, aliased onto plexapi's constants.
-// Plex also uses 1 for video, but the app only ever asks "is this
-// audio?" / "is this a subtitle?" (see Audio, Subtitle, and the
-// IsAudio / IsSubtitle predicates Stream promotes from plexapi) — a
-// video stream is simply whatever answers no to both, so nothing here
-// needs to name it. Aliasing the type imports no constants, so
-// plexapi.StreamTypeVideo stays out of this package's namespace.
+// values the app acts on. Video is whatever answers no to both
+// IsAudio and IsSubtitle, so it needs no constant of its own here.
 const (
 	StreamTypeAudio    = plexapi.StreamTypeAudio
 	StreamTypeSubtitle = plexapi.StreamTypeSubtitle
@@ -113,56 +87,38 @@ const (
 
 // Stream is a single audio / subtitle / video stream on a Part.
 //
-// plexapi.Stream is EMBEDDED, not held as a named field, because
-// promoting its surface is the entire intent — that is the rulebook's
-// stated exception to composition-over-embedding. Promoted are the 14
-// wire fields (identical in name, tag and type to the ones this type
-// used to declare, save a wider FlexInt ID) and the IsAudio / IsSubtitle
-// predicates this package used to duplicate byte for byte; select.go
-// takes the latter two as method values. The outer type exists only to
-// carry what Go forbids declaring on a foreign type: Lang, languageRaw,
-// HasNoLanguage (below) and TitleForMatch (describe.go).
-//
-// A Go 1.27 composite literal may key a promoted field, so
-// Stream{LanguageCode: …, StreamType: …} keeps working unchanged.
+// plexapi.Stream is EMBEDDED, not held as a named field, to promote its
+// surface: the 14 wire fields and the IsAudio / IsSubtitle predicates.
+// The outer type carries only what Go forbids declaring on a foreign
+// type: Lang, languageRaw, HasNoLanguage, and TitleForMatch
+// (describe.go).
 type Stream struct {
 	plexapi.Stream
 }
 
-// Lang returns the stream's canonical language, preferring Plex's BCP 47
-// languageTag over the coarser languageCode. The zero Tag means Plex reported
-// no usable language for the track, which is a real case: a track with no
-// language metadata at all, and one Plex labels "unknown".
-//
-// The preference order is the whole reason this method exists. LanguageTag is
-// strictly more informative than LanguageCode, which cannot express a region:
-// a movie carrying both a European and a Latin American Spanish subtitle
-// reports languageCode="spa" for both and distinguishes them only in the tag.
-// LanguageCode is still read — it is what the log output and the persisted
-// intent projection carry — but it decides a language only when the tag is
+// Lang returns the stream's canonical language, preferring Plex's BCP
+// 47 languageTag over the coarser languageCode: LanguageCode cannot
+// express a region, so a movie with both European and Latin American
+// Spanish subtitles reports "spa" for both and the tag is what
+// distinguishes them. LanguageCode still decides when the tag is
 // absent or unparseable.
 //
-// Not memoized. Stream values are copied into and out of slices all over this
-// package, so a cached field would either be silently stale after a copy or
-// need a mutex on a type that has no other reason to hold one. Parsing costs
-// under a microsecond and happens a handful of times per episode.
+// Not memoized: Stream values are copied through slices throughout
+// this package, and parsing costs under a microsecond.
 func (s *Stream) Lang() langtag.Tag {
 	if t, ok := langtag.Parse(s.LanguageTag); ok {
 		return t
 	}
-	// Fall back on an absent OR unparseable tag. Plex has been observed to
-	// report a languageTag for every stream, but the two fields come from
-	// different derivations of the same container metadata, so treating a
-	// malformed tag as "no tag" rather than "no language" keeps the coarser
-	// field useful.
+	// Absent or unparseable tag: LanguageTag and LanguageCode derive
+	// from different container metadata, so a malformed tag is treated
+	// as "no tag" rather than "no language".
 	t, _ := langtag.Parse(s.LanguageCode)
 	return t
 }
 
-// languageRaw returns the raw identifier the matcher keys on, preferring the
-// BCP 47 tag and falling back to the coarser code. It is the un-parsed
-// counterpart of Lang, needed because an identifier langtag cannot read still
-// has to be comparable to another copy of itself.
+// languageRaw returns the raw identifier the matcher keys on
+// (preferring the tag, falling back to the code), for comparing an
+// unparseable identifier against another copy of itself.
 func (s *Stream) languageRaw() string {
 	if t := strings.TrimSpace(s.LanguageTag); t != "" {
 		if _, ok := langtag.Parse(t); ok {
@@ -172,46 +128,34 @@ func (s *Stream) languageRaw() string {
 	return s.LanguageCode
 }
 
-// HasNoLanguage reports whether Plex supplied no language at all for the track,
-// as opposed to supplying one this build cannot parse. The two cases are
-// different and the app treats them differently: see selectByLanguage.
+// HasNoLanguage reports whether Plex supplied no language at all,
+// distinct from supplying one this build cannot parse (see
+// selectByLanguage).
 //
-// Two tracks that both answer true here are treated as a match on the audio
-// path, because the old comparison made an empty code equal an empty code and
-// propagating across an untagged library is behavior a user relies on. That
-// differs from langtag's rule that an unknown tag matches nothing, which is
-// right for a library where two "undetermined" tracks prove nothing, and wrong
-// here where the alternative is doing nothing for a whole class of library.
+// Two untagged tracks are treated as a match on the audio path
+// (differs from langtag's rule that an unknown tag matches nothing),
+// because propagating across an untagged library is behavior users
+// rely on.
 func (s *Stream) HasNoLanguage() bool {
 	return strings.TrimSpace(s.LanguageTag) == "" && strings.TrimSpace(s.LanguageCode) == ""
 }
 
-// LanguageChoice is the pair a user's profile records: what they chose to
-// listen to and what they chose to read. Two adjacent bare language codes
-// type-checked in either order, and a swap learns the profile BACKWARDS and
-// persists it, so every later episode gets the subtitle language as its audio
-// preference. Named fields make the transposition visible at the call.
-//
-// Subtitle may be empty (the user chose no subtitles); Audio may not, and an
-// empty Audio is ignored rather than recorded.
+// LanguageChoice is the pair a user's profile records: what they chose
+// to listen to and read. Named fields prevent a transposition of the
+// two bare language codes from learning the profile backwards.
 type LanguageChoice struct {
 	// Audio is the language the user selected for the audio track.
 	Audio string
-	// Subtitle is the language the user selected for subtitles, empty when
-	// they chose none.
+	// Subtitle is the language selected for subtitles, empty if none.
 	Subtitle string
 }
 
-// Pair is a selected audio stream and its accompanying subtitle stream — the
-// two-stream unit this app propagates. The pair travels through six
-// signatures (Selected returns it, NewIntent takes it, RefStreams returns it,
-// and the sync plane threads it to the write), and as two adjacent
-// *Stream parameters every one of those crossings type-checked in either
-// order. A transposition writes the subtitle stream into the audio slot: the
-// episode ends up with a valid selection nobody asked for, on the wrong track.
+// Pair is a selected audio stream and its accompanying subtitle
+// stream. Named fields prevent a transposition matching the audio
+// track as the subtitle reference.
 //
-// Subtitle is nil when the user selected no subtitles; Audio nil means
-// nothing was selected at all, which callers treat as "no reference".
+// Subtitle is nil when the user selected no subtitles; Audio nil
+// means nothing was selected, which callers treat as "no reference".
 type Pair struct {
 	// Audio is the selected audio stream.
 	Audio *Stream

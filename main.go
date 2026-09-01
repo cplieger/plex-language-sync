@@ -137,13 +137,11 @@ func run() int {
 	um.Init(admin)
 	um.LoadFromCache()
 
-	// Connection verified and admin resolved (possibly after a healthy-degraded
-	// retry period), cache + user manager initialized: the app can serve.
-	// marker.Set(true) is idempotent — the connect loop already set it if the
-	// initial connection was degraded; setting it here also covers the
-	// connected-on-first-try path. Health = "connected, or transiently retrying
-	// the initial connect"; a fatal config/auth error exits before this point.
-	// Marked BEFORE the plex.tv shared-user refresh so container liveness is not
+	// Connection verified and admin resolved, cache + user manager
+	// initialized: the app can serve. marker.Set(true) is idempotent — the
+	// connect loop already set it if the initial connection was degraded;
+	// setting it here also covers the connected-on-first-try path. Marked
+	// BEFORE the plex.tv shared-user refresh so container liveness is not
 	// gated on that secondary dependency: gating on the refresh would delay
 	// healthy up to ~75s (DefaultRefreshConfig) on a plex.tv outage and risk a
 	// Docker unhealthy/restart that cannot fix plex.tv. The periodic RefreshLoop
@@ -164,8 +162,8 @@ func run() int {
 	}()
 
 	// Synchronous initial refresh with bounded exponential backoff. See
-	// internal/users/refresh.go for the retry semantics and rationale. Runs
-	// after the health marker is set so a plex.tv outage never gates liveness.
+	// internal/users/refresh.go for the retry semantics. Runs after the
+	// health marker is set so a plex.tv outage never gates liveness.
 	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
 	// Compose the subsystems from the concrete internal/* packages. Each
@@ -175,9 +173,9 @@ func run() int {
 	// ClientForUser returns a typed nil (*plex.Client)(nil) when no per-user
 	// client can be built, and putting that straight into an interface yields a
 	// NON-nil interface wrapping a nil pointer (the Go nil-interface trap),
-	// which would defeat every consumer's `== nil` check and turn "skip this
-	// user" into a nil dereference. perUserClient is the single place that
-	// conversion happens; the two adapters below only narrow its result.
+	// which would defeat every consumer's `== nil` check. perUserClient is the
+	// single place that conversion happens; the two adapters below only
+	// narrow its result.
 	perUserClient := func(userID string) *plex.Client {
 		return um.ClientForUser(userID, client)
 	}
@@ -229,9 +227,8 @@ func run() int {
 	)
 
 	// runtime-concurrency-p2: join on RefreshLoop + deepscan.Run at
-	// shutdown so any in-flight work (a tick mid-analysis, a token
-	// refresh mid-HTTP) completes before the deferred cache save
-	// writes its final snapshot.
+	// shutdown so any in-flight work completes before the deferred cache
+	// save writes its final snapshot.
 	var wg sync.WaitGroup
 	refreshDone := make(chan struct{})
 	schedDone := make(chan struct{})
@@ -423,15 +420,9 @@ func isFatalStartupError(err error) bool {
 // ignore/dedup rules are a blend of cache state and config — both of
 // which are main-package concerns.
 //
-// Methods take a POINTER receiver. Every field is a handle onto shared
-// mutable state (the cache, the users manager, the stall counter), so a value
-// receiver copied the struct on every event for no reason and made the
-// no-copy intent invisible: a future field with a mutex or an inline counter
-// would be silently copied per event. Pointer receivers state that this glue
-// is one live object.
-//
-// episodeSkipper is the ignore decision this glue needs: one method, declared
-// at the point of use rather than taken from a shared contract package.
+// Methods take a POINTER receiver: every field is a handle onto shared
+// mutable state (the cache, the users manager, the stall counter), so a
+// value receiver would copy the struct on every event for no reason.
 type episodeSkipper interface {
 	ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool
 }
@@ -514,18 +505,17 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 // resolvePlayEventUser resolves the user from a play event's client
 // identifier. Fails CLOSED: when the event carries no client identifier
 // or the session cannot be resolved, it returns ok=false and the caller
-// skips the event rather than misattributing it to the admin (the same
-// fail-closed rule as users.Manager.ClientForUser — a per-user stream
-// write under the wrong identity records the selection against the
-// wrong user, and a mis-learned profile poisons future seeding).
+// skips the event rather than misattributing it to the admin — a
+// per-user stream write under the wrong identity records the selection
+// against the wrong user, and a mis-learned profile poisons future
+// seeding.
 //
-// A skip is terminal for that notification. The reconcile plane does NOT
-// recover it, because replay re-applies RECORDED intents and a skipped
-// event recorded none. What recovers it is the notification stream
-// itself: Plex re-announces an active session about every 10s, so a
-// genuine session that was merely not yet queryable is attributed on a
-// later notification. See skipUnattributedPlayEvent for the measured
-// behaviour and for why the per-event line is Debug.
+// A skip is terminal for that notification: the reconcile plane does
+// NOT recover it, because replay re-applies RECORDED intents and a
+// skipped event recorded none. What recovers it is the notification
+// stream itself: Plex re-announces an active session about every 10s,
+// so a genuine session that was merely not yet queryable is attributed
+// on a later notification.
 func (n *notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.PlayEvent) (userID, username string, ok bool) {
 	if ev.ClientIdentifier == "" {
 		n.skipUnattributedPlayEvent(ev, errUnattributedNoClient)
@@ -552,28 +542,22 @@ var errUnattributedNoClient = errors.New("event carries no client identifier")
 // only when the run of them says resolution has stopped working.
 //
 // Deliberately Debug, not Warn: an unattributed play event is an
-// EXPECTED, self-healing outcome, and two measured Plex behaviours
-// produce nearly all of them.
+// EXPECTED, self-healing outcome. Measured 2026-08-15:
 //
-//   - Plex announces playback before the session is queryable. Measured
-//     2026-08-15: a client was announced at 08:02:20, 08:02:31 and
-//     08:02:41 while /status/sessions first carried the session at
-//     08:02:51, which is also when this app first attributed it. The
-//     next notification arrives about 10s later and carries the real
-//     one, so the listener retries for free.
+//   - Plex announces playback before the session is queryable. A client
+//     was announced at 08:02:20, 08:02:31 and 08:02:41 while
+//     /status/sessions first carried the session at 08:02:51, which is
+//     also when this app first attributed it. The next notification
+//     arrives ~10s later and carries the real one.
 //   - An idle Plex Web client keeps re-announcing its last item long
-//     after the session ends. Measured on one browser client: 19 skips
-//     for a single ratingKey spanning 73 hours, every one of them
-//     outside all four of that client's real session windows. There is
-//     no playback to attribute, so the skip costs nothing.
+//     after the session ends: one browser client produced 19 skips for
+//     a single ratingKey spanning 73 hours, every one outside all four
+//     of that client's real session windows.
 //
 // Neither is actionable by an operator, and at Warn they buried the one
-// state that is: resolution failing across the board, which leaves the
-// app silently attributing no playback at all. That is what the run
-// counter reports, once per stall rather than once per notification.
-//
-// The run also has to distinguish those two benign shapes from the
-// actionable one, because a count alone cannot. See resolveStallCounter.
+// state that is: resolution failing across the board. That is what the
+// run counter reports, once per stall rather than once per notification
+// — see resolveStallCounter for how it tells the two shapes apart.
 func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
 	slog.Debug("play event: skipping, user not attributed",
 		"client", ev.ClientIdentifier, "key", ev.RatingKey,
@@ -628,21 +612,20 @@ const (
 // stall is reported once instead of once per notification, and decides
 // which runs are worth reporting at all.
 //
-// A count on its own is not evidence that resolution is broken, and
-// treating it as such produced a false alert on 2026-08-30: Plex removed
-// a WAN client's session mid-film ("Client stopped playback"), the client
-// kept announcing the same paused ratingKey every 20s, and 20 skips
-// accumulated in under 10 minutes with nobody else watching, so no
-// success arrived to clear the run. /status/sessions answered correctly
-// throughout and the token was fine, which is everything the alert told
-// the operator to go and check.
+// A count on its own is not evidence that resolution is broken: on
+// 2026-08-30, Plex removed a WAN client's session mid-film ("Client
+// stopped playback"), the client kept announcing the same paused
+// ratingKey every 20s, and 20 skips accumulated in under 10 minutes
+// with nobody else watching, so no success arrived to clear the run.
+// /status/sessions answered correctly throughout and the token was
+// fine — everything the alert would have told the operator to check.
 //
 // So a run escalates on one of two grounds, never on length alone:
 //
 //   - the session list could not be READ, sustained across the whole
-//     threshold. Nothing can be attributed while that holds, whether one
-//     client is playing or twenty, so this arm needs no client spread
-//     and closes the single-viewer case a spread rule would miss.
+//     threshold. Nothing can be attributed while that holds, so this
+//     arm needs no client spread and closes the single-viewer case a
+//     spread rule would miss.
 //   - the list was read and NO client in the run was in it, across more
 //     than one client. One client absent from a readable list is that
 //     client (a start race, a stale tab, a removed session); every
@@ -653,7 +636,7 @@ const (
 // goroutine, so serial dispatch is today's implementation detail and not
 // a contract this type should depend on.
 //
-// A nil counter counts nothing and never escalates. That is what lets
+// A nil counter counts nothing and never escalates, which lets
 // resolvePlayEventUser be exercised by tests that build no composition
 // root; production wiring always supplies one.
 type resolveStallCounter struct {
@@ -735,14 +718,11 @@ func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.Tim
 
 		cacheKey := notify.BuildTimelineCacheKey(entry.ItemID)
 		// Uses the WasRecentlyProcessed/MarkProcessed pair rather than the
-		// atomic CheckAndMark on purpose: the key is marked (below) only after
-		// the entry is confirmed a real, non-ignored episode, so an irrelevant
-		// or ignored entry never suppresses a later genuine event for the same
-		// ItemID (mark-on-success). CheckAndMark would mark-on-check and lose
-		// that. Safe without atomicity here because timeline entries are
-		// processed serially by the single listener goroutine; the atomic
-		// CheckAndMark is reserved for the concurrent (scheduler pool) and
-		// must-be-one-step (play streamKey) gates.
+		// atomic CheckAndMark: the key is marked (below) only after the
+		// entry is confirmed a real, non-ignored episode, so an irrelevant
+		// or ignored entry never suppresses a later genuine event for the
+		// same ItemID. Safe without atomicity here because timeline entries
+		// are processed serially by the single listener goroutine.
 		if n.cache.WasRecentlyProcessed(cacheKey) {
 			continue
 		}

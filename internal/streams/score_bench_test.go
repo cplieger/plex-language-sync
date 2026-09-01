@@ -10,84 +10,54 @@ import (
 	"github.com/cplieger/plexapi/v2"
 )
 
-// This file measures what stream selection COSTS, and it holds two kinds of
-// check doing different jobs. The split exists because the repo is enrolled in a
-// weekly benchmark tracker and the tracker cannot see the regression class that
-// matters most here.
+// This file measures allocation COST, split into two kinds of check.
 //
-//   - The Benchmark* series feed that tracker. It compares each series against
-//     its previous value and alerts above a ratio, so it catches a change that
-//     multiplies cost and is blind to one that adds to it: 425 allocations
-//     becoming 500 is a ratio of 1.18 and passes silently. The one shape it
-//     always catches is zero becoming non-zero, which divides to Infinity.
-//   - The Test* allocation contracts gate what the chart cannot express. Two
-//     properties live here and nowhere else: the per-candidate RATE, which a
-//     single charted number cannot separate from the fixed floor it includes,
-//     and SIZE INDEPENDENCE, which is a claim about every candidate count at
-//     once while the chart records one.
+//   - Benchmark* feeds the weekly tracker, which compares each series to its
+//     previous value and alerts on ratio — so it catches zero becoming
+//     non-zero but misses an added allocation diluted into a larger total
+//     (425 -> 500 is a ratio of 1.18, below any sane threshold).
+//   - Test* asserts the per-candidate RATE and SIZE INDEPENDENCE, properties a
+//     single charted number can't express. Per-candidate cost matters here
+//     because this app scans every track of every episode of a whole library.
 //
-// Why the rate is the valuable half: this app propagates a language selection
-// across every episode of every show, so a function's per-candidate cost is
-// multiplied by the track count of an entire media library. One extra
-// allocation per track is invisible in a ratio and is the difference between a
-// library-wide pass that allocates thousands of times and one that allocates
-// tens of thousands.
+// # Rate contracts: a slope, not an absolute count
 //
-// # How a rate contract is written here, and why it is not an equality
+// Each sweep measures allocations at three candidate counts and asserts the
+// slope between the smallest and largest is at most a stated ceiling.
+//   - A slope, not an absolute count: every absolute includes a fixed
+//     per-call floor (reference language parse, the generic Best call) that
+//     the slope cancels out, and the floor moves with the toolchain.
+//   - A ceiling, not equality: measured slopes carry a small residue (4.02
+//     rather than 4.00); ceilings sit about half an allocation above the
+//     measured value.
+//   - Three sizes with every adjacent rate logged, so a super-linear
+//     regression reads as a rising rate rather than one bigger number.
 //
-// Each sweep measures the allocation count at three candidate counts, takes the
-// slope between the smallest and the largest, and asserts it is at most a stated
-// ceiling. Three deliberate choices:
+// Every measured number here was read off the package before the assertion
+// was written.
 //
-//   - A slope, not an absolute count, because every absolute here includes a
-//     fixed per-call floor (the reference's own language parse, the generic
-//     Best call) that a rate cancels out. The floor also moves with the
-//     toolchain; the rate is the library's own behaviour.
-//   - A ceiling, not an equality, because the measured slopes carry a small
-//     residue from that floor (4.02 rather than 4.00) and because a toolchain
-//     change may shift an absolute count without changing what the code does.
-//     The ceilings sit about half an allocation above the measured value, which
-//     is loose enough to absorb that residue and tight enough that one added
-//     allocation per candidate (a slope shift of 1.0) fails.
-//   - Three sizes, with every adjacent rate logged, so a super-linear
-//     regression reads as a RISING rate rather than as one larger number. The
-//     asserted 10-to-1000 slope alone could not tell quadratic growth from a
-//     bigger constant.
+// # Fixture rules every sweep depends on
 //
-// Every measured number in this file was read off this package before the
-// assertion was written; no ceiling was picked to make a test pass.
+//   - Every fixture is built OUTSIDE the measured closure, or its own
+//     allocations get counted.
+//   - No measured function may mutate its candidate slice — AllocsPerRun
+//     calls the closure many times against one fixture. Pinned separately by
+//     TestSelectionDoesNotMutateItsCandidateSlice /
+//     TestMatchingDoesNotMutateItsCandidateSlice.
 //
-// # The fixture rules these tests depend on
-//
-// Two preconditions, both verified rather than assumed, because either one
-// silently corrupts an AllocsPerRun measurement:
-//
-//   - Every fixture is built OUTSIDE the measured closure. A candidate slice or
-//     a Stream allocated inside the closure is counted, which would make a
-//     genuinely allocation-free function look like it allocates.
-//   - No function measured here mutates its candidate slice. AllocsPerRun calls
-//     the closure many times, so a function that sorted or appended in place
-//     would be measuring a different input on every call after the first.
-//     TestSelectionDoesNotMutateItsCandidateSlice and
-//     TestMatchingDoesNotMutateItsCandidateSlice pin this for both halves of
-//     the package; the sweeps rely on it.
-//
-// Each sweep also asserts its own REGIME before measuring, the way a matcher
-// fixture has to: a candidate set that stops matching (or starts matching)
-// takes a different path through MatchAudio, and without the check the case
-// would quietly chart the early-out instead of the work.
+// Each sweep also asserts its own REGIME before measuring (a candidate set
+// that starts or stops matching takes a different code path and would chart
+// the wrong thing).
 
-// costRuns is the AllocsPerRun run count for every contract in this file and in
-// match_bench_test.go. Spot-checked not to matter: BestByScore at every score
-// distribution, MatchAudio at 100 plain candidates and MatchAudio at 1000
-// region-tagged candidates all report the same count at 10, 50, 100 and 500
-// runs, so the number is a cost choice rather than a tuning knob.
+// costRuns is the AllocsPerRun run count for every contract in this file and
+// match_bench_test.go. Spot-checked not to matter: results are identical at
+// 10, 50, 100 and 500 runs.
 const costRuns = 100
 
-// costSizes is the candidate sweep every rate contract walks. The span is 100x,
-// which is wide enough that a per-candidate allocation cannot hide inside the
-// fixed floor, and the two adjacent gaps let a rising rate distinguish
-// super-linear growth from a larger constant.
+// costSizes is the candidate sweep every rate contract walks: a 100x span,
+// wide enough that a per-candidate allocation cannot hide in the fixed
+// floor, with two adjacent gaps to distinguish super-linear growth from a
+// larger constant.
 var costSizes = []int{10, 100, 1000}
 
 func makeStreams(n int) []*Stream {
@@ -106,11 +76,10 @@ func makeStreams(n int) []*Stream {
 	return ss
 }
 
-// costStreams builds n audio candidates in the shape the benchmarks below use
-// and applies mut to each, so one sweep can vary the content class that decides
-// which path through the matcher runs. The class is the whole point: an untagged
-// candidate set skips the language parse entirely and costs a quarter of what a
-// tagged one does, so a single fixture would pin only one of the paths a real
+// costStreams builds n audio candidates and applies mut to each, so one sweep
+// can vary the content class that decides which matcher path runs — an
+// untagged candidate set skips the language parse and costs a quarter of a
+// tagged one, so a single fixture would pin only one of the paths a real
 // library exercises.
 func costStreams(n int, mut func(i int, s *Stream)) []*Stream {
 	ss := makeStreams(n)
@@ -122,9 +91,9 @@ func costStreams(n int, mut func(i int, s *Stream)) []*Stream {
 	return ss
 }
 
-// costSubtitles builds n subtitle candidates carrying a text codec, the shape
-// MatchSubtitle and FindSubtitleByLanguage take. mut applies after the subtitle
-// fields are set so a class can still override the codec or a flag.
+// costSubtitles builds n subtitle candidates (MatchSubtitle /
+// FindSubtitleByLanguage shape); mut applies after the subtitle fields are
+// set so a class can still override the codec or a flag.
 func costSubtitles(n int, mut func(i int, s *Stream)) []*Stream {
 	return costStreams(n, func(i int, s *Stream) {
 		s.StreamType = StreamTypeSubtitle
@@ -135,20 +104,18 @@ func costSubtitles(n int, mut func(i int, s *Stream)) []*Stream {
 	})
 }
 
-// costTitle returns a title of exactly bytes bytes carrying mixed case, so
-// strings.ToLower on it cannot short-circuit. Length is a parameter because the
-// independence of allocation COUNT from title length is itself a contract; see
+// costTitle returns a title of exactly bytes bytes with mixed case so
+// strings.ToLower cannot short-circuit. Length is a parameter because
+// allocation-count independence from title length is itself a contract; see
 // TestMatchAudioAllocationCountIsIndependentOfTitleLength.
 func costTitle(bytes int) string {
 	const unit = "VeryVerboseUpstreamMetadata "
 	return strings.Repeat(unit, bytes/len(unit)+1)[:bytes]
 }
 
-// streamValues dereferences a candidate slice into its Stream values, which is
-// what a non-mutation check compares. Stream holds only comparable fields, so
-// slices.Equal over the values catches a field write, and because distinct
-// candidates carry distinct IDs and titles it catches a REORDERING too — an
-// in-place sort moves the values along with the pointers.
+// streamValues dereferences a candidate slice into its Stream values for a
+// non-mutation check: catches a field write, and (since distinct candidates
+// carry distinct IDs/titles) an in-place reorder too.
 func streamValues(ss []*Stream) []Stream {
 	out := make([]Stream, len(ss))
 	for i, s := range ss {
@@ -157,36 +124,26 @@ func streamValues(ss []*Stream) []Stream {
 	return out
 }
 
-// TestBestByScoreAllocatesNothingAtEverySize is the one contract here that is an
-// equality rather than a ceiling, and its value is the word EVERY.
+// TestBestByScoreAllocatesNothingAtEverySize is an equality, not a ceiling,
+// because the property is EVERY size, not one.
 //
-// BestByScore is the final tie-break of both matchers and the whole of
-// FindSubtitleByLanguage, so it runs once per episode per user. It allocates
-// nothing because it returns an element of the slice it was handed rather than
-// building a result: it tracks the best index and score in two locals and
-// returns streams[bestIdx]. A change that collected the winners into a slice,
-// or that boxed a score, would put one allocation on every episode of every
-// show — and the weekly chart WOULD catch that at the sizes it charts, because
-// zero becoming non-zero divides to Infinity and alerts at any threshold.
+// BestByScore returns an element of the slice it was handed (tracks best
+// index/score in two locals) rather than building a result, so it should
+// allocate nothing at any candidate count — a result slice or a boxed score
+// would put one allocation on every episode of every show. The weekly chart
+// would catch that at the sizes it charts (zero to non-zero divides to
+// Infinity), but not that the property holds at EVERY size, which is why
+// this sweeps 0 to 1000.
 //
-// What the chart cannot say is that the property holds at every size. It
-// records one number per series, so it cannot distinguish "allocates nothing"
-// from "allocates nothing at 100 candidates". The sweep below spans the empty
-// slice to a thousand candidates, which is what makes this an invariant rather
-// than a data point.
+// Measured: a result slice added to this function does NOT register at all
+// up to 8 candidates (the compiler keeps a small non-escaping slice on the
+// stack, only reaching the allocator past ~64 bytes) — a contract at one
+// small size would have missed exactly that break.
 //
-// The span is not ceremony, and this was measured rather than assumed: a result
-// slice added to this function (make([]*Stream, 0, len(streams))) does NOT
-// register at all up to 8 candidates, because the compiler keeps a small
-// non-escaping slice of dynamic size on the stack and only reaches the allocator
-// past roughly 64 bytes. A contract that checked one small size would have
-// passed that break clean.
-//
-// The scoreFn shapes are here because the count could plausibly depend on the
-// data and does not. A winner in the last position walks the whole slice; an
-// all-tied set never updates the best index; an all-negative set is the case a
-// naive implementation seeded with a zero floor would get wrong, and it is the
-// one that would need a result slice if the seeding were done differently.
+// The scoreFn shapes vary because the count could plausibly depend on the
+// data and does not: winner-last walks the whole slice, all-tied never
+// updates the best index, all-negative is the zero-floor edge case a naive
+// seed would get wrong.
 func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 	t.Run("across candidate counts", func(t *testing.T) {
 		for _, n := range []int{0, 1, 10, 100, 1000} {
@@ -202,10 +159,8 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 		}
 	})
 
-	// A nil slice rather than an empty one: len(nil) is 0 so the guard is the
-	// same branch, but a caller reaching BestByScore through FilterByLanguage
-	// gets nil and not an empty slice when nothing matched, so nil is the shape
-	// production actually passes.
+	// nil rather than empty: FilterByLanguage returns nil (not an empty
+	// slice) when nothing matched, which is the shape production passes.
 	t.Run("a nil candidate slice", func(t *testing.T) {
 		var streams []*Stream
 		if got := testing.AllocsPerRun(costRuns, func() {
@@ -219,31 +174,27 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 	t.Run("across score distributions", func(t *testing.T) {
 		streams := costStreams(100, nil)
 		shapes := map[string]func(*Stream) int{
-			// The best score arrives first, so the loop never updates its best
-			// index after seeding.
+			// Best score arrives first: no update after seeding.
 			"winner first": func(s *Stream) int {
 				if s.ID == 1 {
 					return 100
 				}
 				return 0
 			},
-			// The best score arrives last, so the loop updates on the final
-			// iteration having walked everything.
+			// Best score arrives last: updates on the final iteration.
 			"winner last": func(s *Stream) int {
 				if int(s.ID) == len(streams) {
 					return 100
 				}
 				return 0
 			},
-			// Every candidate ties, which is the documented
-			// tie-goes-to-earliest path and the one a "collect the winners"
-			// implementation would allocate hardest on.
+			// Every candidate ties (tie-goes-to-earliest path); the one a
+			// "collect the winners" implementation would allocate hardest on.
 			"all tied": func(_ *Stream) int { return 7 },
 			// A new best on every iteration.
 			"strictly ascending": func(s *Stream) int { return int(s.ID) },
-			// Nothing above zero: the case the seed-from-the-first-element
-			// design exists to handle, and the one that would need a sentinel
-			// or a result slice if it were seeded any other way.
+			// Nothing above zero: the case a seed-from-first-element design
+			// exists to handle.
 			"all negative": func(s *Stream) int { return -int(s.ID) },
 			// The real scorer FindSubtitleByLanguage passes.
 			"subtitle codec score": func(s *Stream) int { return SubtitleCodecScore(s.Codec) },
@@ -261,26 +212,19 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 	})
 }
 
-// TestFilterByLanguageAllocationRatePerCandidate pins the language-grading rate.
+// TestFilterByLanguageAllocationRatePerCandidate pins the language-grading
+// rate: langtag.Parse runs once per candidate via (*Stream).Lang (three
+// allocations for a plain alpha-3 code), so a second parse or an added
+// lowercase pass would double the per-track cost of every library scan.
 //
-// FilterByLanguage is the first narrowing step of every match and the whole of
-// the learned-profile subtitle path, and it is where the per-candidate cost of
-// this package lives: langtag.Parse runs once per candidate through
-// (*Stream).Lang, and that parse is three allocations for a plain alpha-3 code.
-// The rate is therefore expected to be about 3 and must not creep: a second
-// parse per candidate, or a lowercase pass added to the grading, doubles the
-// language cost of every episode scan in the library.
-//
-// The measured slope is 3.01 per candidate; 3.5 leaves room for the floor's
-// residue while failing on one added allocation per candidate.
+// Measured slope 3.01/candidate; ceiling 3.5 absorbs floor residue while
+// still failing on one added allocation per candidate.
 func TestFilterByLanguageAllocationRatePerCandidate(t *testing.T) {
 	const maxPerCandidate = 3.5
 
 	counts := make([]float64, len(costSizes))
 	for i, n := range costSizes {
-		// Built here, outside the closure below: costSubtitles allocates a
-		// slice and n Streams, and folding that into the measurement would
-		// roughly double the reported rate.
+		// Built outside the closure: costSubtitles itself allocates.
 		candidates := costSubtitles(n, nil)
 		if got := FilterByLanguage(candidates, "eng", langtag.TierSameLanguage); len(got) != n {
 			t.Fatalf("FilterByLanguage(%d eng candidates, \"eng\", same-language) kept %d, want all %d; the fixture is meant to measure the accepting path",
@@ -303,20 +247,13 @@ func TestFilterByLanguageAllocationRatePerCandidate(t *testing.T) {
 		(counts[2]-counts[1])/float64(costSizes[2]-costSizes[1]))
 }
 
-// TestFindSubtitleByLanguageAllocationRatePerCandidate pins the learned-profile
-// path, which is FilterByLanguage composed with BestByScore over the codec
-// score.
+// TestFindSubtitleByLanguageAllocationRatePerCandidate covers the same
+// composition (FilterByLanguage + BestByScore) on the new-show seeding path
+// (no watch history). Gets its own contract because BestByScore contributing
+// nothing is what makes the composed rate equal FilterByLanguage's; a higher
+// rate here would localize a regression in the codec ranking to this call.
 //
-// It gets its own contract rather than riding FilterByLanguage's because it is
-// the composition that runs on a brand-new show with no watch history — the
-// Netflix-style seeding path — and because BestByScore contributing nothing is
-// exactly what makes the composed rate equal the grading rate. A rate here
-// materially above FilterByLanguage's would mean the codec ranking started
-// allocating per candidate, which TestBestByScoreAllocatesNothingAtEverySize
-// would catch on its own but which this contract localises to the composed
-// call.
-//
-// Measured 3.01 per candidate, the same as FilterByLanguage alone.
+// Measured 3.01/candidate, same as FilterByLanguage alone.
 func TestFindSubtitleByLanguageAllocationRatePerCandidate(t *testing.T) {
 	const maxPerCandidate = 3.5
 
@@ -343,34 +280,24 @@ func TestFindSubtitleByLanguageAllocationRatePerCandidate(t *testing.T) {
 		(counts[2]-counts[1])/float64(costSizes[2]-costSizes[1]))
 }
 
-// TestFilterByBoolPrefAllocationRateIsEffectivelyBounded pins the cheapest step
-// in the matcher, and it splits the two branches because they have different
-// costs and only one of them is a rate at all.
+// TestFilterByBoolPrefAllocationRateIsEffectivelyBounded pins the cheapest
+// step in the matcher, called twice per audio match, split into two branches
+// with different costs.
 //
-// FilterByBoolPref is called twice per audio match, so whatever it costs is paid
-// twice on every episode of every show.
+// MATCHING branch: appends into one slice, so the count is amortised
+// slice-growth (logarithmic, not linear). Measured slope 0.006/candidate
+// (8 allocations at 1000 candidates vs 2 at 10); ceiling 0.5 is a tenth of
+// what one-allocation-per-candidate would produce.
 //
-// The MATCHING branch appends into one slice, so its allocation count is the
-// amortised growth of that slice — logarithmic in the candidate count, not linear
-// in it. Measured, the slope is 0.006 per candidate: eight allocations at a
-// thousand candidates against two at ten. A ceiling of 0.5 is a tenth of what an
-// implementation allocating once per candidate would produce, which is the
-// contract that says the flag filters are free relative to the language parse
-// next to them.
-//
-// The FALLBACK branch is not a rate. Nothing matched, so nothing was appended and
-// the function hands back the caller's own slice: the count is exactly zero at
-// every size, and it stays zero only as long as the fallback returns the input
-// rather than a copy of it. That distinction is invisible to a slope, which is
-// why it is asserted separately — a copy is ONE allocation per call whose size
-// scales with the candidate count, so it leaves the per-candidate rate untouched
-// while allocating the whole candidate set on every episode. Verified by breaking
-// it: replacing `return streams` with a copy moves the count from 0 to 1 and does
-// not move the slope at all.
+// FALLBACK branch is not a rate: nothing matched, nothing was appended, the
+// function hands back the caller's own slice — exactly zero at every size,
+// true only as long as the fallback returns the input rather than a copy.
+// Verified by breaking it: replacing `return streams` with a copy moves the
+// count from 0 to 1 without moving the slope at all.
 func TestFilterByBoolPrefAllocationRateIsEffectivelyBounded(t *testing.T) {
-	// Every candidate is a subtitle, so IsAudio is false for all of them. That
-	// makes desired=false the all-match fixture and desired=true the nothing-
-	// matches fixture, from one candidate set.
+	// Every candidate is a subtitle (IsAudio false for all), so
+	// desired=false is the all-match fixture and desired=true is the
+	// nothing-matches fixture.
 	t.Run("the matching branch grows one slice", func(t *testing.T) {
 		const maxPerCandidate = 0.5
 
@@ -398,9 +325,9 @@ func TestFilterByBoolPrefAllocationRateIsEffectivelyBounded(t *testing.T) {
 	})
 
 	// The fallback is the documented behaviour that makes the predicate a
-	// preference rather than a requirement, and it is on the hot path: a
-	// reference track with no visual-impaired or descriptive counterpart in the
-	// candidate set takes it on every episode of the show.
+	// preference rather than a requirement, and it is on the hot path (a
+	// reference track with no HI/descriptive counterpart takes it every
+	// episode).
 	t.Run("the fallback branch returns the input and allocates nothing", func(t *testing.T) {
 		for _, n := range costSizes {
 			candidates := costSubtitles(n, nil)
@@ -427,27 +354,20 @@ func TestFilterByBoolPrefAllocationRateIsEffectivelyBounded(t *testing.T) {
 }
 
 // TestSelectionDoesNotMutateItsCandidateSlice is the precondition every
-// AllocsPerRun contract in this file rests on, asserted rather than assumed.
+// AllocsPerRun contract in this file rests on: AllocsPerRun reuses one
+// fixture across many calls, so a function that sorts or writes through its
+// input would be measured against a different input after the first call.
+// langtag's Preference.Best and this package's filters are read-only today,
+// but that is a property of the current implementation, not the signature.
 //
-// AllocsPerRun calls its closure many times with the same fixture. A function
-// that sorted its input, appended to it, or wrote through its element pointers
-// would therefore be measured against a DIFFERENT input on every call after the
-// first, and the resulting number would describe nothing. langtag's Preference.Best
-// appends into a fresh slice and never touches the candidates it walks, and
-// FilterByBoolPref and BestByScore are equally read-only, so the fixtures here
-// are safe to reuse — but that is a property of the current implementations, not
-// of the signatures, and an in-place sort added for determinism would break
-// every rate contract silently rather than loudly.
-//
-// The comparison is over dereferenced Stream values, so it catches a field write
-// as well as a reordering: the candidates carry distinct IDs and titles, so an
-// in-place sort moves the values along with the pointers.
+// Comparison is over dereferenced Stream values, so it also catches a
+// reorder (candidates carry distinct IDs/titles).
 func TestSelectionDoesNotMutateItsCandidateSlice(t *testing.T) {
 	candidates := costSubtitles(50, nil)
 	before := streamValues(candidates)
 
-	// Several calls, because a mutation that is idempotent after the first call
-	// is exactly the one a single call cannot see.
+	// Several calls: a mutation idempotent after the first call is the one
+	// a single call cannot see.
 	for range 3 {
 		_ = FilterByLanguage(candidates, "eng", langtag.TierSameLanguage)
 		_ = FilterByBoolPref(candidates, true, (*Stream).IsSubtitle)

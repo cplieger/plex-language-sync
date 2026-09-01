@@ -31,10 +31,7 @@ func DefaultRefreshConfig() RefreshConfig {
 }
 
 // periodicRefreshInterval is the cadence for the background token
-// refresh loop. Preserved from the pre-extraction package-level const
-// userTokenRefreshInterval so the operational behavior is unchanged.
-// RefreshLoop both logs it at startup and drives its ticker from it, so
-// the value needs no accessor outside this package.
+// refresh loop.
 const periodicRefreshInterval = 12 * time.Hour
 
 // RefreshTokens fetches shared user tokens from plex.tv and updates the
@@ -91,10 +88,9 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 
 // sharedMapFromServers converts the plex.tv shared-server list into the new
 // shared-user map, skipping entries with no user id / token and the admin's
-// own id (matching LoadFromCache's guard -- otherwise the admin lands in
-// m.shared and All() emits it twice, double-processing the admin episode and
-// persisting the admin token into tokens.json via tokensCopy). adminID is
-// passed by the caller, which holds m.mu.
+// own id (matching LoadFromCache's guard — otherwise the admin lands in
+// m.shared and All() emits it twice). adminID is passed by the caller,
+// which holds m.mu.
 func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]record {
 	newShared := make(map[ID]record, len(servers))
 	for _, s := range servers {
