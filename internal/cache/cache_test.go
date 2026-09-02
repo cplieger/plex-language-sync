@@ -57,7 +57,6 @@ func TestCacheSaveLoadRoundTrip(t *testing.T) {
 		"1": {"jpn": "eng", "eng": ""},
 	}
 	orig.data.UserTokens = map[string]string{"2": "t2"}
-	orig.data.LastSchedulerRun = 1700000000
 
 	if err := orig.Save(dir); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -83,8 +82,27 @@ func TestCacheSaveLoadRoundTrip(t *testing.T) {
 	if loaded.data.UserTokens["2"] != "t2" {
 		t.Errorf("UserTokens[2] = %q, want t2", loaded.data.UserTokens["2"])
 	}
-	if loaded.data.LastSchedulerRun != 1700000000 {
-		t.Errorf("LastSchedulerRun = %d, want 1700000000", loaded.data.LastSchedulerRun)
+}
+
+// TestCacheLoadIgnoresRetiredMarkerKey pins the read-forward contract for
+// files written by earlier versions: state.json (and the legacy cache.json)
+// used to carry a last_scheduler_run key, and a file still holding it must
+// load its live sections cleanly. Fails if the load path ever opts into
+// strict decoding (DisallowUnknownFields).
+func TestCacheLoadIgnoresRetiredMarkerKey(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	state := `{"processed_episodes":{"timeline:9":1700000000},"last_scheduler_run":1700000000}`
+	if err := os.WriteFile(filepath.Join(dir, stateFile), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New()
+	if err := c.Load(dir); err != nil {
+		t.Errorf("Load() with a retired key in state.json = %v, want nil", err)
+	}
+	if len(c.data.ProcessedEpisodes) != 1 {
+		t.Errorf("ProcessedEpisodes = %v, want the seeded entry loaded beside the retired key", c.data.ProcessedEpisodes)
 	}
 }
 
@@ -211,7 +229,6 @@ func TestCacheLoadCorruptSectionIsolation(t *testing.T) {
 		orig.data.ProcessedEpisodes = map[string]int64{"streams:1:100:1:2": time.Now().Unix()}
 		orig.data.LanguageProfiles = map[string]map[string]string{"1": {"jpn": "eng"}}
 		orig.data.UserTokens = map[string]string{"2": "t2"}
-		orig.data.LastSchedulerRun = 1700000000
 		if err := orig.Save(dir); err != nil {
 			t.Fatalf("seed Save() error = %v", err)
 		}
@@ -242,8 +259,7 @@ func TestCacheLoadCorruptSectionIsolation(t *testing.T) {
 
 			gotProfiles := loaded.data.LanguageProfiles["1"]["jpn"] == "eng"
 			gotTokens := loaded.data.UserTokens["2"] == "t2"
-			gotState := loaded.data.LastSchedulerRun == 1700000000 &&
-				len(loaded.data.ProcessedEpisodes) == 1
+			gotState := len(loaded.data.ProcessedEpisodes) == 1
 
 			if want := tc.corrupt != profilesFile; gotProfiles != want {
 				t.Errorf("profiles survived = %v, want %v", gotProfiles, want)
@@ -283,7 +299,6 @@ func TestCacheLoadMigratesLegacyCacheJSON(t *testing.T) {
 		ProcessedEpisodes: map[string]int64{"timeline:9": time.Now().Unix()},
 		LanguageProfiles:  map[string]map[string]string{"1": {"jpn": "eng"}},
 		UserTokens:        map[string]string{"2": "plain-tok"},
-		LastSchedulerRun:  1700000000,
 	})
 
 	key, err := DeriveKey("admin-token")
@@ -297,7 +312,7 @@ func TestCacheLoadMigratesLegacyCacheJSON(t *testing.T) {
 	}
 
 	if c.data.LanguageProfiles["1"]["jpn"] != "eng" || c.data.UserTokens["2"] != "plain-tok" ||
-		c.data.LastSchedulerRun != 1700000000 || len(c.data.ProcessedEpisodes) != 1 {
+		len(c.data.ProcessedEpisodes) != 1 {
 		t.Errorf("migrated state incomplete: %+v", c.data)
 	}
 	for _, name := range splitFiles {
@@ -343,14 +358,12 @@ func TestCacheLoadSplitWinsOverStaleLegacy(t *testing.T) {
 	split := New()
 	split.data.LanguageProfiles = map[string]map[string]string{"1": {"jpn": "eng"}}
 	split.data.UserTokens = map[string]string{"2": "new-tok"}
-	split.data.LastSchedulerRun = 2000000000
 	if err := split.Save(dir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 	legacyWrite(t, dir, Data{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "STALE"}},
 		UserTokens:       map[string]string{"2": "STALE"},
-		LastSchedulerRun: 1,
 	})
 
 	loaded := New()
@@ -364,9 +377,6 @@ func TestCacheLoadSplitWinsOverStaleLegacy(t *testing.T) {
 	if loaded.data.UserTokens["2"] != "new-tok" {
 		t.Errorf("tokens = %q, want the split file's value to win over stale legacy",
 			loaded.data.UserTokens["2"])
-	}
-	if loaded.data.LastSchedulerRun != 2000000000 {
-		t.Errorf("LastSchedulerRun = %d, want the split file's value", loaded.data.LastSchedulerRun)
 	}
 	if _, err := os.Stat(filepath.Join(dir, legacyCacheFile)); !os.IsNotExist(err) {
 		t.Errorf("stale legacy cache.json not removed (stat err = %v)", err)
@@ -383,7 +393,6 @@ func TestCacheLoadLegacyFillsMissingSection(t *testing.T) {
 	legacyWrite(t, dir, Data{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "LEGACY"}},
 		UserTokens:       map[string]string{"2": "legacy-tok"},
-		LastSchedulerRun: 1700000000,
 	})
 	pd, err := json.Marshal(&profilesData{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "SPLIT"}},
@@ -404,9 +413,6 @@ func TestCacheLoadLegacyFillsMissingSection(t *testing.T) {
 	}
 	if loaded.data.UserTokens["2"] != "legacy-tok" {
 		t.Errorf("tokens = %q, want the legacy value for the missing section", loaded.data.UserTokens["2"])
-	}
-	if loaded.data.LastSchedulerRun != 1700000000 {
-		t.Errorf("LastSchedulerRun = %d, want the legacy value", loaded.data.LastSchedulerRun)
 	}
 	if _, err := os.Stat(filepath.Join(dir, legacyCacheFile)); !os.IsNotExist(err) {
 		t.Errorf("legacy cache.json not removed after completing migration (stat err = %v)", err)
@@ -535,7 +541,7 @@ func TestCacheLoadLeavesAuthoritativeSplitFilesUntouched(t *testing.T) {
 			LanguageProfiles: map[string]map[string]string{"1": {"jpn": "eng"}},
 		}),
 		tokensFile: mustCompactJSON(t, &tokensData{UserTokens: map[string]string{"2": "new-tok"}}),
-		stateFile:  mustCompactJSON(t, &stateData{LastSchedulerRun: 2000000000}),
+		stateFile:  mustCompactJSON(t, &stateData{ProcessedEpisodes: map[string]int64{"timeline:9": 2000000000}}),
 	}
 	for name, raw := range written {
 		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
@@ -581,7 +587,7 @@ func mustCompactJSON(t *testing.T, v any) []byte {
 	return raw
 }
 
-// --- PBT: JSON round-trip preserves LastSchedulerRun + map lengths ---
+// --- PBT: JSON round-trip preserves the map lengths ---
 
 func TestCacheDataJSONRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -596,7 +602,6 @@ func TestCacheDataJSONRoundTrip(t *testing.T) {
 			ProcessedEpisodes: processed,
 			LanguageProfiles:  make(map[string]map[string]string),
 			UserTokens:        make(map[string]string),
-			LastSchedulerRun:  int64(rapid.IntRange(0, 2000000000).Draw(t, "last_run")),
 		}
 
 		data, err := json.Marshal(&original)
@@ -612,10 +617,6 @@ func TestCacheDataJSONRoundTrip(t *testing.T) {
 		if len(decoded.ProcessedEpisodes) != len(original.ProcessedEpisodes) {
 			t.Errorf("ProcessedEpisodes length: got %d, want %d",
 				len(decoded.ProcessedEpisodes), len(original.ProcessedEpisodes))
-		}
-		if decoded.LastSchedulerRun != original.LastSchedulerRun {
-			t.Errorf("LastSchedulerRun: got %d, want %d",
-				decoded.LastSchedulerRun, original.LastSchedulerRun)
 		}
 	})
 }

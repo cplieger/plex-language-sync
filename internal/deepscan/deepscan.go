@@ -16,11 +16,12 @@
 //   - Fan out per-item work across a bounded worker pool
 //     with a circuit breaker that aborts the
 //     pass after a threshold of consecutive per-item failures.
-//   - Persist the last-run marker through runLedger so a cold restart
-//     does not double-run the analysis.
+//   - Persist the last-run record in a scheduler.Stamp file on the
+//     persistent volume so a cold restart does not double-run the
+//     analysis.
 //
 // Stable contracts preserved (keep these exact: Loki alerts grep the log
-// strings and the on-disk cache schema depends on the field names):
+// strings):
 //   - WARN slog keys ("scheduler: aborting history processing after
 //     consecutive failures", "scheduler: failed to fetch history",
 //     "scheduler: failed to fetch sections", "scheduler: deep analysis
@@ -29,10 +30,6 @@
 //     starting", "running initial deep analysis", "deep analysis
 //     completed", "scheduler: processing recently added episode",
 //     "scheduler stopped") identical.
-//   - On-disk cache schema unchanged (LastSchedulerRun lives in
-//     state.json since the 2026-07 retention split) — reads and writes go
-//     through runLedger and are tagged by the concrete internal/cache
-//     package.
 //
 // Consumer note: every collaborator is an interface THIS package declares (see
 // deps.go) — plexReader, EpisodeReader, runLedger, skipChecker and Syncer, each
@@ -101,6 +98,7 @@ type Scheduler struct {
 	plex       plexReader
 	cache      runLedger
 	sync       Syncer
+	stamp      *scheduler.Stamp
 	dedup      singleflight.Group
 	userClient UserClientFunc
 	saveCache  CacheSaver
@@ -132,8 +130,11 @@ func (s *Scheduler) workerCount() int {
 type Deps struct {
 	// Plex reads history and library metadata for the sweep.
 	Plex plexReader
-	// Cache holds the run marker and the recorded intents the pass re-applies.
+	// Cache holds the dedup keys and the recorded intents the pass re-applies.
 	Cache runLedger
+	// Stamp is the persisted last-run record: it gates the startup pass and
+	// anchors the replay look-back window.
+	Stamp *scheduler.Stamp
 	// UserClient returns the per-user write client for a username.
 	UserClient UserClientFunc
 	// Sync applies the recorded intent to an episode.
@@ -149,6 +150,7 @@ func New(cfg Config, deps Deps) *Scheduler {
 		cfg:        cfg,
 		plex:       deps.Plex,
 		cache:      deps.Cache,
+		stamp:      deps.Stamp,
 		userClient: deps.UserClient,
 		sync:       deps.Sync,
 		saveCache:  deps.SaveCache,
@@ -156,10 +158,10 @@ func New(cfg Config, deps Deps) *Scheduler {
 }
 
 // Run is the outer scheduler loop: it runs a deep-analysis pass at
-// startup when the cache's LastSchedulerRun marker is absent or older
-// than one Interval, then runs one every Interval via a time.Ticker.
-// Returns when the context is cancelled. A disabled scheduler
-// (Enable=false or Interval<=0) returns immediately.
+// startup when the last-run stamp is absent or older than one Interval,
+// then runs one every Interval via a time.Ticker. Returns when the
+// context is cancelled. A disabled scheduler (Enable=false or
+// Interval<=0) returns immediately.
 func (s *Scheduler) Run(ctx context.Context) {
 	defer slog.Info("scheduler stopped")
 
@@ -173,9 +175,9 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// Run immediately when never run before or the last run is older than
 	// one interval, so a container restarting more often than the interval
 	// is never starved of a safety-net pass, while one that ran recently
-	// does not double-run on restart.
-	lastRun := s.cache.LastSchedulerRun()
-	if lastRun.IsZero() || time.Since(lastRun) > s.cfg.Interval {
+	// does not double-run on restart. CountFailed because only complete
+	// passes are recorded and the ticker owns the retry.
+	if s.stamp.Due(s.cfg.Interval, time.Now(), scheduler.CountFailed) {
 		slog.Info("running initial deep analysis")
 		s.deepAnalysis(ctx)
 	}
@@ -183,7 +185,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// Fixed-interval scheduling via scheduler.RunLoop (the fleet
 	// docker-*-scheduler convention). FireOnStart is false: the conditional
 	// startup pass above already handled the immediate run (RunLoop's
-	// unconditional FireOnStart would ignore the last-run marker and double-run
+	// unconditional FireOnStart would ignore the last-run stamp and double-run
 	// on a recent restart). Overlapping ticks collapse via the singleflight in
 	// deepAnalysis, RunLoop is sequential, so no wall-clock slot-dedup is needed
 	// and no local wall-clock time is read.
@@ -226,22 +228,18 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 	complete := false
 	defer func() {
-		// Advance the run marker ONLY when this pass fully covered its
-		// look-back window. History and RecentlyAdded are swept
-		// newest-first, so ANY early exit — graceful-shutdown cancellation,
-		// the history circuit breaker tripping, a fetch/overflow error, or a
-		// per-section fetch failure — leaves the OLDER end of the window
-		// unprocessed. Advancing the marker then would move the next run's
-		// look-back origin past those unswept events and drop them
-		// permanently (the WebSocket listener is usually also down during the
-		// Plex degradation that triggers these exits). Leaving the marker put
-		// makes the next run re-sweep the same window; the sweep is
-		// idempotent (recently-added is dedup-guarded, history re-applies the
-		// same selection), so the re-work is harmless. This uniform
-		// completeness gate subsumes the earlier ctx-cancel-only guard and
-		// closes the breaker-abort and overflow variants of the same bug.
+		// Record the run ONLY when this pass fully covered its look-back
+		// window. The sweeps run newest-first, so any early exit (cancel,
+		// breaker abort, fetch/overflow error, per-section failure) leaves
+		// the OLDER end unprocessed; recording then would move the next
+		// run's look-back origin past those unswept events and drop them
+		// permanently. An unrecorded pass re-sweeps the same window, which
+		// is idempotent. The outcome bit is informational: the startup gate
+		// reads the record under CountFailed, which considers age alone.
 		if complete {
-			s.cache.SetLastSchedulerRun(time.Now())
+			if err := s.stamp.Record(true); err != nil {
+				slog.Warn("last-run stamp write failed", "error", err)
+			}
 		}
 		if s.saveCache != nil {
 			if err := s.saveCache(); err != nil {
@@ -252,12 +250,12 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 
 	// Look back to the previous completed run so no window is missed when
 	// DEEP_SCAN_INTERVAL exceeds 24h; floor at 24h so a frequent interval
-	// (or a zero last-run marker on first boot) still replays a full
-	// recent day. LastSchedulerRun() reads the PREVIOUS run's timestamp
-	// here because this run's marker is only written in the deferred
-	// SetLastSchedulerRun above, after the body completes.
+	// (or no record on first boot) still replays a full recent day. The
+	// stamp still holds the PREVIOUS run here because this run is only
+	// recorded in the deferred Record above, after the body completes.
 	lookback := 24 * time.Hour
-	if last := s.cache.LastSchedulerRun(); !last.IsZero() {
+	rec, _ := s.stamp.Last()
+	if last := rec.Time; !last.IsZero() {
 		if since := time.Since(last); since > lookback {
 			lookback = since
 		}

@@ -24,14 +24,13 @@ import (
 //
 // The surface is exactly cache.Contract, and cache.RunContract is run against
 // it: consumers assert on the fake through the same readers production code
-// uses (WasRecentlyProcessed, IntentFor, UserTokens, LastSchedulerRun) rather
-// than through fake-only inspectors.
+// uses (WasRecentlyProcessed, IntentFor, UserTokens) rather than through
+// fake-only inspectors.
 type Cache struct {
 	processed    map[string]time.Time
 	profiles     map[string]map[string]string
 	intents      map[string]map[string]streams.Intent
 	tokens       map[string]string
-	lastRun      time.Time
 	recentWindow time.Duration
 	mu           sync.Mutex
 }
@@ -160,19 +159,4 @@ func (c *Cache) SetUserTokens(tokens map[string]string) {
 	next := make(map[string]string, len(tokens))
 	maps.Copy(next, tokens)
 	c.tokens = next
-}
-
-// LastSchedulerRun returns the recorded last-run timestamp. Zero value
-// indicates "never run".
-func (c *Cache) LastSchedulerRun() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lastRun
-}
-
-// SetLastSchedulerRun records the supplied timestamp.
-func (c *Cache) SetLastSchedulerRun(t time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.lastRun = t
 }
