@@ -186,13 +186,17 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// docker-*-scheduler convention). FireOnStart is false: the conditional
 	// startup pass above already handled the immediate run (RunLoop's
 	// unconditional FireOnStart would ignore the last-run stamp and double-run
-	// on a recent restart). Overlapping ticks collapse via the singleflight in
-	// deepAnalysis, RunLoop is sequential, so no wall-clock slot-dedup is needed
-	// and no local wall-clock time is read.
+	// on a recent restart), and FirstDelay phases the first tick from the
+	// recorded previous pass so a restart does not delay the cadence.
+	// Overlapping ticks collapse via the singleflight in deepAnalysis, RunLoop
+	// is sequential, so no wall-clock slot-dedup is needed.
 	scheduler.RunLoop(ctx, func(ctx context.Context) {
 		slog.Info("scheduled deep analysis starting")
 		s.deepAnalysis(ctx)
-	}, scheduler.LoopOptions{Interval: s.cfg.Interval})
+	}, scheduler.LoopOptions{
+		Interval:   s.cfg.Interval,
+		FirstDelay: s.stamp.Remaining(s.cfg.Interval, time.Now(), scheduler.CountFailed),
+	})
 }
 
 // deepAnalysis runs the recent-history replay + recently-added sweep,
