@@ -185,30 +185,28 @@ groups:
       # stays connected and healthy, and neither notices. This one fires on
       # silence instead, keyed on the reconcile plane's completion line.
       #
-      # 50h, not 30h, and the size comes from the RESTART behaviour rather than
-      # the interval. The startup pass runs only when the last completion is
-      # already older than one interval; otherwise it starts a fresh interval
-      # from boot. So a restart shortly before the deadline defers the next pass
-      # by almost a full interval, and two consecutive completions can sit ~47h
-      # apart with nothing wrong. 50h absorbs one such restart plus runtime. It
-      # does NOT absorb repeated restarts inside the interval, which no
-      # completion-only window can; a container that restart-loops needs its own
-      # alert, not a wider window here.
+      # 26h: one interval plus runtime. The startup pass runs only when the
+      # last completion is already older than one interval, and the schedule
+      # keeps its phase across restarts (the last-run record on /config
+      # carries it), so two consecutive completions sit at most ~24h plus a
+      # pass's runtime apart, restarts included. A container that
+      # restart-loops faster than the time left in its period still starves
+      # the pass, and this window is what catches it.
       #
       # DROP this rule if you set DEEP_SCAN_INTERVAL to off/disabled/0, which
       # runs the app WebSocket-only with no periodic pass, so there is no
       # heartbeat to miss and the rule would fire forever.
       - alert: PlexLanguageSyncDeepScanStalled
         expr: |
-          absent_over_time({container="plex-language-sync"} |= `deep analysis completed` [50h])
+          absent_over_time({container="plex-language-sync"} |= `deep analysis completed` [26h])
         for: 1h
         labels:
           severity: warning
         annotations:
-          summary: "no plex-language-sync deep-analysis heartbeat in 50h"
+          summary: "no plex-language-sync deep-analysis heartbeat in 26h"
           description: >
             The reconcile plane logs `deep analysis completed` at the end of
-            every pass, and none has arrived in 50h (DEEP_SCAN_INTERVAL defaults
+            every pass, and none has arrived in 26h (DEEP_SCAN_INTERVAL defaults
             to 24h). The usual cause is the periodic safety net wedged, so
             replayed history items stop being reconciled while the container
             stays healthy and connected. Check the container logs for the last
