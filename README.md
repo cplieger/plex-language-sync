@@ -155,7 +155,7 @@ Pick the configuration that matches your Plex server:
 
 | Mount | Description |
 | --- | --- |
-| `/config` | Persistent cache (`profiles.json` learned language profiles, `tokens.json` encrypted shared-user tokens, `state.json` sync state). Mount a named volume or host path to preserve data across restarts. A corrupt file resets only its own section; a `cache.json` from an earlier version migrates automatically on first start. |
+| `/config` | Persistent cache (`profiles.json` learned language profiles, `tokens.json` encrypted shared-user tokens, `state.json` sync state, `.plex-language-sync-last-run` completion record for the deep-scan safety net). Mount a named volume or host path to preserve data across restarts. A corrupt file resets only its own section; a `cache.json` from an earlier version migrates automatically on first start. |
 
 ## Graceful shutdown
 

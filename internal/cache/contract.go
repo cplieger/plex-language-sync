@@ -3,7 +3,6 @@ package cache
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
@@ -24,8 +23,6 @@ type Contract interface {
 	IntentFor(userID, showKey string) (streams.Intent, bool)
 	UserTokens() map[string]string
 	SetUserTokens(tokens map[string]string)
-	LastSchedulerRun() time.Time
-	SetLastSchedulerRun(t time.Time)
 }
 
 // RunContract exercises the persisted-cache contract against any
@@ -80,34 +77,7 @@ func RunContract(t *testing.T, c Contract) {
 		wg.Wait()
 	})
 
-	schedulerRunContract(t, c)
 	checkAndMarkContract(t, c)
-}
-
-// schedulerRunContract exercises the scheduler-run portion of the Contract
-// contract: the last-scheduler-run marker round-trips a whole-second value and
-// resets to the zero time. Split out of RunCacheContract to keep that
-// function's cognitive complexity under the gate.
-func schedulerRunContract(t *testing.T, c Contract) {
-	t.Helper()
-
-	t.Run("scheduler_run_roundtrip", func(t *testing.T) {
-		// Whole-second value: internal/cache persists the marker as a unix
-		// int64 (time.Unix truncation), so the shared contract is pinned at
-		// second granularity that both implementations honour.
-		want := time.Unix(1700000000, 0)
-		c.SetLastSchedulerRun(want)
-		if got := c.LastSchedulerRun(); !got.Equal(want) {
-			t.Errorf("LastSchedulerRun = %v, want %v", got, want)
-		}
-	})
-
-	t.Run("scheduler_run_zero", func(t *testing.T) {
-		c.SetLastSchedulerRun(time.Time{})
-		if got := c.LastSchedulerRun(); !got.IsZero() {
-			t.Errorf("LastSchedulerRun after zero set = %v, want zero", got)
-		}
-	})
 }
 
 // Language-code literals shared by the contract subtests.

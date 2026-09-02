@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,11 +19,39 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/scheduler/v4"
 )
 
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
+
+// testStamp returns a Stamp backed by a fresh temp-dir file with no record:
+// the "never run" state.
+func testStamp(t *testing.T) *scheduler.Stamp {
+	t.Helper()
+	return scheduler.NewStamp(filepath.Join(t.TempDir(), "last-run"))
+}
+
+// stampAt returns a Stamp seeded with a completed run dated at. Record always
+// stamps the current time, so backdating writes the file format directly.
+func stampAt(t *testing.T, at time.Time) *scheduler.Stamp {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "last-run")
+	line := at.UTC().Format(time.RFC3339Nano) + " ok\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatalf("seed stamp: %v", err)
+	}
+	return scheduler.NewStamp(path)
+}
+
+// stampTime returns the recorded run time, or the zero time when no run was
+// ever recorded — the same collapse the production look-back read uses.
+func stampTime(t *testing.T, st *scheduler.Stamp) time.Time {
+	t.Helper()
+	rec, _ := st.Last()
+	return rec.Time
+}
 
 type fakeSyncer struct {
 	changeCalls  atomic.Int64
@@ -444,26 +474,27 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// deepAnalysisCore — persistence (last-run marker + cache flush)
+// deepAnalysisCore — persistence (last-run stamp + cache flush)
 // ---------------------------------------------------------------------------
 
 // TestDeepAnalysisCore_SetsLastRunAndFlushesCache pins the deferred persistence in
-// deepAnalysisCore: it records the last-run marker (the documented cold-restart
+// deepAnalysisCore: it records the last-run stamp (the documented cold-restart
 // idempotency guard) and flushes the cache exactly once via saveCache. A nil
 // saveCache must be a no-op, not a panic.
 func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{}
-	c := fakeapi.NewCache()
-	if !c.LastSchedulerRun().IsZero() {
-		t.Fatal("precondition: fresh cache must report zero last-run")
+	st := testStamp(t)
+	if _, known := st.Last(); known {
+		t.Fatal("precondition: fresh stamp must report no recorded run")
 	}
 	var saveCalls atomic.Int64
 	sched := New(
 		Config{Enable: true},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      st,
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  func() error { saveCalls.Add(1); return nil },
@@ -472,8 +503,8 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 
 	sched.deepAnalysisCore(t.Context())
 
-	if c.LastSchedulerRun().IsZero() {
-		t.Error("deepAnalysisCore did not record the last-run marker")
+	if _, known := st.Last(); !known {
+		t.Error("deepAnalysisCore did not record the last-run stamp")
 	}
 	if got := saveCalls.Load(); got != 1 {
 		t.Errorf("saveCache called %d times; want 1", got)
@@ -485,6 +516,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t),
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -507,6 +539,7 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t),
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -541,6 +574,7 @@ func TestRun_NonPositiveIntervalIsDisabled(t *testing.T) {
 				Deps{
 					Plex:       plx,
 					Cache:      fakeapi.NewCache(),
+					Stamp:      testStamp(t),
 					UserClient: func(_ string) EpisodeReader { return plx },
 					Sync:       &fakeSyncer{},
 					SaveCache:  nil,
@@ -556,24 +590,24 @@ func TestRun_NonPositiveIntervalIsDisabled(t *testing.T) {
 }
 
 // TestRun_RunsInitialAnalysisWhenNeverRun verifies the "run immediately when the
-// last-run marker is absent" branch. A pre-cancelled context makes the scheduling
+// last-run record is absent" branch. A pre-cancelled context makes the scheduling
 // loop return as soon as the initial pass is dispatched, so the timer wait
 // (timing-bound, intentionally untested) is never entered. Because the initial
 // pass therefore runs under an already-cancelled ctx, the h-f1 watermark-on-cancel
-// guard means it does NOT advance the last-run marker; the proof that the initial
+// guard means it does NOT record the run; the proof that the initial
 // branch fired is the Plex History + ShowSections queries below (fetched at the
-// top of the pass before any ctx short-circuit). Marker advancement on a COMPLETED
+// top of the pass before any ctx short-circuit). Recording on a COMPLETED
 // pass is pinned separately by
 // TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged.
 func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{}
-	c := fakeapi.NewCache() // zero last-run -> initial pass should fire
 	sched := New(
 		Config{Enable: true, Interval: 24 * time.Hour},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t), // no record -> initial pass should fire
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -598,29 +632,31 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	}
 }
 
-// TestRun_InitialPassDecisionFromMarker pins Run's initial-pass gate
-// (lastRun.IsZero() || time.Since(lastRun) > s.cfg.Interval). The existing Run
-// tests cover only the disabled short-circuit and the zero-marker arm; neither
-// sets a non-zero marker, so the documented cold-restart idempotency guard (a
-// marker newer than one interval must NOT double-run the analysis on restart)
-// and its stale-marker catch-up companion have no coverage -- and are not
-// covered transitively, since the deepAnalysisCore-level tests call
-// deepAnalysisCore directly and bypass this gate. A pre-cancelled context makes
-// Run return on ctx.Done() right after the gate, so the timing-bound ticker
-// loop is never entered (the technique TestRun_RunsInitialAnalysisWhenNeverRun
-// uses).
-func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
+// TestRun_InitialPassDecisionFromStamp pins Run's initial-pass gate
+// (stamp.Due(Interval, now, CountFailed)). The other Run tests cover only the
+// disabled short-circuit and the no-record arm; neither stages an existing
+// record, so the documented cold-restart idempotency guard (a record newer
+// than one interval must NOT double-run the analysis on restart) and its
+// stale-record catch-up companion have no coverage -- and are not covered
+// transitively, since the deepAnalysisCore-level tests call deepAnalysisCore
+// directly and bypass this gate. A pre-cancelled context makes Run return on
+// ctx.Done() right after the gate, so the timing-bound ticker loop is never
+// entered (the technique TestRun_RunsInitialAnalysisWhenNeverRun uses).
+func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 	t.Parallel()
-	t.Run("recent marker skips the initial pass", func(t *testing.T) {
+	t.Run("recent record skips the initial pass", func(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{}
-		c := fakeapi.NewCache()
-		c.SetLastSchedulerRun(time.Now()) // ran within the last interval
+		st := testStamp(t)
+		if err := st.Record(true); err != nil { // ran within the last interval
+			t.Fatalf("seed stamp: %v", err)
+		}
 		sched := New(
 			Config{Enable: true, Interval: 24 * time.Hour},
 			Deps{
 				Plex:       plx,
-				Cache:      c,
+				Cache:      fakeapi.NewCache(),
+				Stamp:      st,
 				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
@@ -630,19 +666,19 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 		cancel() // pre-cancelled on purpose; Background, not t.Context()
 		sched.Run(ctx)
 		if got := plx.Calls.Load(); got != 0 {
-			t.Errorf("Run made %d Plex calls with a recent last-run marker; want 0 (the cold-restart guard must skip the initial pass, not re-run a full sweep)", got)
+			t.Errorf("Run made %d Plex calls with a recent last-run record; want 0 (the cold-restart guard must skip the initial pass, not re-run a full sweep)", got)
 		}
 	})
-	t.Run("stale marker runs a catch-up pass", func(t *testing.T) {
+	t.Run("stale record runs a catch-up pass", func(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{}
-		c := fakeapi.NewCache()
-		c.SetLastSchedulerRun(time.Now().Add(-72 * time.Hour)) // older than the 24h interval
+		st := stampAt(t, time.Now().Add(-72*time.Hour)) // older than the 24h interval
 		sched := New(
 			Config{Enable: true, Interval: 24 * time.Hour},
 			Deps{
 				Plex:       plx,
-				Cache:      c,
+				Cache:      fakeapi.NewCache(),
+				Stamp:      st,
 				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
@@ -662,7 +698,7 @@ func TestRun_InitialPassDecisionFromMarker(t *testing.T) {
 			}
 		}
 		if !sawHistory || !sawSections {
-			t.Errorf("stale marker did not trigger a catch-up pass (calls=%v); want History and ShowSections", names)
+			t.Errorf("stale record did not trigger a catch-up pass (calls=%v); want History and ShowSections", names)
 		}
 	})
 }
@@ -902,6 +938,7 @@ func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t),
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -1047,18 +1084,19 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 }
 
 // TestDeepAnalysisCore_SaveCacheErrorWarns pins the deferred cache-flush error
-// branch: a failing saveCache still records the last-run marker and logs the
+// branch: a failing saveCache still records the last-run stamp and logs the
 // "cache save failed" WARN rather than swallowing the error. Companion to
 // TestDeepAnalysisCore_SetsLastRunAndFlushesCache. Not parallel: captureSlog
 // mutates the global logger.
 func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 	plx := &fakeapi.Plex{}
-	c := fakeapi.NewCache()
+	st := testStamp(t)
 	sched := New(
 		Config{Enable: true},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      st,
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  func() error { return errors.New("disk full") },
@@ -1070,8 +1108,42 @@ func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 	if !strings.Contains(out, "cache save failed") {
 		t.Errorf("missing cache-save-failure WARN when saveCache errors; log: %q", out)
 	}
-	if c.LastSchedulerRun().IsZero() {
-		t.Error("last-run marker must still be recorded even when the cache flush fails")
+	if _, known := st.Last(); !known {
+		t.Error("last-run stamp must still be recorded even when the cache flush fails")
+	}
+}
+
+// TestDeepAnalysisCore_StampRecordFailureWarnsOnly pins the deferred stamp
+// write's error branch: a Record that cannot write (its directory is gone)
+// logs a WARN and never fails the pass — the completion line still logs and
+// the cache flush still runs. Not parallel: captureSlog mutates the global
+// logger.
+func TestDeepAnalysisCore_StampRecordFailureWarnsOnly(t *testing.T) {
+	plx := &fakeapi.Plex{}
+	st := scheduler.NewStamp(filepath.Join(t.TempDir(), "missing-dir", "last-run"))
+	var saveCalls atomic.Int64
+	sched := New(
+		Config{Enable: true},
+		Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      st,
+			UserClient: func(_ string) EpisodeReader { return plx },
+			Sync:       &fakeSyncer{},
+			SaveCache:  func() error { saveCalls.Add(1); return nil },
+		},
+	)
+	out := captureSlog(t, func() {
+		sched.deepAnalysisCore(t.Context())
+	})
+	if !strings.Contains(out, "last-run stamp write failed") {
+		t.Errorf("missing stamp-write-failure WARN; log: %q", out)
+	}
+	if !strings.Contains(out, "deep analysis completed") {
+		t.Errorf("pass did not run to completion despite the stamp write failing; log: %q", out)
+	}
+	if got := saveCalls.Load(); got != 1 {
+		t.Errorf("saveCache called %d times after a failed stamp write; want 1 (the flush must still run)", got)
 	}
 }
 
@@ -1288,22 +1360,21 @@ func (p *sinceCapturePlex) History(ctx context.Context, since int64) ([]plex.His
 // > 24h, or a restart after a long downtime), the replay look-back extends to
 // the full since-last-run gap instead of the fixed 24h floor, so the span
 // between 24h and the interval is not silently skipped by the safety net.
-// deepAnalysisCore reads LastSchedulerRun() (the PREVIOUS run -- its own marker
-// is only written in the deferred SetLastSchedulerRun after the body), extends
-// lookback to max(24h, time.Since(last)), and feeds the resulting sinceUnix to
-// History. The two existing deepAnalysisCore tests use a fresh (zero last-run)
-// cache, so they exercise only the 24h floor; the extend branch and the
-// resulting window value were unasserted.
+// deepAnalysisCore reads stamp.Last() (the PREVIOUS run -- this run is only
+// recorded in the deferred Record after the body), extends lookback to
+// max(24h, time.Since(last)), and feeds the resulting sinceUnix to History.
+// The two older deepAnalysisCore tests use a fresh (no record) stamp, so they
+// exercise only the 24h floor; the extend branch and the resulting window
+// value were unasserted.
 func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 	t.Parallel()
 	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
-	c := fakeapi.NewCache()
-	c.SetLastSchedulerRun(time.Now().Add(-72 * time.Hour)) // previous run 72h ago
 	sched := New(
 		Config{Enable: true},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      stampAt(t, time.Now().Add(-72*time.Hour)), // previous run 72h ago
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -1330,19 +1401,19 @@ func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 
 // TestDeepAnalysisCore_LookbackFloorIsOneDayOnFirstRun pins the 24h floor at
 // the other end of the same window calculation: with no previous run recorded —
-// first boot, or a state.json that was reset — the replay still covers a full
+// first boot, or a deleted record file — the replay still covers a full
 // recent day. This is the arm the two older deepAnalysisCore tests exercise but
 // never assert: a floor that collapsed would leave the safety-net pass fetching
 // an empty window and repairing nothing, silently, forever.
 func TestDeepAnalysisCore_LookbackFloorIsOneDayOnFirstRun(t *testing.T) {
 	t.Parallel()
 	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
-	c := fakeapi.NewCache() // zero last-run marker -> the floor decides the window
 	sched := New(
 		Config{Enable: true},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t), // no record -> the floor decides the window
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -1369,32 +1440,31 @@ func TestDeepAnalysisCore_LookbackFloorIsOneDayOnFirstRun(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged pins the h-f1
-// watermark-on-cancel guard: deepAnalysisCore's deferred SetLastSchedulerRun
-// advances the last-run marker ONLY when the pass completed (ctx.Err()==nil).
-// A pass cancelled mid-flight (graceful shutdown) fetches history and
-// recently-added newest-first and may leave the OLDER end of its window
-// unprocessed, so advancing the marker would make the next run's dynamic
-// look-back (l-f11) start past those unprocessed events -- permanently
-// skipping them. The marker must therefore stay at the previous completed
-// run's value on a cancelled pass and advance on a completed one. The
-// saveCache flush stays UNGUARDED (persisting partial learning is harmless;
-// main.go re-saves on shutdown), which the cancelled subtest's saveCalls
-// check keeps pinned so a regression that wrongly guards the whole defer body
-// is caught too.
+// watermark-on-cancel guard: deepAnalysisCore's deferred stamp.Record runs
+// ONLY when the pass completed (ctx.Err()==nil). A pass cancelled mid-flight
+// (graceful shutdown) fetches history and recently-added newest-first and may
+// leave the OLDER end of its window unprocessed, so recording it would make
+// the next run's dynamic look-back (l-f11) start past those unprocessed
+// events -- permanently skipping them. The record must therefore stay at the
+// previous completed run's value on a cancelled pass and advance on a
+// completed one. The saveCache flush stays UNGUARDED (persisting partial
+// learning is harmless; main.go re-saves on shutdown), which the cancelled
+// subtest's saveCalls check keeps pinned so a regression that wrongly guards
+// the whole defer body is caught too.
 func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 	t.Parallel()
-	t.Run("cancelled pass does not advance the marker", func(t *testing.T) {
+	t.Run("cancelled pass does not advance the record", func(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{}
-		c := fakeapi.NewCache()
-		prev := time.Now().Add(-72 * time.Hour) // previous COMPLETED run's watermark
-		c.SetLastSchedulerRun(prev)
+		prev := time.Now().Add(-72 * time.Hour) // previous COMPLETED run's record
+		st := stampAt(t, prev)
 		var saveCalls atomic.Int64
 		sched := New(
 			Config{Enable: true},
 			Deps{
 				Plex:       plx,
-				Cache:      c,
+				Cache:      fakeapi.NewCache(),
+				Stamp:      st,
 				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  func() error { saveCalls.Add(1); return nil },
@@ -1405,8 +1475,8 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 
 		sched.deepAnalysisCore(ctx)
 
-		if got := c.LastSchedulerRun(); !got.Equal(prev) {
-			t.Errorf("cancelled pass advanced the watermark to %v; want it unchanged at the previous completed run %v (advancing would skip the unprocessed older window)",
+		if got := stampTime(t, st); !got.Equal(prev) {
+			t.Errorf("cancelled pass advanced the record to %v; want it unchanged at the previous completed run %v (advancing would skip the unprocessed older window)",
 				got.UTC(), prev.UTC())
 		}
 		// saveCache stays UNGUARDED: a cancelled pass still flushes partial
@@ -1416,17 +1486,17 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 			t.Errorf("saveCache called %d times on a cancelled pass; want 1 (the flush is intentionally unguarded)", got)
 		}
 	})
-	t.Run("completed pass advances the marker", func(t *testing.T) {
+	t.Run("completed pass advances the record", func(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{}
-		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
-		c.SetLastSchedulerRun(prev)
+		st := stampAt(t, prev)
 		sched := New(
 			Config{Enable: true},
 			Deps{
 				Plex:       plx,
-				Cache:      c,
+				Cache:      fakeapi.NewCache(),
+				Stamp:      st,
 				UserClient: func(_ string) EpisodeReader { return plx },
 				Sync:       &fakeSyncer{},
 				SaveCache:  nil,
@@ -1436,33 +1506,33 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 
 		sched.deepAnalysisCore(t.Context())
 
-		got := c.LastSchedulerRun()
+		got := stampTime(t, st)
 		if !got.After(prev) {
-			t.Errorf("completed pass did not advance the watermark: got %v, still <= previous run %v", got.UTC(), prev.UTC())
+			t.Errorf("completed pass did not advance the record: got %v, still <= previous run %v", got.UTC(), prev.UTC())
 		}
 		if got.Before(before) {
-			t.Errorf("completed pass set the watermark to %v, before the run started %v", got.UTC(), before.UTC())
+			t.Errorf("completed pass set the record to %v, before the run started %v", got.UTC(), before.UTC())
 		}
 	})
 }
 
 // TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged pins the uniform
 // completeness gate that generalises the h-f1 ctx-cancel guard: deepAnalysisCore
-// advances the last-run marker ONLY when the pass fully covered its look-back
-// window. Because History/RecentlyAdded are swept newest-first, ANY early exit
-// leaves the OLDER end of the window unprocessed, so advancing the marker would
-// make the next run's dynamic look-back start past those unswept events and drop
-// them permanently. The three incomplete-pass triggers below (in addition to the
-// ctx-cancel case, which has its own test) must all leave the marker unchanged:
+// records the run ONLY when the pass fully covered its look-back window.
+// Because History/RecentlyAdded are swept newest-first, ANY early exit leaves
+// the OLDER end of the window unprocessed, so recording it would make the next
+// run's dynamic look-back start past those unswept events and drop them
+// permanently. The three incomplete-pass triggers below (in addition to the
+// ctx-cancel case, which has its own test) must all leave the record unchanged:
 // a history circuit-breaker abort, a History fetch/overflow error, and a
 // recently-added per-section fetch failure.
 func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 	t.Parallel()
 
-	// prev is the previous COMPLETED run's marker; every subtest asserts it is
+	// prev is the previous COMPLETED run's record; every subtest asserts it is
 	// left untouched by an incomplete pass.
-	newSched := func(plx plexReader, reader func(string) EpisodeReader, c runLedger) *Scheduler {
-		return New(Config{Enable: true}, Deps{Plex: plx, Cache: c, UserClient: reader, Sync: &fakeSyncer{}})
+	newSched := func(plx plexReader, reader func(string) EpisodeReader, st *scheduler.Stamp) *Scheduler {
+		return New(Config{Enable: true}, Deps{Plex: plx, Cache: fakeapi.NewCache(), Stamp: st, UserClient: reader, Sync: &fakeSyncer{}})
 	}
 
 	t.Run("history circuit-breaker abort", func(t *testing.T) {
@@ -1475,32 +1545,30 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 			items[i] = plex.HistoryItem{AccountID: 1, RatingKey: strconv.Itoa(1000 + i), Type: plex.TypeEpisode}
 		}
 		plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
-		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
-		c.SetLastSchedulerRun(prev)
-		sched := newSched(plx, func(_ string) EpisodeReader { return plx }, c)
+		st := stampAt(t, prev)
+		sched := newSched(plx, func(_ string) EpisodeReader { return plx }, st)
 
 		sched.deepAnalysisCore(t.Context())
 
-		if got := c.LastSchedulerRun(); !got.Equal(prev) {
-			t.Errorf("breaker-abort pass advanced the marker to %v; want unchanged at %v (older window unswept)", got.UTC(), prev.UTC())
+		if got := stampTime(t, st); !got.Equal(prev) {
+			t.Errorf("breaker-abort pass advanced the record to %v; want unchanged at %v (older window unswept)", got.UTC(), prev.UTC())
 		}
 	})
 
 	t.Run("history fetch/overflow error", func(t *testing.T) {
 		t.Parallel()
 		// A History error models the 10MB-overflow case (errBodyOverCap): zero
-		// items replayed, so the marker must not advance.
+		// items replayed, so the record must not advance.
 		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: errors.New("body over cap")}
-		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
-		c.SetLastSchedulerRun(prev)
-		sched := newSched(plx, func(_ string) EpisodeReader { return plx.Plex }, c)
+		st := stampAt(t, prev)
+		sched := newSched(plx, func(_ string) EpisodeReader { return plx.Plex }, st)
 
 		sched.deepAnalysisCore(t.Context())
 
-		if got := c.LastSchedulerRun(); !got.Equal(prev) {
-			t.Errorf("history-error pass advanced the marker to %v; want unchanged at %v", got.UTC(), prev.UTC())
+		if got := stampTime(t, st); !got.Equal(prev) {
+			t.Errorf("history-error pass advanced the record to %v; want unchanged at %v", got.UTC(), prev.UTC())
 		}
 	})
 
@@ -1510,34 +1578,32 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 		// fetch, leaving that section's window unswept → pass incomplete.
 		base := &fakeapi.Plex{Sections: []plex.Section{{Key: "1", Title: "TV"}}}
 		plx := &recentlyAddedErrPlex{Plex: base, failSections: map[string]bool{"1": true}}
-		c := fakeapi.NewCache()
 		prev := time.Now().Add(-72 * time.Hour)
-		c.SetLastSchedulerRun(prev)
-		sched := newSched(plx, func(_ string) EpisodeReader { return plx.Plex }, c)
+		st := stampAt(t, prev)
+		sched := newSched(plx, func(_ string) EpisodeReader { return plx.Plex }, st)
 
 		sched.deepAnalysisCore(t.Context())
 
-		if got := c.LastSchedulerRun(); !got.Equal(prev) {
-			t.Errorf("section-failure pass advanced the marker to %v; want unchanged at %v", got.UTC(), prev.UTC())
+		if got := stampTime(t, st); !got.Equal(prev) {
+			t.Errorf("section-failure pass advanced the record to %v; want unchanged at %v", got.UTC(), prev.UTC())
 		}
 	})
 }
 
 // TestDeepAnalysisCore_CapsLookback pins the maxDeepAnalysisLookback cap: a
-// marker far older than the cap (a long outage or a very large
+// record far older than the cap (a long outage or a very large
 // DEEP_SCAN_INTERVAL) must not grow the non-paginated History/RecentlyAdded
 // window without bound. The look-back is clamped to ~30 days regardless of how
 // old the previous run is.
 func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 	t.Parallel()
 	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
-	c := fakeapi.NewCache()
-	c.SetLastSchedulerRun(time.Now().Add(-60 * 24 * time.Hour)) // 60 days ago, well past the 30d cap
 	sched := New(
 		Config{Enable: true},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      stampAt(t, time.Now().Add(-60*24*time.Hour)), // 60 days ago, well past the 30d cap
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -1550,7 +1616,7 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 	windowStart := time.Unix(plx.historySince.Load(), 0)
 	lookback := after.Sub(windowStart)
 	if lookback > 31*24*time.Hour {
-		t.Errorf("look-back %v exceeds the 30d cap; a 60d-old marker must be clamped (window start %v)", lookback, windowStart.UTC())
+		t.Errorf("look-back %v exceeds the 30d cap; a 60d-old record must be clamped (window start %v)", lookback, windowStart.UTC())
 	}
 	if lookback < 29*24*time.Hour {
 		t.Errorf("look-back %v is below the 30d cap; expected the window clamped to ~30d (window start %v)", lookback, windowStart.UTC())
@@ -1560,7 +1626,7 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 // TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 // pins the completeness gate's accepted-loss boundary: scattered per-user
 // Episode() fetch failures that stay BELOW the circuit-breaker threshold do NOT
-// block completion, so the pass is complete and the last-run marker advances.
+// block completion, so the pass is complete and the run is recorded.
 // processRecentHistory keys completeness on fedAll (every item fed, breaker did
 // not abort), NOT on totalErrors==0 -- its comment documents this as "the
 // design's accepted skip-and-continue loss". The breaker-ABORT side is pinned by
@@ -1568,8 +1634,8 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 // complement. Without it a regression coupling completeness to the error count
 // (return fedAll && totalErrors.Load()==0 && ctx.Err()==nil) survives every test
 // -- statement coverage of processRecentHistory/deepAnalysisCore is already
-// 100% -- yet makes any pass with a single transient item failure never advance
-// the marker, growing the look-back to the 30d cap and re-sweeping it every tick.
+// 100% -- yet makes any pass with a single transient item failure never record,
+// growing the look-back to the 30d cap and re-sweeping it every tick.
 func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker(t *testing.T) {
 	t.Parallel()
 	// 3 episode items whose per-user Episode fetch always fails: 3 consecutive
@@ -1577,21 +1643,21 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 	// feedHistory feeds every item (fedAll=true), and the pass is complete
 	// despite the 3 accepted-loss failures. workers=1 keeps the count
 	// deterministic. Sections are empty, so the recently-added leg is trivially
-	// complete and the marker's advance is governed solely by the history leg.
+	// complete and the record's advance is governed solely by the history leg.
 	items := []plex.HistoryItem{
 		{AccountID: 1, RatingKey: "1", Type: plex.TypeEpisode},
 		{AccountID: 1, RatingKey: "2", Type: plex.TypeEpisode},
 		{AccountID: 1, RatingKey: "3", Type: plex.TypeEpisode},
 	}
 	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
-	c := fakeapi.NewCache()
-	prev := time.Now().Add(-72 * time.Hour) // previous COMPLETED run's marker
-	c.SetLastSchedulerRun(prev)
+	prev := time.Now().Add(-72 * time.Hour) // previous COMPLETED run's record
+	st := stampAt(t, prev)
 	sched := New(
 		Config{Enable: true},
 		Deps{
 			Plex:       plx,
-			Cache:      c,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      st,
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,
@@ -1601,8 +1667,8 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 
 	sched.deepAnalysisCore(t.Context())
 
-	if got := c.LastSchedulerRun(); !got.After(prev) {
-		t.Errorf("pass with scattered below-breaker item failures did not advance the marker: got %v, still <= previous run %v (accepted-loss failures must not block completion)", got.UTC(), prev.UTC())
+	if got := stampTime(t, st); !got.After(prev) {
+		t.Errorf("pass with scattered below-breaker item failures did not advance the record: got %v, still <= previous run %v (accepted-loss failures must not block completion)", got.UTC(), prev.UTC())
 	}
 }
 
@@ -1631,6 +1697,7 @@ func TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning(t *testing.T) {
 		Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t),
 			UserClient: func(_ string) EpisodeReader { return plx },
 			Sync:       &fakeSyncer{},
 			SaveCache:  nil,

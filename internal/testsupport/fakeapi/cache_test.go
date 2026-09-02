@@ -2,7 +2,6 @@ package fakeapi
 
 import (
 	"testing"
-	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
@@ -51,15 +50,5 @@ func TestCacheRoundTrip(t *testing.T) {
 	tokens["u1"] = "mutated"
 	if c.UserTokens()["u1"] != "t1" {
 		t.Error("SetUserTokens should defensive-copy its input")
-	}
-
-	// Scheduler run marker.
-	if !c.LastSchedulerRun().IsZero() {
-		t.Error("fresh cache should have zero LastSchedulerRun")
-	}
-	now := time.Now()
-	c.SetLastSchedulerRun(now)
-	if !c.LastSchedulerRun().Equal(now) {
-		t.Errorf("LastSchedulerRun = %v, want %v", c.LastSchedulerRun(), now)
 	}
 }

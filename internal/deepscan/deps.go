@@ -2,7 +2,6 @@ package deepscan
 
 import (
 	"context"
-	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
@@ -33,12 +32,10 @@ type EpisodeReader interface {
 // be built. Nil means skip the history item for that user.
 type UserClientFunc func(userID string) EpisodeReader
 
-// runLedger is the persistence the pass needs: the dedup gate plus the last-run
-// watermark that keeps a cold restart from double-running the analysis.
+// runLedger is the persistence the pass needs: the dedup gate that keeps a
+// recently-added episode from being processed twice.
 type runLedger interface {
 	CheckAndMark(key string) bool
-	LastSchedulerRun() time.Time
-	SetLastSchedulerRun(t time.Time)
 }
 
 // skipChecker is the ignore decision. Two methods: the library-only check for

@@ -1,13 +1,12 @@
 // Package cache is the on-disk persistence layer for processed-episode
-// deduplication, per-user language profiles, shared-user tokens, and the
-// scheduler's last-run marker.
+// deduplication, per-user language profiles, and shared-user tokens.
 //
 // On-disk layout: state is split across three files in the cache dir by
 // retention class, so one corrupt file never costs another class's state:
 //
-//	profiles.json  language_profiles                     irreplaceable learned state
-//	tokens.json    user_tokens                           re-fetchable encrypted secrets
-//	state.json     processed_episodes, last_scheduler_run disposable operational state
+//	profiles.json  language_profiles  irreplaceable learned state
+//	tokens.json    user_tokens        re-fetchable encrypted secrets
+//	state.json     processed_episodes disposable operational state
 //
 // Field names, types, and JSON tags within each file are an inviolate
 // read-forward / write-back contract across deploys — any change is a
@@ -55,8 +54,8 @@ const (
 )
 
 // Data is the in-memory state shape. It doubles as the decode target for
-// the legacy pre-split cache.json union schema, whose field names and JSON
-// tags it preserves verbatim (read-forward contract).
+// the legacy pre-split cache.json union schema; a legacy key with no field
+// here (last_scheduler_run) is ignored on decode.
 type Data struct {
 	// ProcessedEpisodes tracks recently processed episode keys to avoid
 	// re-processing the same episode on rapid successive events.
@@ -77,9 +76,6 @@ type Data struct {
 	// UserTokens maps userID → accessToken for shared users. Persisted in
 	// tokens.json, encrypted at the disk boundary when a key is set.
 	UserTokens map[string]string `json:"user_tokens"`
-	// LastSchedulerRun is the unix timestamp of the last scheduler run.
-	// Persisted in state.json.
-	LastSchedulerRun int64 `json:"last_scheduler_run"`
 }
 
 // profilesData is the profiles.json schema (irreplaceable learned state).
@@ -96,7 +92,6 @@ type tokensData struct {
 // stateData is the state.json schema (disposable operational state).
 type stateData struct {
 	ProcessedEpisodes map[string]int64 `json:"processed_episodes"`
-	LastSchedulerRun  int64            `json:"last_scheduler_run"`
 }
 
 // Cache is the concurrent-safe persistent cache. The zero value is usable;
@@ -242,7 +237,6 @@ func (c *Cache) applyLegacyLocked(legacy *Data) {
 		c.data.UserTokens = legacy.UserTokens
 		c.decryptTokensLocked()
 	}
-	c.data.LastSchedulerRun = legacy.LastSchedulerRun
 }
 
 // overlayProfilesLocked loads profiles.json over the baseline. Returns 1
@@ -319,7 +313,6 @@ func (c *Cache) overlayStateLocked(dir string, errs *[]error) int {
 	if c.data.ProcessedEpisodes == nil {
 		c.data.ProcessedEpisodes = make(map[string]int64)
 	}
-	c.data.LastSchedulerRun = sd.LastSchedulerRun
 	return 1
 }
 
@@ -475,7 +468,6 @@ func (c *Cache) encodeAllForSave() (profiles, tokens, state []byte, err error) {
 	}
 	if state, err = json.MarshalIndent(&stateData{
 		ProcessedEpisodes: c.data.ProcessedEpisodes,
-		LastSchedulerRun:  c.data.LastSchedulerRun,
 	}, "", "  "); err != nil {
 		return nil, nil, nil, fmt.Errorf("marshal %s: %w", stateFile, err)
 	}

@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -38,6 +39,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/scheduler/v4"
 )
 
 // Compile-time assertion that the real client satisfies the per-user surface
@@ -49,6 +51,11 @@ var _ tracksync.PlexReadWriter = (*plex.Client)(nil)
 // profiles.json / tokens.json / state.json layout; a legacy cache.json is
 // migrated on first load). Frozen by inviolate contract item 7 (file paths).
 const cacheDir = "/config"
+
+// lastRunStampName is the deep-analysis last-run record (a scheduler.Stamp
+// file) inside cacheDir, so it survives restarts on the same volume as the
+// cache.
+const lastRunStampName = ".plex-language-sync-last-run"
 
 // shutdownWaitBudget bounds how long run() waits for background loops
 // (user-token refresh + scheduler) to join before persisting the cache
@@ -220,6 +227,7 @@ func run() int {
 		deepscan.Deps{
 			Plex:       client,
 			Cache:      c,
+			Stamp:      scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName)),
 			UserClient: scanUserClient,
 			Sync:       syncer,
 			SaveCache:  func() error { return c.Save(cacheDir) },
