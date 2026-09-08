@@ -1,10 +1,8 @@
 package tracksync
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -1019,10 +1017,7 @@ func TestObserveAndPropagate_LogsCompletionWithUpdatedCount(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeUsers{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t)
 
 	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
@@ -1064,10 +1059,7 @@ func TestObserveAndPropagate_SilentWhenNothingChanged(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeUsers{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t)
 
 	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
@@ -1244,10 +1236,7 @@ func TestObserveAndPropagate_logsEpisodeFetchError(t *testing.T) {
 	s := newSyncer(Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll}, plx, fakeapi.NewCache(), &fakeUsers{})
 	ref := refWithSelectedAudio("jpn", "42", "7", 1, 1)
 
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t)
 
 	s.ObserveAndPropagate(t.Context(), plx, "1", ref, "play")
 
@@ -1319,10 +1308,7 @@ func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			prev := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-			t.Cleanup(func() { slog.SetDefault(prev) })
+			buf := captureLogs(t)
 
 			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 			logSubstitution(ep, "alice", tt.kind,

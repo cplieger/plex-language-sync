@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -453,9 +454,16 @@ func TestWrapReadError(t *testing.T) {
 // logDisconnect logs through the process-global slog.Default().
 func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
+	// slog.SetDefault also redirects the log package's writer and flags and
+	// skips that redirect for slog's own default handler, so all three are
+	// saved here and slog is restored first.
+	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 
 	l := NewListener(&fakePlexClient{}, DefaultConfig())
 	ctx := t.Context()

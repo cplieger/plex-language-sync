@@ -42,6 +42,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -415,10 +416,7 @@ func TestLogConfig(t *testing.T) {
 	// logConfig must mask the Plex token: the security contract (README
 	// "token never logged") is that the real token value never reaches
 	// the logs — only the literal "configured".
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t, slog.LevelInfo)
 
 	cfg := &config{
 		plexURL:           "http://plex:32400",
@@ -634,10 +632,7 @@ func TestWaitForBackgroundLoops_bothLoopsDone_returnsBeforeBudget(t *testing.T) 
 }
 
 func TestWaitForBackgroundLoops_budgetExceeded_bothStuck(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t, slog.LevelInfo)
 
 	synctest.Test(t, func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -665,10 +660,7 @@ func TestWaitForBackgroundLoops_budgetExceeded_bothStuck(t *testing.T) {
 }
 
 func TestWaitForBackgroundLoops_budgetExceeded_onlySchedulerStuck(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t, slog.LevelInfo)
 
 	synctest.Test(t, func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -780,10 +772,7 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 }
 
 func TestWaitForBackgroundLoops_budgetExceeded_onlyRefreshStuck(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	buf := captureLogs(t, slog.LevelInfo)
 
 	synctest.Test(t, func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -980,19 +969,28 @@ func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 // that matters (resolution failing across the board). The contract is a
 // quiet Debug per event plus exactly one WARN per stall.
 
-// captureLogs redirects the default logger at Debug level for the test
-// and returns the buffer holding everything written to it.
-func captureLogs(t *testing.T) *bytes.Buffer {
+// captureLogs redirects the default logger at level for the test and returns
+// the buffer holding everything written to it.
+//
+// slog.SetDefault also points the log package at the installed handler and
+// zeroes its flags, and skips that redirect for slog's own default handler, so
+// restoring slog alone leaves log writing into a dead buffer. slog goes back
+// first: reinstalling a non-default prev re-runs the redirect.
+func captureLogs(t *testing.T, level slog.Level) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level})))
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	return &buf
 }
 
 func TestSkipUnattributedPlayEvent_singleSkipDoesNotWarn(t *testing.T) {
-	buf := captureLogs(t)
+	buf := captureLogs(t, slog.LevelDebug)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 
 	adapter.skipUnattributedPlayEvent(
@@ -1025,7 +1023,7 @@ func absentFor(client string) error {
 }
 
 func TestSkipUnattributedPlayEvent_singleClientAbsenceNeverWarns(t *testing.T) {
-	buf := captureLogs(t)
+	buf := captureLogs(t, slog.LevelDebug)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 	ev := notify.PlayEvent{State: "paused", RatingKey: "716655", ClientIdentifier: "mac-zombie"}
 
@@ -1044,7 +1042,7 @@ func TestSkipUnattributedPlayEvent_singleClientAbsenceNeverWarns(t *testing.T) {
 }
 
 func TestSkipUnattributedPlayEvent_warnsOnceWhenEveryClientIsAbsent(t *testing.T) {
-	buf := captureLogs(t)
+	buf := captureLogs(t, slog.LevelDebug)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 
 	// Every client that plays is missing from a session list that reads
@@ -1071,7 +1069,7 @@ func TestSkipUnattributedPlayEvent_warnsOnceWhenEveryClientIsAbsent(t *testing.T
 }
 
 func TestSkipUnattributedPlayEvent_warnsWhenSessionsUnreadableFromOneClient(t *testing.T) {
-	buf := captureLogs(t)
+	buf := captureLogs(t, slog.LevelDebug)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 	ev := notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-only"}
 
@@ -1091,7 +1089,7 @@ func TestSkipUnattributedPlayEvent_warnsWhenSessionsUnreadableFromOneClient(t *t
 }
 
 func TestSkipUnattributedPlayEvent_oneReadFailureInABenignRunDoesNotWarn(t *testing.T) {
-	buf := captureLogs(t)
+	buf := captureLogs(t, slog.LevelDebug)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
 	ev := notify.PlayEvent{State: "paused", RatingKey: "716655", ClientIdentifier: "mac-zombie"}
 
