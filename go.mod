@@ -15,7 +15,7 @@ require (
 	github.com/cplieger/runesafe/v2 v2.0.1
 	github.com/cplieger/scheduler/v4 v4.2.0
 	github.com/cplieger/slogx v1.6.4
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	pgregory.net/rapid v1.3.0
 )
 
