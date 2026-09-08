@@ -3,6 +3,7 @@ package plex
 import (
 	"bytes"
 	"errors"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -64,15 +65,23 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 }
 
 // captureSlog redirects the default slog logger to a buffer for the duration
-// of fn and returns everything logged. It restores the previous default
-// logger on cleanup. Tests using it must NOT be parallel (they mutate the
-// process-global default logger).
+// of fn and returns everything logged. Tests using it must NOT be parallel
+// (they mutate the process-global default logger).
+//
+// slog.SetDefault also points the log package at the installed handler and
+// zeroes its flags, and skips that redirect for slog's own default handler, so
+// restoring slog alone leaves log writing into a dead buffer. slog goes back
+// first: reinstalling a non-default prev re-runs the redirect.
 func captureSlog(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := slog.Default()
+	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	})
 	fn()
 	return buf.String()
 }
