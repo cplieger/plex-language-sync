@@ -22,5 +22,5 @@ require (
 require (
 	github.com/cplieger/pathinside/v2 v2.0.1 // indirect
 	github.com/cplieger/xmlx v1.0.4 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
