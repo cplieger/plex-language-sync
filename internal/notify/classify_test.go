@@ -122,6 +122,30 @@ func TestIsRelevantPlayEvent(t *testing.T) {
 	}
 }
 
+func TestIsPausedPlayEvent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ev   PlayEvent
+		want bool
+	}{
+		{"paused", PlayEvent{State: "paused", RatingKey: "123"}, true},
+		{"playing", PlayEvent{State: "playing", RatingKey: "123"}, false},
+		{"stopped", PlayEvent{State: "stopped", RatingKey: "123"}, false},
+		{"buffering", PlayEvent{State: "buffering", RatingKey: "123"}, false},
+		{"empty state", PlayEvent{State: "", RatingKey: "123"}, false},
+		{"capitalised is not the wire value", PlayEvent{State: "Paused", RatingKey: "123"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsPausedPlayEvent(tt.ev); got != tt.want {
+				t.Errorf("IsPausedPlayEvent(%+v) = %v, want %v", tt.ev, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildStreamCacheKey(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

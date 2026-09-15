@@ -249,26 +249,27 @@ groups:
         annotations:
           summary: "plex-language-sync is attributing no playback to any user"
           description: >
-            plex-language-sync could not attribute 20 consecutive play
-            events to a user. It identifies the viewer by joining each
-            playback notification against the server's active sessions,
-            and it skips an event it cannot attribute rather than
-            writing a language choice under the wrong identity. Read the
-            `cause` field first, because the two grounds have different
-            remedies. `sessions_unreadable`: the active-session list
-            could not be read for the whole run, so check that
-            PLEX_TOKEN still has admin rights and that the endpoint
-            answers. `all_clients_absent`: the list read correctly every
-            time and no client in the run was in it, so the join is
-            failing. A run that stays on ONE client never fires this
-            alert, because one client missing from a readable list is
-            that client, not the resolver: the server announces playback
-            a few seconds before a session becomes queryable, an idle
-            web client re-announces a finished item for as long as its
-            tab stays open, and a client whose session the server
-            removed mid-playback keeps announcing it. Individual skips
-            log at DEBUG. The app logs "user resolution recovered" once
-            playback is attributed again.
+            plex-language-sync stopped attributing playback to a user. It
+            identifies the viewer by joining each playback notification
+            against the server's active sessions, and it skips an event
+            it cannot attribute rather than writing a language choice
+            under the wrong identity. Read the `cause` field first,
+            because the two grounds have different remedies.
+            `sessions_unreadable`: the active-session list could not be
+            read for 20 consecutive events, so check that PLEX_TOKEN
+            still has admin rights and that the endpoint answers.
+            `all_clients_absent`: the list read correctly every time and
+            5 distinct (client, item) pairs were missing from it, so the
+            join is failing; the `absent_pairs` field carries the count.
+            Repetition alone never fires this alert, and a paused client
+            never counts toward it, because three benign shapes look
+            like an absence: the server announces playback a few seconds
+            before a session becomes queryable, an idle web client
+            re-announces a finished item for as long as its tab stays
+            open, and a client whose session the server removed keeps
+            announcing it paused. Individual skips log at DEBUG. The app
+            logs "user resolution recovered" once playback is attributed
+            again.
 ```
 
 The thresholds, windows, and `severity` labels are starting points;
