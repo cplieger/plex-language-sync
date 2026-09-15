@@ -578,16 +578,17 @@ func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause err
 	absent := errors.Is(cause, errUnattributedNoClient) ||
 		errors.Is(cause, plex.ErrNoSessionForClient)
 
-	if stalled, consecutive, why := n.resolveStalls.miss(ev.ClientIdentifier, !absent); stalled {
+	if v := n.resolveStalls.miss(ev, !absent); v.stalled {
 		slog.Warn("play event: user resolution stalled; no playback has been attributed for a sustained run",
-			"cause", string(why),
-			"consecutive_failures", consecutive,
+			"cause", string(v.cause),
+			"consecutive_failures", v.consecutive,
+			"absent_pairs", v.absentPairs,
 			"last_client", ev.ClientIdentifier, "last_key", ev.RatingKey)
 	}
 }
 
 // resolveStallThreshold is the number of consecutive unattributed play
-// events that means resolution is broken rather than racing.
+// events that means the session list itself has stopped answering.
 //
 // Calibrated against 30 days of production traffic: 2814 resolution
 // attempts, 2651 attributed and 163 skipped, and the longest run of
@@ -596,6 +597,19 @@ func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause err
 // while a resolver that answers nothing crosses it in about three
 // minutes of playback at Plex's ~10s notification cadence.
 const resolveStallThreshold = 20
+
+// resolveAbsentPairThreshold is the number of DISTINCT (client, item)
+// pairs absent from a readable session list that means the join is
+// failing rather than a client misbehaving.
+//
+// Distinct pairs rather than event count, because run length measures
+// how noisy one stale announcer is: a zombie or an idle tab repeats one
+// pair forever, while a failing join produces a new pair for every
+// client and item anyone touches. Five absorbs a household's worth of
+// simultaneously stale devices (three were live during the 2026-09-14
+// false alert) and is reached quickly by a real fault, because any
+// single success clears the run.
+const resolveAbsentPairThreshold = 5
 
 // stallCause names why a run of unattributed play events is reportable.
 // It rides on the Warn line so the operator is told which of the two
@@ -609,35 +623,39 @@ const (
 	// advice fits: a token that lost its rights, or Plex not answering.
 	causeSessionsUnreadable stallCause = "sessions_unreadable"
 
-	// causeAllClientsAbsent: the list was read every time and no client
-	// in the run appeared in it. Reportable only across more than one
-	// client, because a readable list that never carries ANY client is a
-	// real fault, while one client missing from it is that client.
+	// causeAllClientsAbsent: the list was read every time and several
+	// distinct (client, item) pairs in the run were missing from it. A
+	// readable list that carries none of them is the join failing, while
+	// one pair missing repeatedly is that one client or that one item.
 	causeAllClientsAbsent stallCause = "all_clients_absent"
 )
 
-// resolveStallCounter counts consecutive unattributed play events so a
+// resolveStallCounter tracks a run of unattributed play events so a
 // stall is reported once instead of once per notification, and decides
 // which runs are worth reporting at all.
 //
-// A count on its own is not evidence that resolution is broken: on
-// 2026-08-30, Plex removed a WAN client's session mid-film ("Client
-// stopped playback"), the client kept announcing the same paused
-// ratingKey every 20s, and 20 skips accumulated in under 10 minutes
-// with nobody else watching, so no success arrived to clear the run.
-// /status/sessions answered correctly throughout and the token was
-// fine — everything the alert would have told the operator to check.
+// Neither a count nor a client spread is evidence on its own, and both
+// produced a false alert. On 2026-08-30 Plex removed a WAN client's
+// session mid-film, the client kept announcing the same paused item
+// every 20s with nobody else watching, and 20 skips accumulated in
+// under 10 minutes. On 2026-09-14 the same thing happened to a paused
+// Android session alongside a second idle client, which satisfied a
+// rule requiring more than one client. Both times /status/sessions
+// answered correctly and the token was fine, which is everything the
+// alert tells the operator to check.
 //
-// So a run escalates on one of two grounds, never on length alone:
+// So a run escalates on one of two grounds, never on length:
 //
-//   - the session list could not be READ, sustained across the whole
-//     threshold. Nothing can be attributed while that holds, so this
-//     arm needs no client spread and closes the single-viewer case a
-//     spread rule would miss.
-//   - the list was read and NO client in the run was in it, across more
-//     than one client. One client absent from a readable list is that
-//     client (a start race, a stale tab, a removed session); every
-//     client absent is the join failing.
+//   - the session list could not be READ, sustained across
+//     resolveStallThreshold. Nothing can be attributed while that
+//     holds, so this arm needs no spread and closes the single-viewer
+//     case a spread rule would miss. A paused event still counts here,
+//     because an unreadable list is unreadable whatever is playing.
+//   - resolveAbsentPairThreshold DISTINCT (client, item) pairs were
+//     absent from a list that read fine. A stale announcer is one pair
+//     however long it repeats; a failing join produces a new pair per
+//     client and item. Paused announcements are excluded, because a
+//     paused client has no new selection to attribute.
 //
 // Guarded by a mutex rather than left to the listener's serial dispatch:
 // notify.Handler explicitly permits a handler to hand work to a
@@ -648,10 +666,10 @@ const (
 // resolvePlayEventUser be exercised by tests that build no composition
 // root; production wiring always supplies one.
 type resolveStallCounter struct {
-	// client is the first client identifier in the run and clientSeen
-	// distinguishes "not set yet" from an event that named no client,
-	// which is itself a valid (empty) identifier.
-	client string
+	// absentPairs holds the distinct (client, item) pairs missing from a
+	// readable session list. A set, so one client repeating one item
+	// contributes once however many notifications it sends.
+	absentPairs map[absentPair]struct{}
 	// mu guards every field of this struct.
 	mu     sync.Mutex
 	misses int
@@ -659,46 +677,61 @@ type resolveStallCounter struct {
 	// session list. Reset by any readable miss, so a single transient
 	// read failure inside an otherwise-benign run cannot escalate it.
 	unreadableRun int
-	clientSeen    bool
-	multiClient   bool
 	warned        bool
 }
 
+// absentPair identifies one thing that could not be attributed. A struct
+// key rather than a joined string, so no client identifier containing the
+// separator can forge another pair's identity.
+type absentPair struct {
+	client    string
+	ratingKey string
+}
+
+// stallVerdict is miss's answer: whether this event makes the run
+// reportable, the ground for reporting it, and the two counts the log
+// line carries so an operator can tell the arms apart.
+type stallVerdict struct {
+	cause       stallCause
+	consecutive int
+	absentPairs int
+	stalled     bool
+}
+
 // miss records an unattributed event and reports whether this is the one
-// that makes the run reportable, with the ground for reporting it. True
-// at most once per run.
-func (c *resolveStallCounter) miss(client string, sessionsUnreadable bool) (stalled bool, consecutive int, cause stallCause) {
+// that makes the run reportable. Stalled is true at most once per run.
+func (c *resolveStallCounter) miss(ev notify.PlayEvent, sessionsUnreadable bool) stallVerdict {
 	if c == nil {
-		return false, 0, ""
+		return stallVerdict{}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.misses++
-	if sessionsUnreadable {
-		c.unreadableRun++
-	} else {
-		c.unreadableRun = 0
-	}
 	switch {
-	case !c.clientSeen:
-		c.client, c.clientSeen = client, true
-	case client != c.client:
-		c.multiClient = true
+	case sessionsUnreadable:
+		c.unreadableRun++
+	case notify.IsPausedPlayEvent(ev):
+		c.unreadableRun = 0
+	default:
+		c.unreadableRun = 0
+		if c.absentPairs == nil {
+			c.absentPairs = make(map[absentPair]struct{})
+		}
+		c.absentPairs[absentPair{client: ev.ClientIdentifier, ratingKey: ev.RatingKey}] = struct{}{}
 	}
 
+	v := stallVerdict{consecutive: c.misses, absentPairs: len(c.absentPairs)}
 	if c.warned {
-		return false, c.misses, ""
+		return v
 	}
 	switch {
 	case c.unreadableRun >= resolveStallThreshold:
-		c.warned = true
-		return true, c.misses, causeSessionsUnreadable
-	case c.multiClient && c.misses >= resolveStallThreshold:
-		c.warned = true
-		return true, c.misses, causeAllClientsAbsent
+		c.warned, v.stalled, v.cause = true, true, causeSessionsUnreadable
+	case len(c.absentPairs) >= resolveAbsentPairThreshold:
+		c.warned, v.stalled, v.cause = true, true, causeAllClientsAbsent
 	}
-	return false, c.misses, ""
+	return v
 }
 
 // success clears the run and reports whether it ended a stall that was
@@ -712,7 +745,7 @@ func (c *resolveStallCounter) success() (recovered bool, after int) {
 	defer c.mu.Unlock()
 	after, recovered = c.misses, c.warned
 	c.misses, c.unreadableRun = 0, 0
-	c.client, c.clientSeen, c.multiClient = "", false, false
+	clear(c.absentPairs)
 	c.warned = false
 	return recovered, after
 }

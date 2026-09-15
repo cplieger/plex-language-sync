@@ -36,6 +36,16 @@ func IsRelevantPlayEvent(ev PlayEvent) bool {
 	return ev.RatingKey != ""
 }
 
+// IsPausedPlayEvent reports whether the event announces paused playback.
+// A paused announcement carries no new selection to propagate, so it is
+// still processed but must not be read as evidence about the resolver:
+// Plex keeps a client's paused item flowing after it has removed the
+// session, and a terminated-then-still-announcing client is the shape
+// that made resolution look broken when nothing was.
+func IsPausedPlayEvent(ev PlayEvent) bool {
+	return ev.State == statePaused
+}
+
 // IsRelevantTimelineEntry reports whether a timeline entry should be
 // processed (episode type, metadata/media created or updated,
 // non-empty item ID).

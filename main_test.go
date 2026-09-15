@@ -1022,6 +1022,12 @@ func absentFor(client string) error {
 	return fmt.Errorf("%w: %q", plex.ErrNoSessionForClient, client)
 }
 
+// playingBy builds the event shape the absence arm counts: playing, so
+// it is not excluded as paused, with the pair identity under test.
+func playingBy(client, ratingKey string) notify.PlayEvent {
+	return notify.PlayEvent{State: "playing", RatingKey: ratingKey, ClientIdentifier: client}
+}
+
 func TestSkipUnattributedPlayEvent_singleClientAbsenceNeverWarns(t *testing.T) {
 	buf := captureLogs(t, slog.LevelDebug)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
@@ -1050,7 +1056,7 @@ func TestSkipUnattributedPlayEvent_warnsOnceWhenEveryClientIsAbsent(t *testing.T
 	// Well past the threshold, because a stall must cost one line and not
 	// one per notification.
 	for i := range resolveStallThreshold * 3 {
-		client := fmt.Sprintf("mac-%d", i%4)
+		client := fmt.Sprintf("mac-%d", i%resolveAbsentPairThreshold)
 		adapter.skipUnattributedPlayEvent(
 			notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: client},
 			absentFor(client),
@@ -1109,23 +1115,86 @@ func TestSkipUnattributedPlayEvent_oneReadFailureInABenignRunDoesNotWarn(t *test
 	}
 }
 
+func TestSkipUnattributedPlayEvent_pausedClientsNeverWarnHoweverManyOfThem(t *testing.T) {
+	buf := captureLogs(t, slog.LevelDebug)
+	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+
+	// Plex terminated a paused session ("Playback has been paused for too
+	// long") and the client kept announcing the same paused item every
+	// 10s while a second idle client did the same. A paused client has no
+	// new playback to attribute, so failing to attribute it is not
+	// evidence about resolution however many clients are doing it.
+	for i := range resolveStallThreshold * 4 {
+		client := fmt.Sprintf("zombie-%d", i%3)
+		adapter.skipUnattributedPlayEvent(
+			notify.PlayEvent{State: "paused", RatingKey: "722798", ClientIdentifier: client},
+			absentFor(client),
+		)
+	}
+
+	if strings.Contains(buf.String(), "level=WARN") {
+		t.Errorf("a run of PAUSED clients absent from a readable session list escalated: %q\nPaused playback carries nothing to propagate, so this pages an operator to check a token and an endpoint that are both fine", buf.String())
+	}
+}
+
+func TestSkipUnattributedPlayEvent_oneItemOnOneClientNeverWarns(t *testing.T) {
+	buf := captureLogs(t, slog.LevelDebug)
+	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+	ev := notify.PlayEvent{State: "playing", RatingKey: "716655", ClientIdentifier: "chrome-tab"}
+
+	// An idle browser tab re-announcing one finished item, measured at 19
+	// skips for a single ratingKey spanning 73 hours. It is one absent
+	// thing however long it runs, so run length must not decide.
+	for range resolveStallThreshold * 4 {
+		adapter.skipUnattributedPlayEvent(ev, absentFor("chrome-tab"))
+	}
+
+	if strings.Contains(buf.String(), "level=WARN") {
+		t.Errorf("a long run confined to ONE client and ONE item escalated: %q\nA stale announcer is one absent thing, and counting its repetitions is what made run length look like evidence", buf.String())
+	}
+}
+
+func TestSkipUnattributedPlayEvent_clientlessEventsAreNotExtraClients(t *testing.T) {
+	buf := captureLogs(t, slog.LevelDebug)
+	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
+
+	// A notification carrying no clientIdentifier cannot be joined at
+	// all, and it must not read as another absent client beside the one
+	// real client in the run. Interleaved, because the defect needed a
+	// named client present for the empty one to differ from.
+	for i := range resolveStallThreshold * 2 {
+		ev := notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-A"}
+		cause := absentFor("mac-A")
+		if i%2 == 1 {
+			ev = notify.PlayEvent{State: "playing", RatingKey: "100"}
+			cause = errUnattributedNoClient
+		}
+		adapter.skipUnattributedPlayEvent(ev, cause)
+	}
+
+	if strings.Contains(buf.String(), "level=WARN") {
+		t.Errorf("one real client interleaved with client-less notifications escalated: %q\nAn absent identifier is a recognisable condition, not a second absent client, and treating it as one satisfies the spread rule by itself", buf.String())
+	}
+}
+
 func TestResolveStallCounter_thresholdAndRecovery(t *testing.T) {
 	c := &resolveStallCounter{}
+	ev := playingBy("mac-A", "100")
 
 	// One below the threshold must stay quiet.
 	for i := 1; i < resolveStallThreshold; i++ {
-		if stalled, n, _ := c.miss("mac-A", true); stalled {
-			t.Fatalf("miss %d of %d reported a stall; the expected races (longest measured run: 12) must never escalate", n, resolveStallThreshold)
+		if v := c.miss(ev, true); v.stalled {
+			t.Fatalf("miss %d of %d reported a stall; the expected races (longest measured run: 12) must never escalate", v.consecutive, resolveStallThreshold)
 		}
 	}
-	stalled, n, cause := c.miss("mac-A", true)
-	if !stalled || n != resolveStallThreshold {
-		t.Errorf("miss at the threshold = (%v, %d), want (true, %d)", stalled, n, resolveStallThreshold)
+	v := c.miss(ev, true)
+	if !v.stalled || v.consecutive != resolveStallThreshold {
+		t.Errorf("miss at the threshold = (%v, %d), want (true, %d)", v.stalled, v.consecutive, resolveStallThreshold)
 	}
-	if cause != causeSessionsUnreadable {
-		t.Errorf("cause at the threshold = %q, want %q", cause, causeSessionsUnreadable)
+	if v.cause != causeSessionsUnreadable {
+		t.Errorf("cause at the threshold = %q, want %q", v.cause, causeSessionsUnreadable)
 	}
-	if again, _, _ := c.miss("mac-A", true); again {
+	if again := c.miss(ev, true); again.stalled {
 		t.Error("a second stall was reported without an intervening success; the warn must fire once per stall")
 	}
 
@@ -1135,41 +1204,79 @@ func TestResolveStallCounter_thresholdAndRecovery(t *testing.T) {
 	}
 	// The run is cleared, so the next stall must be able to fire again.
 	for range resolveStallThreshold {
-		stalled, _, _ = c.miss("mac-A", true)
+		v = c.miss(ev, true)
 	}
-	if !stalled {
+	if !v.stalled {
 		t.Error("the counter did not re-arm after recovery, so a second outage would be silent")
 	}
 }
 
-func TestResolveStallCounter_clientSpreadDecidesAnAbsenceRun(t *testing.T) {
-	// An absence run confined to one client is that client, however long
-	// it gets. This is the arm that stops a zombie client paging.
+func TestResolveStallCounter_distinctPairsDecideAnAbsenceRun(t *testing.T) {
+	// One pair absent is that client or that item, however long it
+	// repeats. This is the arm that stops a zombie or a stale tab paging.
 	one := &resolveStallCounter{}
 	for range resolveStallThreshold * 2 {
-		if stalled, n, _ := one.miss("mac-A", false); stalled {
-			t.Fatalf("a %d-long absence run from ONE client escalated; one client missing from a readable session list is that client", n)
+		if v := one.miss(playingBy("mac-A", "100"), false); v.stalled {
+			t.Fatalf("a %d-long absence run on ONE (client, item) pair escalated; repetition is not spread", v.consecutive)
 		}
 	}
 
-	// The same run across two clients is the join failing.
-	spread := &resolveStallCounter{}
-	var (
-		stalled bool
-		cause   stallCause
-	)
-	for i := range resolveStallThreshold {
-		client := "mac-A"
-		if i%2 == 1 {
-			client = "mac-B"
+	// One short of the pair threshold is still not the join failing: a
+	// household can have several stale devices at once, which is exactly
+	// what the 2026-09-14 false alert was.
+	near := &resolveStallCounter{}
+	for i := range resolveAbsentPairThreshold - 1 {
+		if v := near.miss(playingBy(fmt.Sprintf("mac-%d", i), "100"), false); v.stalled {
+			t.Fatalf("%d distinct pairs escalated, one short of the %d-pair threshold", v.absentPairs, resolveAbsentPairThreshold)
 		}
-		stalled, _, cause = spread.miss(client, false)
 	}
-	if !stalled {
-		t.Error("an absence run spanning two clients did not escalate; no single client explains it, so the join is what is broken")
+
+	// At the threshold, no single client or item explains it.
+	var v stallVerdict
+	spread := &resolveStallCounter{}
+	for i := range resolveAbsentPairThreshold {
+		v = spread.miss(playingBy(fmt.Sprintf("mac-%d", i), "100"), false)
 	}
-	if cause != causeAllClientsAbsent {
-		t.Errorf("cause for a multi-client absence run = %q, want %q", cause, causeAllClientsAbsent)
+	if !v.stalled {
+		t.Errorf("%d distinct absent pairs did not escalate; nothing local explains a readable list carrying none of them", v.absentPairs)
+	}
+	if v.cause != causeAllClientsAbsent {
+		t.Errorf("cause for a multi-pair absence run = %q, want %q", v.cause, causeAllClientsAbsent)
+	}
+
+	// A pair is (client, item), so one client cycling items counts too.
+	items := &resolveStallCounter{}
+	for i := range resolveAbsentPairThreshold {
+		v = items.miss(playingBy("mac-A", fmt.Sprintf("%d", i)), false)
+	}
+	if !v.stalled {
+		t.Error("one client absent for every item it played did not escalate; that client resolves for nothing, which the item axis is there to see")
+	}
+}
+
+func TestResolveStallCounter_pausedEventsNeverJoinTheAbsentPairs(t *testing.T) {
+	// A paused client has no new selection to attribute, so it cannot
+	// contribute a pair however many distinct clients are paused.
+	c := &resolveStallCounter{}
+	for i := range resolveStallThreshold * 2 {
+		ev := notify.PlayEvent{
+			State: "paused", RatingKey: "722798",
+			ClientIdentifier: fmt.Sprintf("zombie-%d", i),
+		}
+		if v := c.miss(ev, false); v.stalled {
+			t.Fatalf("%d paused clients escalated the absence arm", v.absentPairs)
+		}
+	}
+
+	// The unreadable arm must still count them: an unreadable session
+	// list is unreadable whatever state the announcement carries.
+	unreadable := &resolveStallCounter{}
+	var v stallVerdict
+	for range resolveStallThreshold {
+		v = unreadable.miss(notify.PlayEvent{State: "paused", RatingKey: "1", ClientIdentifier: "mac-A"}, true)
+	}
+	if !v.stalled || v.cause != causeSessionsUnreadable {
+		t.Errorf("a sustained unreadable run of paused events = (%v, %q), want (true, %q); excluding paused from the absence arm must not blind the read arm", v.stalled, v.cause, causeSessionsUnreadable)
 	}
 }
 
@@ -1179,28 +1286,30 @@ func TestResolveStallCounter_anEmptyClientIsNotASecondClient(t *testing.T) {
 	// would make a run of them look like a fleet-wide failure.
 	c := &resolveStallCounter{}
 	for range resolveStallThreshold * 2 {
-		if stalled, n, _ := c.miss("", false); stalled {
-			t.Fatalf("a %d-long run of client-less notifications escalated as if many clients were absent", n)
+		if v := c.miss(playingBy("", "100"), false); v.stalled {
+			t.Fatalf("a %d-long run of client-less notifications escalated as if many clients were absent", v.consecutive)
 		}
 	}
 }
 
-func TestResolveStallCounter_successClearsTheClientSpread(t *testing.T) {
-	// A success ends the run, so the clients seen before it must not
-	// combine with the clients seen after into a false spread.
+func TestResolveStallCounter_successClearsTheAbsentPairs(t *testing.T) {
+	// A success ends the run, so pairs seen before it must not combine
+	// with pairs seen after into a false spread.
 	c := &resolveStallCounter{}
-	c.miss("mac-A", false)
+	for i := range resolveAbsentPairThreshold - 1 {
+		c.miss(playingBy(fmt.Sprintf("before-%d", i), "100"), false)
+	}
 	c.success()
-	for range resolveStallThreshold * 2 {
-		if stalled, n, _ := c.miss("mac-B", false); stalled {
-			t.Fatalf("a %d-long single-client run escalated because a client from BEFORE the last success was still counted", n)
+	for i := range resolveAbsentPairThreshold - 1 {
+		if v := c.miss(playingBy(fmt.Sprintf("after-%d", i), "100"), false); v.stalled {
+			t.Fatalf("%d pairs escalated because pairs from BEFORE the last success were still counted", v.absentPairs)
 		}
 	}
 }
 
 func TestResolveStallCounter_successWithoutStallIsNotRecovery(t *testing.T) {
 	c := &resolveStallCounter{}
-	c.miss("mac-A", false) // a normal race, well below the threshold
+	c.miss(playingBy("mac-A", "100"), false) // a normal race, well below the threshold
 
 	if recovered, _ := c.success(); recovered {
 		t.Error("a success after an ordinary sub-threshold race reported recovery; nothing warned, so nothing recovered")
@@ -1212,7 +1321,7 @@ func TestResolveStallCounter_nilCountsNothing(t *testing.T) {
 	// so a nil counter must be inert rather than panic.
 	var c *resolveStallCounter
 	for range resolveStallThreshold + 1 {
-		if stalled, _, _ := c.miss("mac-A", true); stalled {
+		if v := c.miss(playingBy("mac-A", "100"), true); v.stalled {
 			t.Fatal("a nil counter escalated")
 		}
 	}
@@ -1236,18 +1345,18 @@ func TestResolvePlayEventUser_unresolvedSessionCountsTowardStall(t *testing.T) {
 	}
 
 	// The session list reads fine and carries nothing, so each lookup is
-	// an absence. It must still accumulate: the run length is what a
-	// second client turns into a stall.
-	for i := range resolveStallThreshold - 1 {
+	// an absence. Driving only the production resolver must reach the
+	// stall, rather than needing the counter's own API to get there.
+	buf := captureLogs(t, slog.LevelDebug)
+	for i := range resolveAbsentPairThreshold {
 		adapter.resolvePlayEventUser(t.Context(),
 			notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: fmt.Sprintf("mac-%d", i)})
 	}
-	stalled, n, cause := counter.miss("mac-last", false)
-	if !stalled {
-		t.Errorf("session-lookup absences did not accumulate toward the stall signal (run reached %d); a real lookup failure must reach the threshold through the production resolver, not only through the counter's own API", n)
+	if !strings.Contains(buf.String(), "user resolution stalled") {
+		t.Errorf("session-lookup absences did not accumulate toward the stall signal: %q\nA real lookup failure must reach the threshold through the production resolver", buf.String())
 	}
-	if cause != causeAllClientsAbsent {
-		t.Errorf("cause = %q, want %q; every client was absent from a list the resolver could read", cause, causeAllClientsAbsent)
+	if !strings.Contains(buf.String(), "cause="+string(causeAllClientsAbsent)) {
+		t.Errorf("cause was not %q; every client was absent from a list the resolver could read: %q", causeAllClientsAbsent, buf.String())
 	}
 }
 
@@ -1273,8 +1382,8 @@ func TestResolvePlayEventUser_successClearsTheStallRun(t *testing.T) {
 		notify.PlayEvent{State: "playing", RatingKey: "100", ClientIdentifier: "mac-B"}); !ok {
 		t.Fatal("resolvePlayEventUser did not attribute a resolvable session")
 	}
-	if stalled, n, _ := counter.miss("mac-B", false); stalled || n != 1 {
-		t.Errorf("run after a success = (%v, %d), want (false, 1); a success must clear the run or transient races accumulate into a false stall", stalled, n)
+	if v := counter.miss(playingBy("mac-B", "100"), false); v.stalled || v.consecutive != 1 {
+		t.Errorf("run after a success = (%v, %d), want (false, 1); a success must clear the run or transient races accumulate into a false stall", v.stalled, v.consecutive)
 	}
 }
 
