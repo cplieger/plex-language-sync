@@ -15,10 +15,15 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 \
     go build -trimpath -ldflags="-s -w" -o /plex-language-sync .
+COPY LICENSE NOTICE ./
+COPY scripts/collect-licenses.sh scripts/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    sh scripts/collect-licenses.sh --name plex-language-sync .
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 COPY --chmod=755 --from=builder /plex-language-sync /plex-language-sync
+COPY --from=builder /out/usr/share/licenses /usr/share/licenses
 USER nonroot:nonroot
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
     CMD ["/plex-language-sync", "health"]
