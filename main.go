@@ -129,6 +129,15 @@ func run() int {
 	// key (derived above) makes user-token decryption work offline on restart.
 	c := cache.New()
 	c.SetEncryptionKey(encKey)
+	if err := cache.CheckWritable(ctx, cacheDir); err != nil {
+		marker.Set(false)
+		if ctx.Err() != nil {
+			slog.Info("shutdown requested during startup", "cause", context.Cause(ctx))
+			return 0
+		}
+		logCacheUnwritable(cacheDir, err)
+		return 1
+	}
 	if err := c.Load(cacheDir); err != nil {
 		slog.Warn("cache load incomplete, affected sections starting fresh", "error", err)
 	}
@@ -267,6 +276,19 @@ func run() int {
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
 	return 0
+}
+
+// logCacheUnwritable names the remedy for a failed startup writability check.
+// A mode the filesystem would not store is an ACL or mount-option problem,
+// which ownership changes cannot fix.
+func logCacheUnwritable(dir string, err error) {
+	if errors.Is(err, atomicfile.ErrModeNotStored) {
+		slog.Error("cache directory cannot hold owner-only files; remove the inherited ACL or mount option that widens new files, since the cache keeps user tokens",
+			"path", dir, "error", err)
+		return
+	}
+	slog.Error("cache directory is not writable; give the container user write access to it",
+		"path", dir, "error", err)
 }
 
 // waitForBackgroundLoops blocks until the user-token-refresh and scheduler

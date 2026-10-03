@@ -2,9 +2,11 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"os"
@@ -167,6 +169,95 @@ func TestCacheSaveRejectsBadDir(t *testing.T) {
 	c := New()
 	if err := c.Save(filepath.Join(f, "subdir")); err == nil {
 		t.Fatal("Save() under a file should return error, got nil")
+	}
+}
+
+func TestCheckWritable_createsMissingDirOwnerOnly(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "config")
+	if err := CheckWritable(t.Context(), dir); err != nil {
+		t.Fatalf("CheckWritable(%q) = %v, want nil", dir, err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("CheckWritable(%q) did not create the directory: %v", dir, err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("CheckWritable(%q) created mode %v, want 0700", dir, got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("CheckWritable(%q) left %v behind, want an empty directory", dir, entries)
+	}
+}
+
+func TestCheckWritable_rejectsDirUnderFile(t *testing.T) {
+	t.Parallel()
+	f := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	dir := filepath.Join(f, "config")
+	if err := CheckWritable(t.Context(), dir); err == nil {
+		t.Errorf("CheckWritable(%q) = nil, want an error for a directory under a regular file", dir)
+	}
+}
+
+func TestCheckWritable_rejectsReadOnlyDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	probe := filepath.Join(dir, ".writability-probe")
+	if f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600); err == nil {
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("this process writes through a 0o500 directory, so a read-only volume cannot be provoked")
+	}
+	if err := CheckWritable(t.Context(), dir); err == nil {
+		t.Errorf("CheckWritable(%q) on a 0500 directory = nil, want an error", dir)
+	}
+}
+
+// stubProbe replaces probeWritable with one returning res; callers must not
+// be parallel.
+func stubProbe(t *testing.T, res atomicfile.ProbeResult) {
+	t.Helper()
+	prev := probeWritable
+	probeWritable = func(context.Context, string, ...atomicfile.Option) (atomicfile.ProbeResult, error) {
+		return res, nil
+	}
+	t.Cleanup(func() { probeWritable = prev })
+}
+
+func TestCheckWritable_teardownFailurePassesWithWarn(t *testing.T) {
+	stubProbe(t, atomicfile.ProbeResult{
+		Dir: "/config", Name: ".probe", Stage: atomicfile.ProbeStageRemove,
+		Err: fs.ErrPermission, Leaked: true,
+	})
+	var err error
+	out := captureSlog(t, func() { err = CheckWritable(t.Context(), "/config") })
+	if err != nil {
+		t.Errorf("CheckWritable with only the probe's unlink failing = %v, want nil", err)
+	}
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "stage=\"remove probe file\"") {
+		t.Errorf("CheckWritable with only the probe's unlink failing logged %q, want a WARN naming the remove stage", out)
+	}
+}
+
+func TestCheckWritable_modeNotStoredIsReachable(t *testing.T) {
+	stubProbe(t, atomicfile.ProbeResult{
+		Dir: "/config", Stage: atomicfile.ProbeStageCreate,
+		Err: fmt.Errorf("%w: asked 0600, stored 0660", atomicfile.ErrModeNotStored),
+	})
+	err := CheckWritable(t.Context(), "/config")
+	if !errors.Is(err, atomicfile.ErrModeNotStored) {
+		t.Errorf("CheckWritable on a mode-widening directory = %v, want an error matching ErrModeNotStored", err)
 	}
 }
 
