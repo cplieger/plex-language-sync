@@ -129,14 +129,8 @@ func run() int {
 	// key (derived above) makes user-token decryption work offline on restart.
 	c := cache.New()
 	c.SetEncryptionKey(encKey)
-	if err := cache.CheckWritable(ctx, cacheDir); err != nil {
-		marker.Set(false)
-		if ctx.Err() != nil {
-			slog.Info("shutdown requested during startup", "cause", context.Cause(ctx))
-			return 0
-		}
-		logCacheUnwritable(cacheDir, err)
-		return 1
+	if code, ok := checkCacheDir(ctx, marker); !ok {
+		return code
 	}
 	if err := c.Load(cacheDir); err != nil {
 		slog.Warn("cache load incomplete, affected sections starting fresh", "error", err)
@@ -276,6 +270,22 @@ func run() int {
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
 	return 0
+}
+
+// checkCacheDir runs the startup writability check on the cache directory and
+// reports whether startup may continue; when it may not, code is the exit code.
+func checkCacheDir(ctx context.Context, marker *health.Marker) (code int, ok bool) {
+	err := cache.CheckWritable(ctx, cacheDir)
+	if err == nil {
+		return 0, true
+	}
+	marker.Set(false)
+	if ctx.Err() != nil {
+		slog.Info("shutdown requested during startup", "cause", context.Cause(ctx))
+		return 0, false
+	}
+	logCacheUnwritable(cacheDir, err)
+	return 1, false
 }
 
 // logCacheUnwritable names the remedy for a failed startup writability check.
