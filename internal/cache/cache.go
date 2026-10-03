@@ -431,6 +431,32 @@ func (c *Cache) Save(dir string) error {
 	return nil
 }
 
+// probeWritable is the seam tests stub to reach probe outcomes a real
+// directory cannot be made to produce.
+var probeWritable = atomicfile.ProbeWritable
+
+// CheckWritable proves dir accepts Save's writes, at Save's modes, so a
+// read-only, wrongly owned or mode-widening volume fails at startup instead
+// of at the first save. A probe whose bytes reached disk passes even when
+// only its close or unlink failed, since Save publishes by rename; that
+// failure is logged at Warn. The returned error wraps the probe's cause, so
+// errors.Is against atomicfile.ErrModeNotStored or fs.ErrPermission works.
+func CheckWritable(ctx context.Context, dir string) error {
+	res, err := probeWritable(ctx, dir,
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+	if err != nil {
+		return err
+	}
+	if !res.Writable() {
+		return fmt.Errorf("%s: %s: %w", res.Dir, res.Stage, res.Err)
+	}
+	if !res.OK() {
+		slog.Warn("cache: directory accepts writes but the writability probe's cleanup failed",
+			"dir", res.Dir, "stage", res.Stage.String(), "leaked", res.Leaked, "error", res.Err)
+	}
+	return nil
+}
+
 // encodeAllForSave prunes stale entries, encrypts user tokens for the
 // on-disk copy (without mutating in-memory state), and marshals the three
 // split-layout payloads under a single lock acquisition so they form one

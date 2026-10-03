@@ -56,6 +56,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
@@ -1434,5 +1435,33 @@ func TestStartupBackoff(t *testing.T) {
 		if got := startupBackoff(n); got <= 0 || got > startupMaxBackoff {
 			t.Errorf("startupBackoff(%d) = %v, want in (0, %v]", n, got, startupMaxBackoff)
 		}
+	}
+}
+
+func TestLogCacheUnwritable_namesTheRemedyForTheCause(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "mode_not_stored",
+			err:  fmt.Errorf("/config: create probe file: %w", atomicfile.ErrModeNotStored),
+			want: `msg="cache directory cannot hold owner-only files;`,
+		},
+		{
+			name: "permission",
+			err:  fmt.Errorf("/config: create probe file: %w", os.ErrPermission),
+			want: `msg="cache directory is not writable; give the container user write access to it"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureLogs(t, slog.LevelInfo)
+			logCacheUnwritable("/config", tc.err)
+			if got := buf.String(); !strings.Contains(got, tc.want) {
+				t.Errorf("logCacheUnwritable(%v) logged %q, want it to contain %q", tc.err, got, tc.want)
+			}
+		})
 	}
 }
