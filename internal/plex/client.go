@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/plexapi/v2"
 )
 
