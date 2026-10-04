@@ -96,7 +96,7 @@ plex-language-sync opens no port.
 
 ## Security
 
-plex-language-sync listens on no port, and connects out only to your Plex server and plex.tv. It never logs your Plex token or writes it to `/config`. The shared users' tokens are kept encrypted in `/config/tokens.json`, so protect that folder. A plain `http://` address to another machine sends the token unencrypted, and the app logs a warning at start when you use one. The image runs as a non-root user on a distroless base, which has no shell. [Security](docs/security.md) has a hardened compose setup.
+plex-language-sync listens on no port, and connects out only to your Plex server and plex.tv. It never logs your Plex token or writes it to `/config`. The shared users' tokens are kept encrypted in `/config/tokens.json`, so protect that folder. A plain `http://` address to another machine sends the token unencrypted, and the app logs a warning at start when you use one. The image runs as a non-root user on a distroless base, which has no shell. [Security](docs/hardening.md) has a hardened compose setup.
 
 ## Troubleshooting
 
@@ -118,7 +118,7 @@ plex-language-sync writes text logs and has no metrics endpoint. Three Loki aler
 - [How plex-language-sync works](docs/how-it-works.md) explains how tracks are matched and chosen, for anyone asking why a show did not follow.
 - [Configuration](docs/configuration.md) covers subtitle matching tiers, leaving shows out, https and the files in `/config`.
 - [Monitoring and alerts](docs/monitoring.md) covers the log lines, the healthcheck and the alert rules.
-- [Security](docs/security.md) covers token handling, a hardened compose setup and what the image contains.
+- [Security](docs/hardening.md) covers token handling, a hardened compose setup and what the image contains.
 
 ## Credits
 
