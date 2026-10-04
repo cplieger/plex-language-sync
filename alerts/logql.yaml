@@ -1,0 +1,93 @@
+# Recommended LogQL alert rules for plex-language-sync, for Loki's ruler.
+# Ship the container's logs to Loki and load this file into Loki's ruler.
+# Firing alerts go through your Alertmanager like any Prometheus alert.
+# Thresholds and severity labels are starting points. Change the container
+# selector to the label your log collector sets, such as job or service.
+groups:
+  - name: plex-language-sync
+    rules:
+      # The deadman. The two rules after it fire on a line the app logged, so a
+      # stalled deep-scan loop that logs nothing goes unnoticed by them while the
+      # WebSocket listener stays connected. This rule fires on silence instead,
+      # keyed on the completion line of the daily deep scan.
+      #
+      # The window is 26h, one interval plus a pass's runtime. The schedule keeps
+      # its phase across restarts through the last-run record on /config, so two
+      # completions sit at most about 24h plus a pass's runtime apart, restarts
+      # included. A container that restarts faster than the time left in its
+      # period still starves the pass, and this window catches that.
+      #
+      # Drop this rule if you set DEEP_SCAN_INTERVAL to off, disabled or 0. The
+      # app then runs without the periodic pass, has no heartbeat to miss, and
+      # the rule would fire forever. Set the window to your interval plus 2h if
+      # you changed it.
+      - alert: PlexLanguageSyncDeepScanStalled
+        expr: |
+          absent_over_time({container="plex-language-sync"} |= `deep analysis completed` [26h])
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "no plex-language-sync deep-analysis heartbeat in 26h"
+          description: >
+            plex-language-sync logs `deep analysis completed` at the end of every
+            deep-scan pass, and none has arrived in 26h. DEEP_SCAN_INTERVAL
+            defaults to 24h. The usual cause is a stalled deep scan, so episodes
+            Plex added while a real-time event was missed get no tracks, and
+            recorded choices are no longer applied again to recent history,
+            while the container stays healthy and connected. Check the container logs for
+            the last `scheduled deep analysis starting` line and whether it
+            finished. This rule cannot tell that apart from a container that
+            never started or was renamed, or a log pipeline that stopped shipping
+            this stream, so rule those out first.
+      - alert: PlexLanguageSyncErrorLog
+        expr: |
+          sum by (container) (count_over_time(
+            {container="plex-language-sync"} |= `level=ERROR` [15m]
+          )) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync emitting repeated ERROR logs"
+          description: >
+            plex-language-sync logged 3 or more ERROR lines in 15m, sustained for
+            5m. ERROR covers only hard failures. One is a fatal startup
+            misconfiguration, such as a bad PLEX_TOKEN, a URL that points at
+            another server, a TLS certificate error, or a /config folder the container cannot write. The app logs it and
+            exits, so the container restarts in a loop. The others are a
+            WebSocket connection that keeps failing to reconnect and a failed
+            cache save on shutdown. An unreachable Plex server at startup is
+            not one of them. The container then starts healthy and retries at
+            WARN, so it never fires this alert. The healthcheck ignores the
+            WebSocket state, because the listener reconnects by itself, so
+            nothing else reports a container that is up and failing.
+      - alert: PlexLanguageSyncResolutionStalled
+        expr: |
+          sum by (container) (count_over_time(
+            {container="plex-language-sync"} |= `user resolution stalled` [30m]
+          )) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync is attributing no playback to any user"
+          description: >
+            plex-language-sync stopped attributing playback to a user. It
+            identifies the viewer by matching each playback notification with
+            the server's active sessions, and it skips an event it cannot
+            attribute rather than writing a language choice under the wrong
+            user. Read the `cause` field first, because the two causes have
+            different fixes. With `sessions_unreadable`, the active-session list
+            could not be read for 20 events in a row, so check that PLEX_TOKEN
+            still has admin rights and that the server answers. With
+            `all_clients_absent`, the list was read every time but 5 different
+            client and item pairs were missing from it, so the matching itself
+            is failing. The `absent_pairs` field carries that count. Repetition
+            alone never fires this alert, and a paused client never counts
+            toward it, because three normal cases look like a missing session.
+            Plex announces playback a few seconds before the session can be
+            read, an idle web client keeps announcing a finished item while its
+            tab stays open, and a client whose session Plex removed keeps
+            announcing it as paused. Individual skips log at DEBUG. The app
+            logs "user resolution recovered" once playback is attributed again.
