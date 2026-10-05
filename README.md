@@ -128,7 +128,7 @@ plex-language-sync writes text logs and has no metrics endpoint. Three Loki aler
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), and open an issue first for larger changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 
