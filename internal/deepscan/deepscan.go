@@ -1,42 +1,11 @@
-// Package deepscan owns the periodic deep-analysis tick and its
-// sub-workers (recent-history replay + recently-added sweep). Named for what
-// it does rather than "scheduler": that name belongs to the first-party
-// scheduler library this package consumes, and the collision forced a
-// schedlib alias on the library at every use.
-//
-// Responsibilities:
-//   - Schedule a periodic deep-analysis run on a fixed Go-duration
-//     interval (default 24h), matching the fleet docker-*-scheduler
-//     convention: one pass at startup (when the last run is older than
-//     one interval) plus a time.Ticker every interval thereafter. The
-//     pass is a safety net over the real-time WebSocket listener, so a
-//     drifting wall-clock start hour is immaterial; using an interval
-//     rather than an absolute HH:MM boundary means the app reads no
-//     local wall-clock time (no TZ / time/tzdata dependency).
-//   - Fan out per-item work across a bounded worker pool
-//     with a circuit breaker that aborts the
-//     pass after a threshold of consecutive per-item failures.
-//   - Persist the last-run record in a scheduler.Stamp file on the
-//     persistent volume so a cold restart does not double-run the
-//     analysis.
-//
-// Stable contracts preserved (keep these exact: Loki alerts grep the log
-// strings):
-//   - WARN slog keys ("scheduler: aborting history processing after
-//     consecutive failures", "scheduler: failed to fetch history",
-//     "scheduler: failed to fetch sections", "scheduler: deep analysis
-//     already in progress, skipping") byte-for-byte identical.
-//   - INFO slog keys ("scheduler enabled", "scheduled deep analysis
-//     starting", "running initial deep analysis", "deep analysis
-//     completed", "scheduler: processing recently added episode",
-//     "scheduler stopped") identical.
-//
-// Consumer note: every collaborator is an interface THIS package declares (see
-// deps.go) — plexReader, EpisodeReader, runLedger, skipChecker and Syncer, each
-// naming only the methods the pass calls. Nothing is imported from a shared
-// contract package, and Syncer in particular is declared here rather than
-// imported so deepscan needs no dependency on internal/tracksync. In practice
-// main.go wires the concrete *tracksync.Syncer through.
+// Package deepscan owns the periodic deep-analysis pass (recent-history replay
+// plus recently-added sweep) over a bounded worker pool whose circuit breaker
+// aborts after consecutive per-item failures. It runs on a Go-duration interval
+// (default 24h), so it reads no wall-clock time, and a scheduler.Stamp file
+// keeps a cold restart from double-running. alerts/logql.yaml matches "deep
+// analysis completed" and docs/monitoring.md names "scheduled deep analysis
+// starting": keep both exact. Every collaborator is an interface declared in
+// deps.go, so deepscan imports no internal/tracksync.
 package deepscan
 
 import (
@@ -182,8 +151,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.deepAnalysis(ctx)
 	}
 
-	// Fixed-interval scheduling via scheduler.RunLoop (the fleet
-	// docker-*-scheduler convention). FireOnStart is false: the conditional
+	// Fixed-interval scheduling via scheduler.RunLoop, like the cplieger
+	// docker-*-scheduler images. FireOnStart is false: the conditional
 	// startup pass above already handled the immediate run (RunLoop's
 	// unconditional FireOnStart would ignore the last-run stamp and double-run
 	// on a recent restart), and FirstDelay phases the first tick from the

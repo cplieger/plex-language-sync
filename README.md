@@ -35,7 +35,7 @@ services:
     image: ghcr.io/cplieger/plex-language-sync:latest
     container_name: plex-language-sync
     restart: unless-stopped
-    stop_grace_period: 20s  # time to save what it learned on stop, Docker's 10s default is too short
+    stop_grace_period: 20s  # time to save what it learned on stop. Docker's 10s default is too short
     # Run "sudo mkdir -p /opt/appdata/plex-language-sync && sudo chown 1000:1000 /opt/appdata/plex-language-sync"
     # before the first start, or nothing it learns is saved. If .env sets PUID and PGID, use those numbers.
     user: "${PUID:-1000}:${PGID:-1000}"
@@ -72,7 +72,7 @@ Settings are environment variables. The app reads them once at start, so restart
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `PLEX_URL` | Address of your Plex server, with scheme and port, such as `http://192.0.2.10:32400` | required |
+| `PLEX_URL` | Address of your Plex server, with scheme and port, such as `http://192.0.2.10:32400`. `PLEX_URL_FILE` reads it from a file instead | required |
 | `PLEX_TOKEN` | Plex token of the server's owner. `PLEX_TOKEN_FILE` reads it from a file instead | required |
 | `UPDATE_LEVEL` | `show` changes the whole show, `season` only the current season | `show` |
 | `UPDATE_STRATEGY` | `all` changes every episode in scope, `next` only the episodes after the one played | `all` |

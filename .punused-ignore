@@ -104,21 +104,11 @@ function NewFromHTTP is used in test only
 
 
 # ---------------------------------------------------------------------------
-# The Plex stream-type enum, after internal/streams adopted plexapi.Stream.
-# Structural: production stopped naming the enum, and the names exist for the
-# construction sites.
-#
-# streams.Stream now embeds plexapi.Stream, which promotes the two predicates
-# this package used to declare byte-identically (IsAudio, IsSubtitle) — and
-# those two were the last production readers of the local enum. Production
-# reads a stream's kind only through the promoted methods now, so the three
-# names below are named by tests alone: 145 construction sites in
-# internal/streams' own tests, 67 in internal/tracksync's, plus
-# streams_test.go's `const streamTypeVideo StreamType = 1`. They stay as
-# aliases onto plexapi's declarations because the alternative is rewriting
-# those 212 sites onto the library's spelling to say the same thing — easing a
-# move to a new home is exactly what the rulebook (§11) licenses an alias for,
-# and StreamTypeAudio is the app's own vocabulary at every one of them.
+# The Plex stream-type enum. Structural: production reads a stream's kind only
+# through the IsAudio and IsSubtitle that plexapi.Stream promotes into
+# streams.Stream, so these names exist for the 212 construction sites in the
+# internal/streams and internal/tracksync tests. They stay as aliases onto
+# plexapi's declarations because they are the app's own vocabulary there.
 class StreamType is used in test only
 constant StreamTypeAudio is used in test only
 constant StreamTypeSubtitle is used in test only
