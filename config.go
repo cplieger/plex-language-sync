@@ -215,14 +215,13 @@ func splitTrim(s string) []string {
 }
 
 // loadSchedulerInterval parses DEEP_SCAN_INTERVAL and reports the daily
-// deep-analysis cadence and whether the scheduler runs at all. The value
-// is a Go duration ("24h", "12h"), matching the fleet docker-*-scheduler
-// convention. The sentinels "off" and "disabled" (case-insensitive) or a
-// zero duration ("0", "0s") disable the scheduler entirely: the app then
-// runs WebSocket-only (the daily pass is a safety net over the real-time
-// listener, and there is no external trigger). Unset defaults to
-// defaultSchedulerInterval, enabled. Any other parse failure falls back
-// to the default (enabled) with a warning rather than refusing to start.
+// deep-analysis cadence and whether the scheduler runs at all. The value is a
+// Go duration ("24h", "12h"), like the cplieger docker-*-scheduler images. The
+// sentinels "off" and "disabled" (case-insensitive) or a zero duration ("0",
+// "0s") disable the scheduler: the app then runs WebSocket-only, since the daily
+// pass is a safety net over the real-time listener. Unset defaults to
+// defaultSchedulerInterval, enabled. Any other parse failure falls back to the
+// default (enabled) with a warning rather than refusing to start.
 func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 	interval = defaultSchedulerInterval
 	enabled = true

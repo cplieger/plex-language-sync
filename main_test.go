@@ -1284,7 +1284,7 @@ func TestResolveStallCounter_pausedEventsNeverJoinTheAbsentPairs(t *testing.T) {
 func TestResolveStallCounter_anEmptyClientIsNotASecondClient(t *testing.T) {
 	// A notification carrying no clientIdentifier is one recognisable
 	// condition, not a distinct client per event. Counting each as new
-	// would make a run of them look like a fleet-wide failure.
+	// would make a run of them look like a failure across every client.
 	c := &resolveStallCounter{}
 	for range resolveStallThreshold * 2 {
 		if v := c.miss(playingBy("", "100"), false); v.stalled {

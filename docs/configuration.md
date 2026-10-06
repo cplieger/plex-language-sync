@@ -8,9 +8,9 @@ Every setting is an environment variable, set in `.env` or in the `environment:`
 
 A misspelled value for `UPDATE_LEVEL`, `UPDATE_STRATEGY`, `SUBTITLE_MATCH_TIER`, `DEEP_SCAN_INTERVAL` or `LOG_LEVEL` logs a warning and falls back to the default, so the app still starts. A negative `DEEP_SCAN_INTERVAL` is treated the same way. Set `DEEP_SCAN_INTERVAL` to `off`, `disabled` or a zero duration such as `0` or `0s` to turn the deep scan off. `LOG_LEVEL` ignores case, accepts `warning` for `warn`, and accepts an offset such as `info+2`. A missing or blank `PLEX_URL` or `PLEX_TOKEN` stops the start with an error that names the variable.
 
-## Keeping the token in a file
+## Keeping the token and address in files
 
-Set `PLEX_TOKEN_FILE` to the path of a file inside the container, instead of `PLEX_TOKEN`, to read the token from [a Docker secret](https://github.com/cplieger/docs/blob/main/docs/hardening.md#secrets-in-files). One trailing line ending is removed, and so is any space around the token.
+Set `PLEX_URL_FILE` and `PLEX_TOKEN_FILE` to the path of a file inside the container, instead of `PLEX_URL` and `PLEX_TOKEN`, to read each value from [a Docker secret](https://github.com/cplieger/docs/blob/main/docs/hardening.md#secrets-in-files). One trailing line ending is removed, and so is any space around the value.
 
 ## Leaving shows and libraries out
 
