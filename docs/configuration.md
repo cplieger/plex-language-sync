@@ -10,7 +10,7 @@ A misspelled value for `UPDATE_LEVEL`, `UPDATE_STRATEGY`, `SUBTITLE_MATCH_TIER`,
 
 ## Keeping the token in a file
 
-Set `PLEX_TOKEN_FILE` to the path of a file inside the container, instead of `PLEX_TOKEN`, to read the token from a Docker secret. One trailing line ending is removed, and so is any space around the token.
+Set `PLEX_TOKEN_FILE` to the path of a file inside the container, instead of `PLEX_TOKEN`, to read the token from [a Docker secret](https://github.com/cplieger/docs/blob/main/docs/hardening.md#secrets-in-files). One trailing line ending is removed, and so is any space around the token.
 
 ## Leaving shows and libraries out
 

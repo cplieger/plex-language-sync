@@ -25,7 +25,7 @@ A plain `http://` Plex address to another machine sends the token unencrypted, a
 
 ## Hardened compose settings
 
-The image runs without root and needs no extra privileges, so it also runs with a read-only root filesystem and no Linux capabilities. Add these lines to the service in `compose.yaml`:
+The image runs without root and needs no extra privileges, so it also runs with a read-only root filesystem and no Linux capabilities. Add these lines to the service in `compose.yaml`. [Hardening a compose file](https://github.com/cplieger/docs/blob/main/docs/hardening.md) explains each setting.
 
 ```yaml
     read_only: true
