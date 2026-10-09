@@ -18,19 +18,11 @@
 //   - Seed a new/updated episode for all users
 //     (ProcessNewOrUpdatedEpisodeAllUsers): per-user intent first, then
 //     a lazily-searched shared reference episode, then the learned
-//     language profile (ApplyLanguageProfile).
+//     language profile (applyLanguageProfile).
 //
-// Inviolate contracts preserved (see refactor-agent-guide.md):
-//   - Plex HTTP URL paths and query parameters — this package never
-//     constructs URLs directly; it calls through plexReader /
-//     plexWriter, so the concrete plex.Client's verbatim path
-//     strings remain the single source of truth (inviolate item 1/9).
-//   - WARN / ERROR slog keys ("failed to set audio stream", "failed to
-//     set subtitle stream", "failed to disable subtitles", "language
-//     update complete", "new/updated episode language set", "failed to
-//     fetch episodes for update", "failed to fetch show episodes for
-//     reference") are byte-for-byte identical to the pre-extraction
-//     log lines (inviolate item 5).
+// This package never constructs Plex URLs: it calls through plexReader /
+// plexWriter, so the concrete plex.Client's path strings remain the single
+// source of truth.
 //
 // Consumer note: tracksync depends on plexReader, plexWriter,
 // cacheStore, and userLookup (not on the concrete internal/plex,
@@ -59,7 +51,7 @@ type Config struct {
 	UpdateLevel    string         // "show" (default) or "season"
 	UpdateStrategy string         // "all" (default) or "next"
 	// SubtitleFloor is the furthest language distance a subtitle substitution
-	// may reach. Audio is not configurable and is fixed at streams.AudioFloor.
+	// may reach. Audio is not configurable; the streams package fixes its floor.
 	SubtitleFloor    langtag.Tier
 	LanguageProfiles bool // enable learn/apply language profiles
 }
@@ -86,7 +78,7 @@ type Syncer struct {
 	plex       plexReader // admin-scoped reader
 	cache      cacheStore
 	users      userLookup
-	userClient UserClientFunc
+	userClient userClientFunc
 	cfg        Config
 }
 
@@ -104,7 +96,7 @@ type Deps struct {
 	// UserClient returns the per-user write client for a username; the write
 	// path is user-scoped because Plex records selection writes against the
 	// requesting token.
-	UserClient UserClientFunc
+	UserClient userClientFunc
 }
 
 // New constructs a Syncer from cfg and deps. Fields stay unexported so
@@ -284,7 +276,7 @@ func (s *Syncer) propagate(
 			break
 		}
 		ep := &episodes[i]
-		if s.UpdateEpisodeStreams(ctx, userClient, username, plex.RatingKey(ep.RatingKey), ref) {
+		if s.updateEpisodeStreams(ctx, userClient, username, plex.RatingKey(ep.RatingKey), ref) {
 			changes++
 		}
 	}
@@ -302,7 +294,7 @@ func (s *Syncer) propagate(
 	}
 }
 
-// UpdateEpisodeStreams applies reference audio/subtitle streams to a
+// updateEpisodeStreams applies reference audio/subtitle streams to a
 // single episode using the provided per-user client. Returns true when
 // any change was written.
 //
@@ -312,7 +304,7 @@ func (s *Syncer) propagate(
 // rating key is a username. Every method on plexReader already takes the
 // typed key, so the conversion belongs at the caller, where a wire-decoded
 // Episode.RatingKey becomes one.
-func (s *Syncer) UpdateEpisodeStreams(
+func (s *Syncer) updateEpisodeStreams(
 	ctx context.Context,
 	userClient PlexReadWriter,
 	username string,
@@ -333,12 +325,12 @@ func (s *Syncer) UpdateEpisodeStreams(
 	cur := streams.Selected(full)
 	changed := false
 
-	changed = s.applyAudioStream(ctx, userClient, username, full, partID, ref, cur.Audio) || changed
+	changed = applyAudioStream(ctx, userClient, username, full, partID, ref, cur.Audio) || changed
 	changed = s.applySubtitleStream(ctx, userClient, username, full, partID, ref, cur.Subtitle) || changed
 	return changed
 }
 
-func (s *Syncer) applyAudioStream(
+func applyAudioStream(
 	ctx context.Context,
 	userClient plexWriter,
 	username string,
@@ -375,8 +367,8 @@ func (s *Syncer) applySubtitleStream(
 
 	// Policy: "no subtitle means no subtitle." If the reference episode
 	// has no subtitle selected, disable any subtitle currently selected
-	// on the target. streams.MatchSubtitle will return nil for
-	// ref.Subtitle==nil (see streams.SubtitleCriteria) so we never auto-
+	// on the target. streams.MatchSubtitle returns nil for
+	// ref.Subtitle==nil so we never auto-
 	// enable forced subs in the audio language — that would override the
 	// user's explicit choice of "no subtitles".
 	if ref.Subtitle == nil {
@@ -460,9 +452,6 @@ func logAttrs(ep *streams.Episode, username, kind string, ref, matched *streams.
 // learnProfileFromReference records the user's active audio→subtitle
 // pairing into the cache when language profiles are enabled and the
 // audio has a language code.
-//
-// Placed after the exported methods of *Syncer to satisfy funcorder
-// (ObserveAndPropagate is its only caller).
 func (s *Syncer) learnProfileFromReference(userID string, ref streams.Pair) {
 	if !s.cfg.LanguageProfiles || ref.Audio == nil || ref.Audio.LanguageCode == "" {
 		return

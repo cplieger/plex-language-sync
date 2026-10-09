@@ -20,85 +20,85 @@ func TestMatchAudioStream(t *testing.T) {
 			name: "nil ref returns nil",
 			ref:  nil,
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng"},
 			},
 			wantID: 0,
 		},
 		{
 			name: "exact language match single",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "jpn", Codec: "aac"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Codec: "aac"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac"},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "jpn", Codec: "aac"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "aac"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Codec: "aac"},
 			},
 			wantID: 2,
 		},
 		{
 			name: "no language match returns nil",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "kor"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "kor"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng"},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "jpn"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
 			},
 			wantID: 0,
 		},
 		{
 			name: "prefers matching codec",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "eac3"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "eac3"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac"},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "eac3"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "aac"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "eac3"},
 			},
 			wantID: 2,
 		},
 		{
 			name: "prefers matching channel layout",
 			ref: &Stream{
-				ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng",
+				ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng",
 				Codec: "aac", AudioChannelLayout: "5.1(side)",
 			},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac", AudioChannelLayout: "stereo"},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac", AudioChannelLayout: "5.1(side)"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "aac", AudioChannelLayout: "stereo"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "aac", AudioChannelLayout: "5.1(side)"},
 			},
 			wantID: 2,
 		},
 		{
 			name: "filters out visual impaired when ref is not",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
 			},
 			wantID: 2,
 		},
 		{
 			name: "prefers visual impaired when ref is",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
 			},
 			wantID: 2,
 		},
 		{
 			name: "filters descriptive tracks",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", Title: "English"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Title: "English"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", Title: "English (Commentary)"},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", Title: "English"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Title: "English (Commentary)"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Title: "English"},
 			},
 			wantID: 2,
 		},
 		{
 			name: "title match boosts score",
 			ref: &Stream{
-				ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng",
+				ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng",
 				DisplayTitle: "English (EAC3 5.1)",
 			},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", DisplayTitle: "English (AAC Stereo)"},
-				{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", DisplayTitle: "English (EAC3 5.1)"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", DisplayTitle: "English (AAC Stereo)"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", DisplayTitle: "English (EAC3 5.1)"},
 			},
 			wantID: 2,
 		},
@@ -129,7 +129,7 @@ func TestMatchSubtitleStream(t *testing.T) {
 			name: "nil ref returns nil",
 			ref:  nil,
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
 			},
 			wantID: 0,
 		},
@@ -137,38 +137,38 @@ func TestMatchSubtitleStream(t *testing.T) {
 			name: "nil ref never matches anything, forced candidates included (no subtitle means no subtitle)",
 			ref:  nil,
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: false},
-				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true},
-				{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn", Forced: false},
+				{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn", Forced: true},
+				{ID: 3, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 			},
 			wantID: 0,
 		},
 		{
 			name: "exact language match",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"},
-				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
+				{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
 			},
 			wantID: 2,
 		},
 		{
 			name: "prefers hearing impaired when ref is",
 			ref: &Stream{
-				ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng",
+				ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng",
 				HearingImpaired: true,
 			},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false},
-				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false},
+				{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
 			},
 			wantID: 2,
 		},
 		{
 			name: "no match returns nil",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "kor"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "kor"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
 			},
 			wantID: 0,
 		},
@@ -189,36 +189,33 @@ func TestMatchSubtitleStream(t *testing.T) {
 }
 
 func TestSubtitleMatchCriteria(t *testing.T) {
-	// The old two-case split ("nil ref nil audio" / "nil ref with audio")
-	// parameterized on a reference-audio argument SubtitleCriteria no longer
-	// takes. "A nil ref must not search for forced subs in the audio language"
-	// is now structural — the function cannot see an audio stream — so one nil
-	// case covers the policy.
+	// subtitleCriteriaFor sees no audio stream, so a nil ref cannot derive
+	// forced-subtitle criteria from the audio language; one nil case covers it.
 	t.Run("nil ref yields no criteria (no subtitle means no subtitle)", func(t *testing.T) {
-		got, ok := SubtitleCriteria(nil)
+		got, ok := subtitleCriteriaFor(nil)
 		if ok {
-			t.Errorf("SubtitleCriteria(nil) = (%+v, true), want ok=false", got)
+			t.Errorf("subtitleCriteriaFor(nil) = (%+v, true), want ok=false", got)
 		}
 	})
 
-	t.Run("criteria come from the reference subtitle's language and flags", func(t *testing.T) {
+	t.Run("criteria come from the reference subtitle's flags", func(t *testing.T) {
 		ref := &Stream{LanguageCode: "eng", Forced: false, HearingImpaired: true}
-		got, ok := SubtitleCriteria(ref)
+		got, ok := subtitleCriteriaFor(ref)
 		if !ok {
-			t.Fatal("SubtitleCriteria(ref) ok = false, want true")
+			t.Fatal("subtitleCriteriaFor(ref) ok = false, want true")
 		}
-		if got.Lang.Language() != "en" || got.ForcedOnly || !got.HearingImpairedOnly {
-			t.Errorf("SubtitleCriteria(ref) = {lang %q forced %v hi %v}, want {en false true}",
-				got.Lang.Language(), got.ForcedOnly, got.HearingImpairedOnly)
+		if got.ForcedOnly || !got.HearingImpairedOnly {
+			t.Errorf("subtitleCriteriaFor(ref) = {forced %v hi %v}, want {false true}",
+				got.ForcedOnly, got.HearingImpairedOnly)
 		}
 	})
 }
 
 func TestMatchSubtitleStreamNilRefReturnsNil(t *testing.T) {
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "srt"},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "ass"},
-		{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+		{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "srt"},
+		{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn", Forced: true, Codec: "ass"},
+		{ID: 3, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 	}
 	// Forced same-language candidates are present precisely so a nil ref that
 	// leaked the audio language into the criteria would select one; it must not.
@@ -229,10 +226,10 @@ func TestMatchSubtitleStreamNilRefReturnsNil(t *testing.T) {
 }
 
 func TestMatchSubtitleStreamNoLanguageMatch(t *testing.T) {
-	ref := &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "kor"}
+	ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "kor"}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"},
+		{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
+		{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
 	}
 	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got != nil {
@@ -242,13 +239,13 @@ func TestMatchSubtitleStreamNoLanguageMatch(t *testing.T) {
 
 func TestMatchSubtitleStreamHIOnly(t *testing.T) {
 	ref := &Stream{
-		ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng",
+		ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng",
 		HearingImpaired: true,
 	}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
-		{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true, Codec: "srt"},
+		{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false},
+		{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true},
+		{ID: 3, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true, Codec: "srt"},
 	}
 	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil {
@@ -320,9 +317,9 @@ func TestShouldSkipSubtitleForCommentary(t *testing.T) {
 }
 
 func TestMatchAudioStreamSingleCandidate(t *testing.T) {
-	ref := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac"}
+	ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "aac"}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "eac3"},
+		{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "eac3"},
 	}
 	got := MatchAudio(ref, candidates)
 	if got == nil || got.ID != 1 {
@@ -332,12 +329,12 @@ func TestMatchAudioStreamSingleCandidate(t *testing.T) {
 
 func TestMatchAudioStreamDescriptiveFiltering(t *testing.T) {
 	ref := &Stream{
-		ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng",
+		ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng",
 		ExtendedDisplayTitle: "English (AAC Stereo)",
 	}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"},
-		{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (AAC Stereo)"},
+		{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"},
+		{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (AAC Stereo)"},
 	}
 	got := MatchAudio(ref, candidates)
 	if got == nil || got.ID != 2 {
@@ -346,7 +343,7 @@ func TestMatchAudioStreamDescriptiveFiltering(t *testing.T) {
 }
 
 func TestMatchAudioStreamEmptyCandidates(t *testing.T) {
-	ref := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng"}
+	ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng"}
 	got := MatchAudio(ref, nil)
 	if got != nil {
 		t.Error("expected nil for empty candidates")
@@ -357,10 +354,10 @@ func TestMatchAudioStreamEmptyCandidates(t *testing.T) {
 
 func TestMatchAudioStreamVisualImpairedPreference(t *testing.T) {
 	t.Run("VI ref prefers VI candidate", func(t *testing.T) {
-		ref := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true}
+		ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true}
 		candidates := []*Stream{
-			{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
-			{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
+			{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
+			{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
 		}
 		got := MatchAudio(ref, candidates)
 		if got == nil || got.ID != 2 {
@@ -369,10 +366,10 @@ func TestMatchAudioStreamVisualImpairedPreference(t *testing.T) {
 	})
 
 	t.Run("non-VI ref filters out VI", func(t *testing.T) {
-		ref := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false}
+		ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false}
 		candidates := []*Stream{
-			{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
-			{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
+			{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true},
+			{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false},
 		}
 		got := MatchAudio(ref, candidates)
 		if got == nil || got.ID != 2 {
@@ -380,13 +377,6 @@ func TestMatchAudioStreamVisualImpairedPreference(t *testing.T) {
 		}
 	})
 }
-
-// TestMatchSubtitleStreamMultipleForced was deleted with MatchSubtitle's
-// reference-audio parameter: it asserted that a nil subtitle ref combined with
-// an audio ref does not search for forced subs in the audio language, which was
-// only expressible while the function took an audio ref. The policy is now
-// structural, and TestMatchSubtitleStreamNilRefReturnsNil plus the table's
-// forced-candidate case still pin the nil-ref behaviour.
 
 func TestMatchAudioStreamNeverPanics(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -440,14 +430,14 @@ func TestMatchSubtitleStreamNeverPanics(t *testing.T) {
 
 func TestMatchAudioStreamPrefersSameCodecAndLayout(t *testing.T) {
 	ref := &Stream{
-		ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng",
+		ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng",
 		Codec: "truehd", AudioChannelLayout: "7.1",
 		Channels: 8,
 	}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "aac", AudioChannelLayout: "stereo", Channels: 2},
-		{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "truehd", AudioChannelLayout: "7.1", Channels: 8},
-		{ID: 3, StreamType: StreamTypeAudio, LanguageCode: "eng", Codec: "eac3", AudioChannelLayout: "5.1(side)", Channels: 6},
+		{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "aac", AudioChannelLayout: "stereo", Channels: 2},
+		{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "truehd", AudioChannelLayout: "7.1", Channels: 8},
+		{ID: 3, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Codec: "eac3", AudioChannelLayout: "5.1(side)", Channels: 6},
 	}
 	got := MatchAudio(ref, candidates)
 	if got == nil || got.ID != 2 {
@@ -457,13 +447,13 @@ func TestMatchAudioStreamPrefersSameCodecAndLayout(t *testing.T) {
 
 func TestMatchSubtitleStreamPrefersSameCodecAndFlags(t *testing.T) {
 	ref := &Stream{
-		ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng",
+		ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng",
 		Forced: false, HearingImpaired: false, Codec: "srt",
 		Title: "English",
 	}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "ass", Title: "English"},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "srt", Title: "English"},
+		{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "ass", Title: "English"},
+		{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: false, Codec: "srt", Title: "English"},
 	}
 	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil || got.ID != 2 {
@@ -574,36 +564,36 @@ func TestMatchSubtitle_ForcedOnly(t *testing.T) {
 	}{
 		{
 			name: "forced ref excludes non-forced candidate",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
-				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
+				{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 			},
 			wantID: 2,
 		},
 		{
 			name: "forced ref with no forced candidate returns nil",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
-				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
+				{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: false},
 			},
 			wantID: 0,
 		},
 		{
 			name: "forced ref tie-breaks among forced candidates by codec",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "ass"},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "ass"},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "srt"},
-				{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "ass"},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "srt"},
+				{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true, Codec: "ass"},
 			},
 			wantID: 2,
 		},
 		{
 			name: "forced ref ignores forced candidate in wrong language",
-			ref:  &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
+			ref:  &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true},
 			candidates: []*Stream{
-				{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "jpn", Forced: true},
+				{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn", Forced: true},
 			},
 			wantID: 0,
 		},
@@ -631,10 +621,10 @@ func TestMatchSubtitle_ForcedOnly(t *testing.T) {
 // uses non-forced refs, so this interaction is otherwise unpinned even though
 // both branches are statement-covered.
 func TestMatchSubtitleStream_ForcedAndHIRefExcludesNonForced(t *testing.T) {
-	ref := &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: true}
+	ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: true}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: false},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: true},
+		{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: true, HearingImpaired: false},
+		{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Forced: false, HearingImpaired: true},
 	}
 	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil || got.ID != 1 {

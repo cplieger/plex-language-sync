@@ -9,6 +9,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // mkSelectedAudioEpisode builds an episode whose single part carries one
@@ -17,7 +18,7 @@ func mkSelectedAudioEpisode(key string) *streams.Episode {
 	return &streams.Episode{
 		RatingKey: key,
 		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "eng"},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "eng"},
 		}}}}},
 	}
 }
@@ -39,7 +40,7 @@ func countCalls(calls []string, name string) int {
 //
 // given a found reference and two known lookup on a live context
 // when ProcessNewOrUpdatedEpisodeAllUsers runs
-// then the target episode is reloaded once per user (UpdateEpisodeStreams).
+// then the target episode is reloaded once per user (updateEpisodeStreams).
 func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testing.T) {
 	t.Parallel()
 	plx := &fakeapi.Plex{
@@ -53,8 +54,8 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testin
 	}
 	lookup := &fakeUsers{
 		AllResult: []users.Account{
-			{ID: "1", Name: "admin"},
-			{ID: "2", Name: "bob"},
+			{ID: "1"},
+			{ID: "2"},
 		},
 	}
 	s := newSyncer(Config{LanguageProfiles: false}, plx, fakeapi.NewCache(), lookup)
@@ -219,8 +220,8 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 			s := newSyncer(Config{}, tc.plex, fakeapi.NewCache(), &fakeUsers{})
 			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
-			if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
-				t.Fatalf("FindEpisodeReference = %+v, want nil (no usable reference)", ref)
+			if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
+				t.Fatalf("findEpisodeReference = %+v, want nil (no usable reference)", ref)
 			}
 			out := buf.String()
 			if !strings.Contains(out, "reason="+tc.wantReason) {
@@ -234,7 +235,7 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 }
 
 // TestFindEpisodeReference_logsShowEpisodesFetchError pins the
-// get_show_episodes_error observability branch of FindEpisodeReference
+// get_show_episodes_error observability branch of findEpisodeReference
 // (episode.go): when the admin reader's ShowEpisodes call fails, the search
 // returns nil AND emits a WARN carrying the inviolate key "failed to fetch
 // show episodes for reference" and the frozen reason label
@@ -249,8 +250,8 @@ func TestFindEpisodeReference_logsShowEpisodesFetchError(t *testing.T) {
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 
-	if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
-		t.Fatalf("FindEpisodeReference = %+v, want nil when ShowEpisodes errors", ref)
+	if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
+		t.Fatalf("findEpisodeReference = %+v, want nil when ShowEpisodes errors", ref)
 	}
 	out := buf.String()
 	if !strings.Contains(out, "reason=get_show_episodes_error") {
@@ -284,8 +285,8 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T)
 		},
 	}
 	lookup := &fakeUsers{AllResult: []users.Account{
-		{ID: "1", Name: "admin"},
-		{ID: "2", Name: "bob"},
+		{ID: "1"},
+		{ID: "2"},
 	}}
 	s := New(Config{}, Deps{
 		Plex:  plx,
@@ -325,7 +326,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testin
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil}, // no candidate -> ref nil
 	}
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "admin"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
 	c := fakeapi.NewCache()
 	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	s := newSyncer(Config{LanguageProfiles: true}, plx, c, lookup)
@@ -333,8 +334,8 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testin
 		RatingKey:            "100",
 		GrandparentRatingKey: "42",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-			{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+			{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 		}}}}},
 	}
 
@@ -359,12 +360,12 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *te
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
 		EpisodeByKey: map[string]*streams.Episode{
 			"2": {RatingKey: "2", Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
 			}}}}}},
 			"100": targetNeedingAudioSwitch("100"),
 		},
 	}
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "admin"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), lookup)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
 
@@ -426,7 +427,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T
 	plx := &fakeapi.Plex{
 		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil},
 	}
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "admin"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
 	c := fakeapi.NewCache()
 	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 	s := newSyncer(Config{LanguageProfiles: true}, plx, c, lookup)
@@ -434,8 +435,8 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T
 		RatingKey:            "100",
 		GrandparentRatingKey: "42",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-			{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+			{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 		}}}}},
 	}
 

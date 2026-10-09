@@ -46,9 +46,9 @@ const persistentReconnectThreshold = 5
 // per-event work to the sync subsystem.
 //
 // OnPlay is called for each PlaySessionStateNotification entry in a
-// "playing" Notification, unfiltered; the caller applies its own
+// "playing" notification, unfiltered; the caller applies its own
 // relevance policy (see IsRelevantPlayEvent). OnTimeline is called
-// once per Notification with the full TimelineEntry slice so the
+// once per notification with the full TimelineEntry slice so the
 // caller can apply its own per-entry relevance, dedup, or batching
 // policy.
 //
@@ -141,7 +141,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		l.logDisconnect(ctx, err, backoff, stable, reconnects)
+		logDisconnect(ctx, err, backoff, stable, reconnects)
 
 		delay := time.NewTimer(backoff)
 		select {
@@ -176,12 +176,12 @@ func (l *Listener) backoffBounds() (minBackoff, maxBackoff time.Duration) {
 // is expected info-level; dial/read errors stay warnings. A sustained
 // outage leaves the file-marker health green while zero events are
 // processed, so the escalation is the only alertable signal that the
-// container is healthy-but-processing-nothing. The log messages and keys
-// are a frozen Loki contract and must not change.
-func (l *Listener) logDisconnect(ctx context.Context, err error, backoff time.Duration, stable bool, reconnects int) {
+// container is healthy-but-processing-nothing; the shipped error-log alert
+// counts that ERROR.
+func logDisconnect(ctx context.Context, err error, backoff time.Duration, stable bool, reconnects int) {
 	level := slog.LevelWarn
-	reason := ClassifyError(err)
-	if reason == ReasonServerClose {
+	reason := classifyError(err)
+	if reason == reasonServerClose {
 		level = slog.LevelInfo
 	}
 	slog.Log(ctx, level, "websocket disconnected, reconnecting",
@@ -227,7 +227,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		resp.Body.Close()
 	}
 	if err != nil {
-		return false, time.Time{}, fmt.Errorf("%w: %w", ErrDialFailed, err)
+		return false, time.Time{}, fmt.Errorf("%w: %w", errDialFailed, err)
 	}
 	// Stamp stability from handshake success, not dial start: a slow dial
 	// followed by a short real uptime must not be counted as "stable".
@@ -264,7 +264,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		if readErr != nil {
 			return true, handshakeAt, wrapReadError(readErr)
 		}
-		var notif Notification
+		var notif notification
 		if jsonErr := json.Unmarshal(message, &notif); jsonErr != nil {
 			slog.Debug("invalid websocket message", "error", jsonErr)
 			continue
@@ -308,7 +308,7 @@ func (l *Listener) dialClient() *http.Client {
 	// the socket but stalls the HTTP 101 upgrade response would hang the
 	// dial indefinitely. BaseTransport already carries both bounds; the
 	// guards below only harden the fallback path. A transport-level
-	// timeout is NOT context.DeadlineExceeded, so ClassifyError still labels
+	// timeout is NOT context.DeadlineExceeded, so classifyError still labels
 	// it dial_failed (no classify.go change, frozen reason set preserved).
 	if t.ResponseHeaderTimeout == 0 {
 		t.ResponseHeaderTimeout = 30 * time.Second
@@ -326,32 +326,32 @@ func (l *Listener) dialClient() *http.Client {
 }
 
 // wrapReadError wraps a raw conn.Read error with a typed sentinel so
-// ClassifyError can match without substring search. The returned error
-// still wraps readErr (double %w) so callers retain access to the
-// original cause via errors.Unwrap chains.
+// classifyError can match without substring search. The returned error
+// still wraps readErr (double %w) so callers can reach the original
+// cause through errors.Is and errors.As.
 func wrapReadError(readErr error) error {
 	// Read-limit exceeded: the websocket library wraps
 	// websocket.ErrMessageTooBig when the frame exceeds SetReadLimit.
 	if errors.Is(readErr, websocket.ErrMessageTooBig) {
 		slog.Warn("websocket message exceeded read limit",
 			"limit_bytes", wsReadLimitBytes, "error", readErr)
-		return fmt.Errorf("%w: %w", ErrReadLimit, readErr)
+		return fmt.Errorf("%w: %w", errReadLimit, readErr)
 	}
 	// Clean server-close signals: close frames (normal/going-away/
 	// abnormal) via typed CloseError, or plain io.EOF. The close-code
-	// set is shared with ClassifyError via isServerCloseCode so the
+	// set is shared with classifyError via isServerCloseCode so the
 	// two cannot drift apart.
 	if ce, ok := errors.AsType[websocket.CloseError](readErr); ok && isServerCloseCode(ce.Code) {
-		return fmt.Errorf("%w: %w", ErrServerClose, readErr)
+		return fmt.Errorf("%w: %w", errServerClose, readErr)
 	}
 	if errors.Is(readErr, io.EOF) {
-		return fmt.Errorf("%w: %w", ErrServerClose, readErr)
+		return fmt.Errorf("%w: %w", errServerClose, readErr)
 	}
-	return fmt.Errorf("%w: %w", ErrReadError, readErr)
+	return fmt.Errorf("%w: %w", errReadError, readErr)
 }
 
-// dispatch routes a decoded Notification to the Handler.
-func dispatch(ctx context.Context, h Handler, notif *Notification) {
+// dispatch routes a decoded notification to the Handler.
+func dispatch(ctx context.Context, h Handler, notif *notification) {
 	switch notif.NotificationContainer.Type {
 	case wsTypePlaying:
 		for _, ev := range notif.NotificationContainer.PlaySessionStateNotification {

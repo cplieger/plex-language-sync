@@ -11,7 +11,7 @@
 // Field names, types, and JSON tags within each file are an inviolate
 // read-forward / write-back contract across deploys — any change is a
 // migration, not a refactor. A pre-split /config/cache.json (the legacy
-// union schema, see Data) is migrated automatically on first load: its
+// union schema, see cacheData) is migrated automatically on first load: its
 // sections seed anything a split file does not yet cover, the split files
 // are then written eagerly, and the legacy file is removed once all three
 // split files exist on disk. Per-section precedence is
@@ -33,10 +33,6 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// Compile-time assertion that the real store satisfies the contract the shared
-// suite runs against it.
-var _ Contract = (*Cache)(nil)
-
 // maxCacheSize caps each cache file at 50 MB. A file at this size is almost
 // certainly corrupted or deliberately bloated; the loader warns and leaves
 // that section in its reset state rather than truncating the read. Save
@@ -53,10 +49,10 @@ const (
 	legacyCacheFile = "cache.json"
 )
 
-// Data is the in-memory state shape. It doubles as the decode target for
+// cacheData is the in-memory state shape. It doubles as the decode target for
 // the legacy pre-split cache.json union schema; a legacy key with no field
 // here (last_scheduler_run) is ignored on decode.
-type Data struct {
+type cacheData struct {
 	// ProcessedEpisodes tracks recently processed episode keys to avoid
 	// re-processing the same episode on rapid successive events.
 	// Keys carry a subsystem prefix from keys.go:
@@ -97,7 +93,7 @@ type stateData struct {
 // Cache is the concurrent-safe persistent cache. The zero value is usable;
 // prefer New for explicit initialization of the backing maps.
 type Cache struct {
-	data   Data
+	data   cacheData
 	encKey []byte // AES-256 key for user-token encryption at rest; nil = no encryption
 	mu     sync.Mutex
 }
@@ -108,7 +104,7 @@ type Cache struct {
 // intent.
 func New() *Cache {
 	return &Cache{
-		data: Data{
+		data: cacheData{
 			ProcessedEpisodes: make(map[string]int64),
 			LanguageProfiles:  make(map[string]map[string]string),
 			Intents:           make(map[string]map[string]streams.Intent),
@@ -176,7 +172,7 @@ func (c *Cache) Load(dir string) error {
 func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.data = Data{
+	c.data = cacheData{
 		ProcessedEpisodes: make(map[string]int64),
 		LanguageProfiles:  make(map[string]map[string]string),
 		Intents:           make(map[string]map[string]streams.Intent),
@@ -187,7 +183,7 @@ func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 
 	// Legacy baseline: sections whose split file is missing inherit from it.
 	legacyFound, legacyOK := false, false
-	var legacy Data
+	var legacy cacheData
 	if found, lerr := loadJSONFile(filepath.Join(dir, legacyCacheFile), true, &legacy); found {
 		legacyFound = true
 		if lerr != nil {
@@ -223,7 +219,7 @@ func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 
 // applyLegacyLocked seeds in-memory state from a decoded legacy union
 // file, decrypting tokens and normalizing nil maps. Caller holds c.mu.
-func (c *Cache) applyLegacyLocked(legacy *Data) {
+func (c *Cache) applyLegacyLocked(legacy *cacheData) {
 	if legacy.ProcessedEpisodes != nil {
 		c.data.ProcessedEpisodes = legacy.ProcessedEpisodes
 	}
@@ -327,7 +323,7 @@ func (c *Cache) decryptTokensLocked() {
 		return
 	}
 	for uid, val := range c.data.UserTokens {
-		plain, decErr := DecryptToken(c.encKey, val)
+		plain, decErr := decryptToken(c.encKey, val)
 		if decErr != nil {
 			slog.Warn("cache: failed to decrypt user token, will refresh from plex.tv",
 				"user", uid, "error", decErr)
@@ -474,7 +470,7 @@ func (c *Cache) encodeAllForSave() (profiles, tokens, state []byte, err error) {
 	if c.encKey != nil && len(c.data.UserTokens) > 0 {
 		encrypted := make(map[string]string, len(c.data.UserTokens))
 		for uid, plain := range c.data.UserTokens {
-			ct, encErr := EncryptToken(c.encKey, plain)
+			ct, encErr := encryptToken(c.encKey, plain)
 			if encErr != nil {
 				return nil, nil, nil, fmt.Errorf("encrypt token for user %s: %w", uid, encErr)
 			}

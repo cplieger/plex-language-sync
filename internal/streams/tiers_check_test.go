@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // TestAudioAdmitsOnlyTheChosenLanguage is the whole audio contract in one table.
@@ -36,8 +37,8 @@ func TestAudioAdmitsOnlyTheChosenLanguage(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ref := &Stream{StreamType: StreamTypeAudio, LanguageTag: tc.refTag}
-			cand := &Stream{ID: 7, StreamType: StreamTypeAudio, LanguageTag: tc.candTag}
+			ref := &Stream{StreamType: plexapi.StreamTypeAudio, LanguageTag: tc.refTag}
+			cand := &Stream{ID: 7, StreamType: plexapi.StreamTypeAudio, LanguageTag: tc.candTag}
 			got := MatchAudio(ref, []*Stream{cand})
 			if tc.admit && got == nil {
 				t.Errorf("MatchAudio(%s, [%s]) = nil, want the track: %s", tc.refTag, tc.candTag, tc.why)
@@ -80,8 +81,8 @@ func TestSubtitleDefaultFloorAdmits(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ref := &Stream{StreamType: StreamTypeSubtitle, LanguageTag: tc.refTag}
-			cand := &Stream{ID: 7, StreamType: StreamTypeSubtitle, LanguageTag: tc.candTag}
+			ref := &Stream{StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.refTag}
+			cand := &Stream{ID: 7, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.candTag}
 			got := MatchSubtitle(ref, []*Stream{cand}, defaultFloor)
 			if tc.admit != (got != nil) {
 				t.Errorf("MatchSubtitle(%s, [%s], %v) admitted=%v, want %v",
@@ -114,8 +115,8 @@ func TestSubtitleFloorsAreReachableInOrder(t *testing.T) {
 	for name, tc := range firstAdmitting {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ref := &Stream{StreamType: StreamTypeSubtitle, LanguageTag: tc.refTag}
-			cand := &Stream{ID: 7, StreamType: StreamTypeSubtitle, LanguageTag: tc.candTag}
+			ref := &Stream{StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.refTag}
+			cand := &Stream{ID: 7, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.candTag}
 			for _, floor := range floors {
 				admitted := MatchSubtitle(ref, []*Stream{cand}, floor) != nil
 				want := floor >= tc.floor
@@ -139,16 +140,16 @@ func TestNoMatchMeansNoMatch(t *testing.T) {
 		langtag.TierIntelligible, langtag.TierSharedLiteracy,
 	}
 	// A Norwegian reference against an episode carrying nothing Norwegian.
-	audRef := &Stream{StreamType: StreamTypeAudio, LanguageTag: "nb"}
-	subRef := &Stream{StreamType: StreamTypeSubtitle, LanguageTag: "nb"}
+	audRef := &Stream{StreamType: plexapi.StreamTypeAudio, LanguageTag: "nb"}
+	subRef := &Stream{StreamType: plexapi.StreamTypeSubtitle, LanguageTag: "nb"}
 	audCands := []*Stream{
-		{ID: 1, StreamType: StreamTypeAudio, LanguageTag: "en"},
-		{ID: 2, StreamType: StreamTypeAudio, LanguageTag: "sv"},
-		{ID: 3, StreamType: StreamTypeAudio, LanguageTag: "ja"},
+		{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageTag: "en"},
+		{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageTag: "sv"},
+		{ID: 3, StreamType: plexapi.StreamTypeAudio, LanguageTag: "ja"},
 	}
 	subCands := []*Stream{
-		{ID: 4, StreamType: StreamTypeSubtitle, LanguageTag: "en"},
-		{ID: 5, StreamType: StreamTypeSubtitle, LanguageTag: "sv"},
+		{ID: 4, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: "en"},
+		{ID: 5, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: "sv"},
 	}
 	if got := MatchAudio(audRef, audCands); got != nil {
 		t.Errorf("MatchAudio(nb, [en sv ja]) = ID %d, want nil", got.ID)

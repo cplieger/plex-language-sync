@@ -68,29 +68,16 @@ type Part struct {
 	// ID stays a bare int where the embedded plexapi.Stream's is a
 	// number-or-quoted-string FlexInt: /status/sessions is the only
 	// endpoint that quotes these ids, and no session decodes into this
-	// graph (plex.Session declares nothing below Player).
+	// graph (the plex session type declares nothing below Player).
 	ID int `json:"id"`
 }
-
-// StreamType identifies the kind of stream (video, audio, subtitle),
-// aliased onto plexapi.StreamType, which types the promoted
-// Stream.StreamType field.
-type StreamType = plexapi.StreamType
-
-// StreamTypeAudio and StreamTypeSubtitle enumerate the stream-type
-// values the app acts on. Video is whatever answers no to both
-// IsAudio and IsSubtitle, so it needs no constant of its own here.
-const (
-	StreamTypeAudio    = plexapi.StreamTypeAudio
-	StreamTypeSubtitle = plexapi.StreamTypeSubtitle
-)
 
 // Stream is a single audio / subtitle / video stream on a Part.
 //
 // plexapi.Stream is EMBEDDED, not held as a named field, to promote its
 // surface: the 14 wire fields and the IsAudio / IsSubtitle predicates.
 // The outer type carries only what Go forbids declaring on a foreign
-// type: Lang, languageRaw, HasNoLanguage, and TitleForMatch
+// type: Lang, languageRaw, hasNoLanguage, and TitleForMatch
 // (describe.go).
 type Stream struct {
 	plexapi.Stream
@@ -128,7 +115,7 @@ func (s *Stream) languageRaw() string {
 	return s.LanguageCode
 }
 
-// HasNoLanguage reports whether Plex supplied no language at all,
+// hasNoLanguage reports whether Plex supplied no language at all,
 // distinct from supplying one this build cannot parse (see
 // selectByLanguage).
 //
@@ -136,7 +123,7 @@ func (s *Stream) languageRaw() string {
 // (differs from langtag's rule that an unknown tag matches nothing),
 // because propagating across an untagged library is behavior users
 // rely on.
-func (s *Stream) HasNoLanguage() bool {
+func (s *Stream) hasNoLanguage() bool {
 	return strings.TrimSpace(s.LanguageTag) == "" && strings.TrimSpace(s.LanguageCode) == ""
 }
 

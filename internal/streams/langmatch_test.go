@@ -9,12 +9,12 @@ import (
 
 // sub builds a subtitle stream with the language fields Plex actually supplies.
 func sub(id int, code, tag string) *Stream {
-	return &Stream{ID: plexapi.FlexInt(id), StreamType: StreamTypeSubtitle, LanguageCode: code, LanguageTag: tag}
+	return &Stream{ID: plexapi.FlexInt(id), StreamType: plexapi.StreamTypeSubtitle, LanguageCode: code, LanguageTag: tag}
 }
 
 // aud builds an audio stream with the language fields Plex actually supplies.
 func aud(id int, code, tag string) *Stream {
-	return &Stream{ID: plexapi.FlexInt(id), StreamType: StreamTypeAudio, LanguageCode: code, LanguageTag: tag}
+	return &Stream{ID: plexapi.FlexInt(id), StreamType: plexapi.StreamTypeAudio, LanguageCode: code, LanguageTag: tag}
 }
 
 // TestMatchSubtitleFixesReportedBug is the regression test for the issue that
@@ -87,8 +87,8 @@ func TestMatchSubtitleDistinguishesRegionalSpanish(t *testing.T) {
 	}
 }
 
-// TestMatchSubtitleForcedFilterRunsBeforeGrading pins the ordering fix that
-// three design reviewers found independently.
+// TestMatchSubtitleForcedFilterRunsBeforeGrading pins that the forced-only
+// filter runs before language grading.
 //
 // Grading the language first collapses the candidates to the closest tier
 // reached. A hard forced-only filter applied afterwards can then empty that set
@@ -275,7 +275,7 @@ func TestIntentCarriesTheFinerTag(t *testing.T) {
 //
 // The forced flag is a hard requirement and is applied before the language
 // grading; the hearing-impaired flag is a preference and must be applied after.
-// FilterByBoolPref falls back to the whole set only when NOTHING in it matches,
+// filterByBoolPref falls back to the whole set only when NOTHING in it matches,
 // so applying it first lets one hearing-impaired track in an unrelated language
 // capture the candidate set, after which the grading finds nothing acceptable in
 // it and returns no subtitle at all. That is worse than the plain string
@@ -313,7 +313,7 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 	t.Run("the preference still applies within the chosen language", func(t *testing.T) {
 		t.Parallel()
 		// The non-HI track is given the reference's exact title and codec so
-		// ScoreSubtitle favours IT. Only the hearing-impaired preference can
+		// scoreSubtitle favours IT. Only the hearing-impaired preference can
 		// reach the HI track, which is what makes this test detect the stage
 		// being removed rather than passing on scoring alone.
 		ref := sub(10, "eng", "en")
@@ -329,9 +329,9 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 		hi.HearingImpaired = true
 		hi.Codec = "srt"
 
-		if ScoreSubtitle(ref, nonHI) <= ScoreSubtitle(ref, hi) {
-			t.Fatalf("fixture is not adversarial: ScoreSubtitle favours the non-HI track %d vs HI %d, so scoring alone must not be able to pick the HI track",
-				ScoreSubtitle(ref, nonHI), ScoreSubtitle(ref, hi))
+		if scoreSubtitle(ref, nonHI) <= scoreSubtitle(ref, hi) {
+			t.Fatalf("fixture is not adversarial: scoreSubtitle favours the non-HI track %d vs HI %d, so scoring alone must not be able to pick the HI track",
+				scoreSubtitle(ref, nonHI), scoreSubtitle(ref, hi))
 		}
 
 		got := MatchSubtitle(ref, []*Stream{nonHI, hi}, langtag.TierIdentical)

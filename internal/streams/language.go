@@ -6,7 +6,7 @@ import (
 	"github.com/cplieger/langtag/v2"
 )
 
-// AudioFloor is the language distance the audio path accepts, fixed rather
+// audioFloor is the language distance the audio path accepts, fixed rather
 // than configurable.
 //
 // It sits one tier looser than the subtitle default, and the two mean the
@@ -15,7 +15,7 @@ import (
 // differ by "script" purely as an artifact of that inference. Both report
 // languageCode="chi" and matched before this change, so flooring audio at
 // TierSameLanguage would stop propagating regional audio that propagates now.
-const AudioFloor = langtag.TierOtherScript
+const audioFloor = langtag.TierOtherScript
 
 // languageMatch is how a reference's language relates to a candidate's when
 // the reference has no language langtag can read.
@@ -63,7 +63,7 @@ func selectByLanguage(candidates []*Stream, wantRaw string, floor langtag.Tier) 
 	for _, s := range candidates {
 		switch mode {
 		case langAbsent:
-			if s.HasNoLanguage() {
+			if s.hasNoLanguage() {
 				out = append(out, s)
 			}
 		case langUnreadable:
@@ -91,7 +91,7 @@ func languageDistance(ref, candidate *Stream) langtag.Tier {
 	case langGraded:
 		return langtag.Prefer(want).Compare(candidate.Lang())
 	case langAbsent:
-		if candidate.HasNoLanguage() {
+		if candidate.hasNoLanguage() {
 			return langtag.TierIdentical
 		}
 	case langUnreadable:

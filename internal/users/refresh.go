@@ -34,7 +34,7 @@ func DefaultRefreshConfig() RefreshConfig {
 // refresh loop.
 const periodicRefreshInterval = 12 * time.Hour
 
-// RefreshTokens fetches shared user tokens from plex.tv and updates the
+// refreshTokens fetches shared user tokens from plex.tv and updates the
 // cache. The plex.tv response is the source of truth: shared users
 // absent from the response are pruned from the manager's shared map,
 // the per-user client cache, and the cache's user-tokens map so revoked
@@ -42,7 +42,7 @@ const periodicRefreshInterval = 12 * time.Hour
 // failure short-circuits above the state rebuild; existing state is
 // left untouched. LanguageProfiles are kept untouched — a re-shared
 // user recovers their learned audio→subtitle mappings on return.
-func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, machineID string) error {
+func (m *Manager) refreshTokens(ctx context.Context, adminClient *plex.Client, machineID string) error {
 	servers, err := adminClient.SharedUserTokens(ctx, machineID)
 	if err != nil {
 		slog.Warn("failed to refresh shared user tokens", "error", err)
@@ -61,7 +61,7 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 	var removed []string
 	for uid := range m.shared {
 		if _, ok := newShared[uid]; !ok {
-			removed = append(removed, uid.String())
+			removed = append(removed, string(uid))
 		}
 	}
 	m.shared = newShared
@@ -69,7 +69,7 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 
 	tokensCopy := make(map[string]string, len(newShared))
 	for uid, info := range newShared {
-		tokensCopy[uid.String()] = string(info.Token)
+		tokensCopy[string(uid)] = string(info.Token)
 	}
 	m.mu.Unlock()
 
@@ -91,13 +91,13 @@ func (m *Manager) RefreshTokens(ctx context.Context, adminClient *plex.Client, m
 // own id (matching LoadFromCache's guard — otherwise the admin lands in
 // m.shared and All() emits it twice). adminID is passed by the caller,
 // which holds m.mu.
-func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]record {
-	newShared := make(map[ID]record, len(servers))
+func sharedMapFromServers(servers []plex.SharedServerXML, adminID id) map[id]record {
+	newShared := make(map[id]record, len(servers))
 	for _, s := range servers {
 		if s.UserID == "" || s.AccessToken == "" {
 			continue
 		}
-		uid := ID(s.UserID)
+		uid := id(s.UserID)
 		if uid == adminID {
 			continue
 		}
@@ -130,7 +130,7 @@ func sharedMapFromServers(servers []plex.SharedServerXML, adminID ID) map[ID]rec
 //
 // Cached tokens from a previous run short-circuit this entirely: if
 // LoadFromCache already populated the shared map, the first attempt
-// sees SharedCount > 0 and returns immediately even if plex.tv itself
+// sees sharedCount > 0 and returns immediately even if plex.tv itself
 // failed.
 func (m *Manager) InitialRefreshWithRetry(ctx context.Context, adminClient *plex.Client, machineID string, cfg RefreshConfig) {
 	delay := cfg.BaseDelay
@@ -139,14 +139,14 @@ func (m *Manager) InitialRefreshWithRetry(ctx context.Context, adminClient *plex
 			return
 		}
 
-		err := m.RefreshTokens(ctx, adminClient, machineID)
+		err := m.refreshTokens(ctx, adminClient, machineID)
 
 		// Exit as soon as plex.tv answers successfully: a server with
 		// zero shared users legitimately returns an empty list, and
 		// retrying cannot conjure users that do not exist. Only a real
 		// plex.tv failure (err != nil) is worth retrying. Cached tokens
-		// from a prior run also satisfy the exit via SharedCount > 0.
-		if err == nil || m.SharedCount() > 0 {
+		// from a prior run also satisfy the exit via sharedCount > 0.
+		if err == nil || m.sharedCount() > 0 {
 			return
 		}
 
@@ -191,7 +191,7 @@ func (m *Manager) RefreshLoop(ctx context.Context, adminClient *plex.Client, mac
 	for {
 		select {
 		case <-ticker.C:
-			_ = m.RefreshTokens(ctx, adminClient, machineID)
+			_ = m.refreshTokens(ctx, adminClient, machineID)
 		case <-ctx.Done():
 			return
 		}

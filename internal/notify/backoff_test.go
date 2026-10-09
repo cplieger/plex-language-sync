@@ -80,7 +80,7 @@ func TestNextBackoff_PBTBounded(t *testing.T) {
 }
 
 // TestDefaultConfig pins the production values so an accidental edit
-// to DefaultConfig that would change the Loki alert timing shows up
+// to DefaultConfig that would change reconnect timing shows up
 // as a test failure.
 func TestDefaultConfig(t *testing.T) {
 	t.Parallel()

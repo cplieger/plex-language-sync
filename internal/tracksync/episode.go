@@ -11,10 +11,10 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// EpisodeRef bundles a shared reference episode and its selected
-// streams. A nil *EpisodeRef means "no reference found, fall back to the
+// episodeRef bundles a shared reference episode and its selected
+// streams. A nil *episodeRef means "no reference found, fall back to the
 // learned language profile" for the caller.
-type EpisodeRef struct {
+type episodeRef struct {
 	Episode  *streams.Episode
 	Audio    *streams.Stream
 	Subtitle *streams.Stream
@@ -32,8 +32,8 @@ const maxRefSearchDepth = 50
 // reader and shared across all users. Plex returns identical
 // Stream.selected and metadata fields regardless of which user's token
 // is used for reads (verified 2026-04-26 against live API + Tautulli
-// playback history). Writes via UpdateEpisodeStreams /
-// ApplyLanguageProfile still use per-user clients because PUTs set
+// playback history). Writes via updateEpisodeStreams /
+// applyLanguageProfile still use per-user clients because PUTs set
 // per-user playback state.
 //
 // Cost collapse: for an N-user household, this path previously ran
@@ -62,8 +62,8 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 	// their own observed choice, not the household-ambient selection), so
 	// the fetch chain runs only when the first intent-less user is
 	// reached, and not at all once every user has an intent.
-	refOnce := sync.OnceValue(func() *EpisodeRef {
-		return s.FindEpisodeReference(ctx, episode)
+	refOnce := sync.OnceValue(func() *episodeRef {
+		return s.findEpisodeReference(ctx, episode)
 	})
 
 	for _, u := range s.users.All() {
@@ -79,7 +79,7 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 	}
 }
 
-// FindEpisodeReference locates a reference episode for a new/updated
+// findEpisodeReference locates a reference episode for a new/updated
 // episode: the most recent previously-seen episode in the show with a
 // selected audio stream. Returns nil when the show has no reference yet
 // (no prior episode with an active selection), which signals callers to
@@ -97,10 +97,10 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 // "no_candidate", "no_selected_audio"); WARN reasons signal a degraded
 // fetch ("get_show_episodes_error", "candidate_fetch_errors") that may
 // have masked an otherwise-usable reference.
-func (s *Syncer) FindEpisodeReference(
+func (s *Syncer) findEpisodeReference(
 	ctx context.Context,
 	episode *streams.Episode,
-) *EpisodeRef {
+) *episodeRef {
 	showRatingKey := episode.GrandparentRatingKey
 	if showRatingKey == "" {
 		slog.Debug("reference search skipped",
@@ -156,7 +156,7 @@ func (s *Syncer) FindEpisodeReference(
 		"searched", searched,
 		"reference", ref.ShortName())
 
-	return &EpisodeRef{Episode: ref, Audio: sel.Audio, Subtitle: sel.Subtitle}
+	return &episodeRef{Episode: ref, Audio: sel.Audio, Subtitle: sel.Subtitle}
 }
 
 // applyEpisodeForUser seeds a single new/updated episode for a single
@@ -171,21 +171,21 @@ func (s *Syncer) FindEpisodeReference(
 //  3. The learned language profile — cross-show generalization for a
 //     show the user has never touched.
 //
-// Writes via UpdateEpisodeStreams / ApplyLanguageProfile use the
+// Writes via updateEpisodeStreams / applyLanguageProfile use the
 // per-user client because PUTs set per-user playback state.
 func (s *Syncer) applyEpisodeForUser(
 	ctx context.Context,
 	userClient PlexReadWriter,
 	userID string,
 	episode *streams.Episode,
-	refOnce func() *EpisodeRef,
+	refOnce func() *episodeRef,
 	trigger string,
 ) {
 	username := s.users.Name(userID)
 
 	if intent, ok := s.cache.IntentFor(userID, episode.GrandparentRatingKey); ok {
 		intentRef := intent.RefStreams()
-		if s.UpdateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), intentRef) {
+		if s.updateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), intentRef) {
 			slog.Info("new/updated episode language set",
 				"trigger", trigger,
 				"user", username,
@@ -200,7 +200,7 @@ func (s *Syncer) applyEpisodeForUser(
 	ref := refOnce()
 	if ref == nil {
 		if s.cfg.LanguageProfiles {
-			if s.ApplyLanguageProfile(ctx, userClient, userID, episode, trigger) {
+			if s.applyLanguageProfile(ctx, userClient, userID, episode, trigger) {
 				return
 			}
 		}
@@ -209,7 +209,7 @@ func (s *Syncer) applyEpisodeForUser(
 		return
 	}
 
-	changed := s.UpdateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), streams.Pair{Audio: ref.Audio, Subtitle: ref.Subtitle})
+	changed := s.updateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), streams.Pair{Audio: ref.Audio, Subtitle: ref.Subtitle})
 	if changed {
 		slog.Info("new/updated episode language set",
 			"trigger", trigger,
@@ -227,8 +227,7 @@ func (s *Syncer) applyEpisodeForUser(
 // and caps the search at maxDepth items to bound latency on very long
 // shows.
 //
-// Package-private, exported only through FindEpisodeReference; retained
-// as a standalone helper (rather than a method) because the test suite
+// A standalone helper (rather than a method) because the test suite
 // drives it directly with synthetic episode lists.
 func findReferenceEpisode(
 	ctx context.Context,

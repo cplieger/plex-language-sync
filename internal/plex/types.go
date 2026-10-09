@@ -10,14 +10,12 @@ import (
 )
 
 // Plex wire-protocol constants, re-exported from the library so consumers
-// (main, config, scheduler, notify, sync, library.go) keep one import.
+// outside this package keep one import.
 const (
 	// TypeEpisode is the Plex metadata "type" string for episode items.
 	TypeEpisode = plexapi.TypeEpisode
 	// MetadataTypeEpisode is the numeric type ID for ?type= filters.
 	MetadataTypeEpisode = plexapi.MetadataTypeEpisode
-	// SectionTypeShow is the library-section "type" string for TV shows.
-	SectionTypeShow = plexapi.SectionTypeShow
 )
 
 // RatingKey is the library's validated Plex item identifier, aliased so
@@ -52,8 +50,8 @@ type Show struct {
 	Label []streams.Label `json:"Label"`
 }
 
-// Session represents a single active session from GET /status/sessions.
-type Session struct {
+// session represents a single active session from GET /status/sessions.
+type session struct {
 	User struct {
 		ID    string `json:"id"`
 		Title string `json:"title"`
