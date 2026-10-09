@@ -11,6 +11,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/plexapi/v2"
 	"github.com/cplieger/runesafe/v2"
 )
 
@@ -179,7 +180,7 @@ func TestLearnProfileFromReference(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// UpdateEpisodeStreams
+// updateEpisodeStreams
 // ---------------------------------------------------------------------------
 
 func TestUpdateEpisodeStreams(t *testing.T) {
@@ -198,10 +199,10 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 		t.Parallel()
 		plx := &fakeapi.Plex{} // no episodes → ErrNotFound from Episode()
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-		ref := &streams.Stream{ID: 1, StreamType: streams.StreamTypeAudio, LanguageCode: "eng"}
-		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: ref, Subtitle: nil})
+		ref := &streams.Stream{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng"}
+		changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: ref, Subtitle: nil})
 		if changed {
-			t.Error("UpdateEpisodeStreams = true on fetch error, want false")
+			t.Error("updateEpisodeStreams = true on fetch error, want false")
 		}
 	})
 
@@ -213,28 +214,28 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 			},
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-		ref := &streams.Stream{ID: 1, StreamType: streams.StreamTypeAudio, LanguageCode: "eng"}
-		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: ref, Subtitle: nil})
+		ref := &streams.Stream{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng"}
+		changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: ref, Subtitle: nil})
 		if changed {
-			t.Error("UpdateEpisodeStreams = true with no parts, want false")
+			t.Error("updateEpisodeStreams = true with no parts, want false")
 		}
 	})
 
 	t.Run("applies audio and subtitle", func(t *testing.T) {
 		t.Parallel()
 		ep := mkEpisode(100, []streams.Stream{
-			{ID: 10, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", Selected: true},
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
-			{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
-			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
+			{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
+			{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			{ID: 21, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
 		})
 		plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-		refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
-		refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
-		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
+		refAudio := &streams.Stream{ID: 99, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
+		refSub := &streams.Stream{ID: 88, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"}
+		changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
 		if !changed {
-			t.Error("UpdateEpisodeStreams = false, want true")
+			t.Error("updateEpisodeStreams = false, want true")
 		}
 		var gotAudio, gotSub bool
 		for _, c := range plx.CallNames() {
@@ -253,24 +254,24 @@ func TestUpdateEpisodeStreams(t *testing.T) {
 	t.Run("PUT error returns false", func(t *testing.T) {
 		t.Parallel()
 		ep := mkEpisode(100, []streams.Stream{
-			{ID: 10, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", Selected: true},
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
+			{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
 		})
 		plx := &fakeapi.Plex{
 			EpisodeByKey: map[string]*streams.Episode{"123": ep},
 			SetAudioErr:  errors.New("boom"),
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-		refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
-		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: nil})
+		refAudio := &streams.Stream{ID: 99, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
+		changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: nil})
 		if changed {
-			t.Error("UpdateEpisodeStreams = true after PUT error, want false")
+			t.Error("updateEpisodeStreams = true after PUT error, want false")
 		}
 	})
 }
 
 // ---------------------------------------------------------------------------
-// ApplyLanguageProfile (profile.go)
+// applyLanguageProfile (profile.go)
 // ---------------------------------------------------------------------------
 
 func TestApplyLanguageProfile(t *testing.T) {
@@ -283,8 +284,8 @@ func TestApplyLanguageProfile(t *testing.T) {
 		c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 		s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeUsers{})
 		ep := &streams.Episode{RatingKey: "100"}
-		if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
-			t.Error("ApplyLanguageProfile = true with no audio, want false")
+		if s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+			t.Error("applyLanguageProfile = true with no audio, want false")
 		}
 	})
 
@@ -295,11 +296,11 @@ func TestApplyLanguageProfile(t *testing.T) {
 		ep := &streams.Episode{
 			RatingKey: "100",
 			Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
 			}}}}},
 		}
-		if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
-			t.Error("ApplyLanguageProfile = true with no profile, want false")
+		if s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+			t.Error("applyLanguageProfile = true with no profile, want false")
 		}
 	})
 
@@ -312,11 +313,11 @@ func TestApplyLanguageProfile(t *testing.T) {
 		ep := &streams.Episode{
 			RatingKey: "100",
 			Media: []streams.Media{{Part: []streams.Part{{Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
 			}}}}},
 		}
-		if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
-			t.Error("ApplyLanguageProfile = true with zero partID, want false")
+		if s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+			t.Error("applyLanguageProfile = true with zero partID, want false")
 		}
 	})
 
@@ -329,12 +330,12 @@ func TestApplyLanguageProfile(t *testing.T) {
 		ep := &streams.Episode{
 			RatingKey: "100",
 			Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-				{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+				{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			}}}}},
 		}
-		if !s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
-			t.Error("ApplyLanguageProfile = false, want true")
+		if !s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+			t.Error("applyLanguageProfile = false, want true")
 		}
 		foundSet := false
 		for _, call := range plx.CallNames() {
@@ -343,7 +344,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 			}
 		}
 		if !foundSet {
-			t.Errorf("ApplyLanguageProfile did not call SetSubtitleStream, calls=%v", plx.CallNames())
+			t.Errorf("applyLanguageProfile did not call SetSubtitleStream, calls=%v", plx.CallNames())
 		}
 	})
 
@@ -356,12 +357,12 @@ func TestApplyLanguageProfile(t *testing.T) {
 		ep := &streams.Episode{
 			RatingKey: "100",
 			Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-				{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+				{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
 			}}}}},
 		}
-		if !s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
-			t.Error("ApplyLanguageProfile = false, want true (should disable)")
+		if !s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+			t.Error("applyLanguageProfile = false, want true (should disable)")
 		}
 		foundDisable := false
 		for _, call := range plx.CallNames() {
@@ -370,7 +371,7 @@ func TestApplyLanguageProfile(t *testing.T) {
 			}
 		}
 		if !foundDisable {
-			t.Errorf("ApplyLanguageProfile did not call DisableSubtitles, calls=%v", plx.CallNames())
+			t.Errorf("applyLanguageProfile did not call DisableSubtitles, calls=%v", plx.CallNames())
 		}
 	})
 }
@@ -392,9 +393,9 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ReferenceSearchedOnce(t *testing.T) 
 	c := fakeapi.NewCache()
 	lookup := &fakeUsers{
 		AllResult: []users.Account{
-			{ID: "1", Name: "admin"},
-			{ID: "2", Name: "bob"},
-			{ID: "3", Name: "carol"},
+			{ID: "1"},
+			{ID: "2"},
+			{ID: "3"},
 		},
 	}
 	s := newSyncer(Config{LanguageProfiles: false}, plx, c, lookup)
@@ -413,7 +414,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ReferenceSearchedOnce(t *testing.T) 
 }
 
 // ---------------------------------------------------------------------------
-// FindEpisodeReference
+// findEpisodeReference
 // ---------------------------------------------------------------------------
 
 func TestFindEpisodeReference(t *testing.T) {
@@ -424,8 +425,8 @@ func TestFindEpisodeReference(t *testing.T) {
 		plx := &fakeapi.Plex{}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 		ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: ""}
-		if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
-			t.Errorf("FindEpisodeReference(empty grandparent) = %+v, want nil", ref)
+		if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
+			t.Errorf("findEpisodeReference(empty grandparent) = %+v, want nil", ref)
 		}
 		if len(plx.CallNames()) != 0 {
 			t.Errorf("no Plex calls should be made, got: %v", plx.CallNames())
@@ -445,8 +446,8 @@ func TestFindEpisodeReference(t *testing.T) {
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 		ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
-		if ref := s.FindEpisodeReference(t.Context(), ep); ref != nil {
-			t.Errorf("FindEpisodeReference(no selected audio) = %+v, want nil", ref)
+		if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
+			t.Errorf("findEpisodeReference(no selected audio) = %+v, want nil", ref)
 		}
 	})
 
@@ -460,17 +461,17 @@ func TestFindEpisodeReference(t *testing.T) {
 				"2": {
 					RatingKey: "2",
 					Media: []streams.Media{{Part: []streams.Part{{Stream: []streams.Stream{
-						{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "eng"},
-						{ID: 12, StreamType: streams.StreamTypeSubtitle, Selected: true, LanguageCode: "fre"},
+						{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "eng"},
+						{ID: 12, StreamType: plexapi.StreamTypeSubtitle, Selected: true, LanguageCode: "fre"},
 					}}}}},
 				},
 			},
 		}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 		ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
-		ref := s.FindEpisodeReference(t.Context(), ep)
+		ref := s.findEpisodeReference(t.Context(), ep)
 		if ref == nil {
-			t.Fatal("FindEpisodeReference returned nil, want non-nil")
+			t.Fatal("findEpisodeReference returned nil, want non-nil")
 		}
 		if ref.Episode == nil || ref.Episode.RatingKey != "2" {
 			t.Errorf("ref.Episode = %+v, want ratingKey 2", ref.Episode)
@@ -494,24 +495,24 @@ func TestFindEpisodeReference(t *testing.T) {
 // (and the guard must not dereference the nil current stream).
 //
 // given a target whose only audio stream is NOT selected (cur == nil)
-// when UpdateEpisodeStreams applies a matching reference audio
+// when updateEpisodeStreams applies a matching reference audio
 // then SetAudioStream is called and the update reports changed.
 func TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected(t *testing.T) {
 	t.Parallel()
 	ep := &streams.Episode{
 		RatingKey: "123",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}, // not selected
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}, // not selected
 		}}}}},
 	}
 	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-	refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	refAudio := &streams.Stream{ID: 99, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: nil})
+	changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: nil})
 
 	if !changed {
-		t.Error("UpdateEpisodeStreams = false, want true (audio applied when none selected)")
+		t.Error("updateEpisodeStreams = false, want true (audio applied when none selected)")
 	}
 	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
 		t.Errorf("SetAudio called %d times, want 1", got)
@@ -524,28 +525,28 @@ func TestUpdateEpisodeStreams_AppliesAudioWhenNoneSelected(t *testing.T) {
 // no write should happen and the update must not report a change.
 //
 // given a target whose selected subtitle already matches the reference
-// when UpdateEpisodeStreams runs with that reference
+// when updateEpisodeStreams runs with that reference
 // then no SetSubtitleStream call is made and changed is false.
 func TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect(t *testing.T) {
 	t.Parallel()
 	ep := &streams.Episode{
 		RatingKey: "123",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
-			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn", Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 21, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn", Selected: true},
 		}}}}},
 	}
 	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 	// Reference audio matches the already-selected audio (no audio change),
 	// reference subtitle matches the already-selected jpn subtitle.
-	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
-	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
+	refAudio := &streams.Stream{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
+	refSub := &streams.Stream{ID: 88, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
+	changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
 
 	if changed {
-		t.Error("UpdateEpisodeStreams = true, want false (subtitle already correct, nothing to change)")
+		t.Error("updateEpisodeStreams = true, want false (subtitle already correct, nothing to change)")
 	}
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 		t.Errorf("SetSubtitle called %d times, want 0 (no redundant write)", got)
@@ -561,29 +562,29 @@ func TestUpdateEpisodeStreams_SkipsSubtitleAlreadyCorrect(t *testing.T) {
 // masks this because its audio change already sets changed=true).
 //
 // given a target needing only a subtitle change, and the write succeeds
-// when UpdateEpisodeStreams runs
+// when updateEpisodeStreams runs
 // then changed is true.
 func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T) {
 	t.Parallel()
 	ep := &streams.Episode{
 		RatingKey: "123",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
-			{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
-			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			{ID: 21, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
 		}}}}},
 	}
 	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 	// Audio matches the selected audio (no audio change). Subtitle reference
 	// is jpn, so the jpn subtitle (ID 21) replaces the selected eng (ID 20).
-	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
-	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
+	refAudio := &streams.Stream{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
+	refSub := &streams.Stream{ID: 88, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
+	changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
 
 	if !changed {
-		t.Error("UpdateEpisodeStreams = false, want true (subtitle write succeeded)")
+		t.Error("updateEpisodeStreams = false, want true (subtitle write succeeded)")
 	}
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 1 {
 		t.Errorf("SetSubtitle called %d times, want 1", got)
@@ -591,7 +592,7 @@ func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T)
 }
 
 // TestUpdateEpisodeStreams_subtitleReferencePolicy pins two untested
-// branches in applySubtitleStream, reached via UpdateEpisodeStreams with the
+// branches in applySubtitleStream, reached via updateEpisodeStreams with the
 // reference audio equal to the target's already-selected audio so no audio
 // write occurs and `changed` reflects only the subtitle decision:
 //
@@ -604,10 +605,10 @@ func TestUpdateEpisodeStreams_ReportsChangedOnSubtitleWriteSuccess(t *testing.T)
 // the matched == nil path fall through to a write fails case 2.
 func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
 	t.Parallel()
-	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	refAudio := &streams.Stream{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
 	mkTarget := func(subs ...streams.Stream) *streams.Episode {
 		streamList := append([]streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
 		}, subs...)
 		return &streams.Episode{
 			RatingKey: "123",
@@ -617,14 +618,14 @@ func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
 
 	t.Run("reference without subtitle disables the target's selected subtitle", func(t *testing.T) {
 		t.Parallel()
-		ep := mkTarget(streams.Stream{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true})
+		ep := mkTarget(streams.Stream{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true})
 		plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 
-		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: nil})
+		changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: nil})
 
 		if !changed {
-			t.Error("UpdateEpisodeStreams = false, want true (no-subtitle policy must disable the target's subtitle)")
+			t.Error("updateEpisodeStreams = false, want true (no-subtitle policy must disable the target's subtitle)")
 		}
 		if got := countCalls(plx.CallNames(), "DisableSubtitle"); got != 1 {
 			t.Errorf("DisableSubtitle called %d times, want 1", got)
@@ -633,15 +634,15 @@ func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
 
 	t.Run("reference subtitle with no target match leaves the selection alone", func(t *testing.T) {
 		t.Parallel()
-		ep := mkTarget(streams.Stream{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true})
+		ep := mkTarget(streams.Stream{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true})
 		plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-		refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "fre"}
+		refSub := &streams.Stream{ID: 88, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "fre"}
 
-		changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
+		changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
 
 		if changed {
-			t.Error("UpdateEpisodeStreams = true, want false (no matching subtitle on target — leave selection alone)")
+			t.Error("updateEpisodeStreams = true, want false (no matching subtitle on target — leave selection alone)")
 		}
 		if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 			t.Errorf("SetSubtitle called %d times, want 0", got)
@@ -660,7 +661,7 @@ func TestUpdateEpisodeStreams_subtitleReferencePolicy(t *testing.T) {
 //
 // given a profile jpn→eng and a target whose selected eng subtitle is the
 // best eng candidate
-// when ApplyLanguageProfile runs
+// when applyLanguageProfile runs
 // then no SetSubtitleStream call is made and the result is false.
 func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.T) {
 	t.Parallel()
@@ -671,15 +672,15 @@ func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.
 	ep := &streams.Episode{
 		RatingKey: "100",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-			{ID: 12, StreamType: streams.StreamTypeSubtitle, Selected: true, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+			{ID: 12, StreamType: plexapi.StreamTypeSubtitle, Selected: true, LanguageCode: "eng", Codec: "srt"},
 		}}}}},
 	}
 
-	changed := s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test")
+	changed := s.applyLanguageProfile(t.Context(), plx, "1", ep, "test")
 
 	if changed {
-		t.Error("ApplyLanguageProfile = true, want false (selected subtitle already matches profile)")
+		t.Error("applyLanguageProfile = true, want false (selected subtitle already matches profile)")
 	}
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 		t.Errorf("SetSubtitle called %d times, want 0 (no redundant write)", got)
@@ -691,12 +692,12 @@ func TestApplyLanguageProfile_SkipsWhenSubtitleAlreadyMatchesProfile(t *testing.
 // matches tests don't reach: (1) the profile says "no subtitles" and the
 // target already has none selected — nothing to disable; (2) the profile
 // names a subtitle language the target episode doesn't carry — nothing to
-// set. In both cases ApplyLanguageProfile must report no change and issue
+// set. In both cases applyLanguageProfile must report no change and issue
 // no PUT (a dropped curSub==nil guard would emit a spurious DisableSubtitles;
 // a dropped bestSub==nil guard would nil-deref on SetSubtitleStream).
 func TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable(t *testing.T) {
 	t.Parallel()
-	audioJpnSelected := streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"}
+	audioJpnSelected := streams.Stream{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"}
 	tests := []struct {
 		name       string
 		profileSub string          // learned subtitle lang for jpn audio
@@ -706,7 +707,7 @@ func TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable(t *testing.T) {
 		{
 			name:       "profile wants eng but target has no eng subtitle",
 			profileSub: "eng",
-			subStream:  &streams.Stream{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "fre", Codec: "srt"},
+			subStream:  &streams.Stream{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "fre", Codec: "srt"},
 		},
 	}
 	for _, tc := range tests {
@@ -725,8 +726,8 @@ func TestApplyLanguageProfile_noOpWhenNoSubtitleApplicable(t *testing.T) {
 			c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: tc.profileSub})
 			s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeUsers{})
 
-			if s.ApplyLanguageProfile(t.Context(), plx, "1", ep, "test") {
-				t.Error("ApplyLanguageProfile = true, want false (no applicable subtitle change)")
+			if s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+				t.Error("applyLanguageProfile = true, want false (no applicable subtitle change)")
 			}
 			if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 				t.Errorf("SetSubtitle called %d times, want 0", got)
@@ -753,7 +754,7 @@ func refWithSelectedAudio(lang, show, parent string, season, index int) *streams
 		ParentIndex:          streams.FlexInt(season),
 		Index:                streams.FlexInt(index),
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: lang, Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: lang, Selected: true},
 		}}}}},
 	}
 }
@@ -765,8 +766,8 @@ func targetNeedingAudioSwitch(key string) *streams.Episode {
 	return &streams.Episode{
 		RatingKey: key,
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 10, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", Selected: true},
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
+			{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
 		}}}}},
 	}
 }
@@ -870,7 +871,7 @@ func TestObserveAndPropagate(t *testing.T) {
 			RatingKey:            "1",
 			GrandparentRatingKey: "42",
 			Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
 			}}}}},
 		}
 
@@ -1034,7 +1035,7 @@ func TestObserveAndPropagate_LogsCompletionWithUpdatedCount(t *testing.T) {
 // the completion-summary gate: when no episode needs a change the tally stays
 // zero and the "language update complete" summary must NOT be logged (a
 // zero-update summary would be misleading noise). Every show episode here
-// already has the reference's jpn audio selected, so UpdateEpisodeStreams
+// already has the reference's jpn audio selected, so updateEpisodeStreams
 // reports no change and the counter never leaves zero.
 //
 // Not parallel: it swaps the process-global default slog logger.
@@ -1043,7 +1044,7 @@ func TestObserveAndPropagate_SilentWhenNothingChanged(t *testing.T) {
 		return &streams.Episode{
 			RatingKey: key,
 			Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
 			}}}}},
 		}
 	}
@@ -1070,14 +1071,14 @@ func TestObserveAndPropagate_SilentWhenNothingChanged(t *testing.T) {
 
 // TestApplyLanguageProfile_PUTErrorReturnsFalse pins the two failed-write
 // branches of applyProfileSubtitle (profile.go): when the per-user client's
-// SetSubtitleStream or DisableSubtitles PUT fails, ApplyLanguageProfile must
+// SetSubtitleStream or DisableSubtitles PUT fails, applyLanguageProfile must
 // report changed=false so the caller never emits the "language profile applied
 // to new show" INFO summary for a write that never landed. Mirrors the existing
-// UpdateEpisodeStreams "PUT error returns false" test for the reference path; a
+// updateEpisodeStreams "PUT error returns false" test for the reference path; a
 // mutant flipping either error-branch return to true survives without this.
 func TestApplyLanguageProfile_PUTErrorReturnsFalse(t *testing.T) {
 	t.Parallel()
-	audioJpnSelected := streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, Selected: true, LanguageCode: "jpn"}
+	audioJpnSelected := streams.Stream{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"}
 	tests := []struct {
 		name       string
 		profileSub string
@@ -1089,14 +1090,14 @@ func TestApplyLanguageProfile_PUTErrorReturnsFalse(t *testing.T) {
 			name:       "SetSubtitleStream error returns false",
 			profileSub: "eng",
 			plex:       &fakeapi.Plex{SetSubtitleErr: errors.New("boom")},
-			subStream:  streams.Stream{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			subStream:  streams.Stream{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 			wantCall:   "SetSubtitle",
 		},
 		{
 			name:       "DisableSubtitles error returns false",
 			profileSub: "",
 			plex:       &fakeapi.Plex{DisableErr: errors.New("boom")},
-			subStream:  streams.Stream{ID: 12, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			subStream:  streams.Stream{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
 			wantCall:   "DisableSubtitle",
 		},
 	}
@@ -1111,8 +1112,8 @@ func TestApplyLanguageProfile_PUTErrorReturnsFalse(t *testing.T) {
 				Media:     []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{audioJpnSelected, tc.subStream}}}}},
 			}
 
-			if s.ApplyLanguageProfile(t.Context(), tc.plex, "1", ep, "test") {
-				t.Error("ApplyLanguageProfile = true after a failed PUT, want false (a failed write must not report a change)")
+			if s.applyLanguageProfile(t.Context(), tc.plex, "1", ep, "test") {
+				t.Error("applyLanguageProfile = true after a failed PUT, want false (a failed write must not report a change)")
 			}
 			if got := countCalls(tc.plex.CallNames(), tc.wantCall); got != 1 {
 				t.Errorf("%s called %d times, want 1 (the write must be attempted before failing)", tc.wantCall, got)
@@ -1125,12 +1126,12 @@ func TestApplyLanguageProfile_PUTErrorReturnsFalse(t *testing.T) {
 // branches of applySubtitleStream (tracks.go) that the existing "PUT error
 // returns false" test (SetAudioErr only) never reaches: a failed DisableSubtitles
 // (no-subtitle policy) and a failed SetSubtitleStream must both make
-// UpdateEpisodeStreams report changed=false. The reference audio equals the
+// updateEpisodeStreams report changed=false. The reference audio equals the
 // target's already-selected audio so no audio write occurs and changed reflects
 // only the subtitle write outcome.
 func TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse(t *testing.T) {
 	t.Parallel()
-	refAudio := &streams.Stream{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"}
+	refAudio := &streams.Stream{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"}
 	tests := []struct {
 		name     string
 		refSub   *streams.Stream
@@ -1141,14 +1142,14 @@ func TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse(t *testing.T) {
 		{
 			name:     "DisableSubtitles error returns false",
 			refSub:   nil,
-			target:   []streams.Stream{{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true}},
+			target:   []streams.Stream{{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true}},
 			setErr:   func(p *fakeapi.Plex) { p.DisableErr = errors.New("boom") },
 			wantCall: "DisableSubtitle",
 		},
 		{
 			name:     "SetSubtitleStream error returns false",
-			refSub:   &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
-			target:   []streams.Stream{{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true}, {ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}},
+			refSub:   &streams.Stream{ID: 88, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
+			target:   []streams.Stream{{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true}, {ID: 21, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"}},
 			setErr:   func(p *fakeapi.Plex) { p.SetSubtitleErr = errors.New("boom") },
 			wantCall: "SetSubtitle",
 		},
@@ -1157,7 +1158,7 @@ func TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			streamList := append([]streams.Stream{
-				{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+				{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
 			}, tc.target...)
 			ep := &streams.Episode{
 				RatingKey: "123",
@@ -1167,10 +1168,10 @@ func TestUpdateEpisodeStreams_SubtitlePUTErrorReturnsFalse(t *testing.T) {
 			tc.setErr(plx)
 			s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 
-			changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: tc.refSub})
+			changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: tc.refSub})
 
 			if changed {
-				t.Error("UpdateEpisodeStreams = true after a failed subtitle PUT, want false")
+				t.Error("updateEpisodeStreams = true after a failed subtitle PUT, want false")
 			}
 			if got := countCalls(plx.CallNames(), tc.wantCall); got != 1 {
 				t.Errorf("%s called %d times, want 1 (the write must be attempted before failing)", tc.wantCall, got)
@@ -1201,22 +1202,22 @@ func TestUpdateEpisodeStreams_SkipsSubtitleForCommentaryReference(t *testing.T) 
 	ep := &streams.Episode{
 		RatingKey: "123",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
-			{ID: 20, StreamType: streams.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
-			{ID: 21, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
+			{ID: 20, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Selected: true},
+			{ID: 21, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
 		}}}}},
 	}
 	plx := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"123": ep}}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 	// Commentary reference audio in eng (unmatched by the jpn-only target), with
 	// a jpn reference subtitle that would otherwise match target ID 21.
-	refAudio := &streams.Stream{ID: 99, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"}
-	refSub := &streams.Stream{ID: 88, StreamType: streams.StreamTypeSubtitle, LanguageCode: "jpn"}
+	refAudio := &streams.Stream{ID: 99, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", ExtendedDisplayTitle: "English (Commentary)"}
+	refSub := &streams.Stream{ID: 88, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"}
 
-	changed := s.UpdateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
+	changed := s.updateEpisodeStreams(t.Context(), plx, "user", "123", streams.Pair{Audio: refAudio, Subtitle: refSub})
 
 	if changed {
-		t.Error("UpdateEpisodeStreams = true, want false (commentary reference with no target-language audio must skip the subtitle change)")
+		t.Error("updateEpisodeStreams = true, want false (commentary reference with no target-language audio must skip the subtitle change)")
 	}
 	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
 		t.Errorf("SetSubtitle called %d times, want 0 (commentary-skip must suppress the subtitle write)", got)

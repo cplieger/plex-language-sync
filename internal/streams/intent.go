@@ -11,18 +11,18 @@ package streams
 // without a migration.
 type Intent struct {
 	// Subtitle nil means the user chose "no subtitles" for this audio.
-	Subtitle *IntentStream `json:"subtitle"`
+	Subtitle *intentStream `json:"subtitle"`
 	// Audio is never absent: an episode with no selected audio records no intent.
-	Audio      IntentStream `json:"audio"`
+	Audio      intentStream `json:"audio"`
 	ObservedAt int64        `json:"observed_at"`
 }
 
-// IntentStream is the persisted projection of a Stream: exactly the
+// intentStream is the persisted projection of a Stream: exactly the
 // fields the matchers and scorers consume when the stream is used as a
 // reference. Per-episode identity fields (ID, Selected, StreamType) are
 // deliberately absent — they are meaningless outside the episode the
 // stream was observed on.
-type IntentStream struct {
+type intentStream struct {
 	LanguageCode string `json:"languageCode"`
 	// LanguageTag is Plex's BCP 47 tag. Additive and omitempty so an intent
 	// written before this field existed still loads, falling back to the
@@ -50,11 +50,11 @@ func NewIntent(ref Pair, observedAt int64) *Intent {
 }
 
 // intentStreamFrom projects the matcher-relevant fields of s.
-func intentStreamFrom(s *Stream) *IntentStream {
+func intentStreamFrom(s *Stream) *intentStream {
 	if s == nil {
 		return nil
 	}
-	return &IntentStream{
+	return &intentStream{
 		LanguageCode:         s.LanguageCode,
 		LanguageTag:          s.LanguageTag,
 		Title:                s.Title,
@@ -78,7 +78,7 @@ func (i *Intent) RefStreams() Pair {
 
 // stream converts the projection back into a Stream carrying only the
 // reference-relevant fields.
-func (is *IntentStream) stream() *Stream {
+func (is *intentStream) stream() *Stream {
 	if is == nil {
 		return nil
 	}

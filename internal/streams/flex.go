@@ -20,16 +20,13 @@ import (
 // whose semantic intent is an integer.
 type FlexInt int
 
-// UnmarshalJSON accepts either a JSON number or a quoted numeric string.
-// Null and empty-string payloads decode to 0 without error.
+// UnmarshalJSON accepts a JSON number or a quoted numeric string; null and
+// empty-string payloads decode to 0. jsonx.ParseInt64 under StrictAbsentZero
+// rejects hex floats, "Inf"/"NaN" and underscore separators, and never
+// round-trips through float64. Errors carry a "flexint:" prefix so a log
+// reader can tell them apart from plex.RatingKey.Validate's "invalid rating key".
 //
-// Delegates to jsonx.ParseInt64 under StrictAbsentZero, which hardens
-// the string path beyond strconv (rejects hex floats, "Inf"/"NaN",
-// underscore separators; no float64 round-trip for large integers).
-//
-// The "flexint:" error prefix must not be confused with
-// plex.RatingKey.Validate's "invalid rating key" prefix — Loki alerts
-// key on rating-key failures by that exact string.
+//deadset:ignore DS1004,DS1101 -- encoding/json calls it through json.Unmarshaler, which fixes its exported name, when plexapi decodes Plex responses into Episode and HistoryItem.
 func (f *FlexInt) UnmarshalJSON(data []byte) error {
 	*f = 0
 	n, err := jsonx.ParseInt64(data, jsonx.StrictAbsentZero())

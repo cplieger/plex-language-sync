@@ -19,6 +19,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/cachecontract"
 	"pgregory.net/rapid"
 )
 
@@ -369,7 +370,7 @@ func TestCacheLoadCorruptSectionIsolation(t *testing.T) {
 // --- Legacy cache.json migration ---
 
 // legacyWrite writes a pre-split union cache.json into dir.
-func legacyWrite(t *testing.T, dir string, d Data) {
+func legacyWrite(t *testing.T, dir string, d cacheData) {
 	t.Helper()
 	raw, err := json.MarshalIndent(&d, "", "  ")
 	if err != nil {
@@ -387,7 +388,7 @@ func legacyWrite(t *testing.T, dir string, d Data) {
 func TestCacheLoadMigratesLegacyCacheJSON(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		ProcessedEpisodes: map[string]int64{"timeline:9": time.Now().Unix()},
 		LanguageProfiles:  map[string]map[string]string{"1": {"jpn": "eng"}},
 		UserTokens:        map[string]string{"2": "plain-tok"},
@@ -424,7 +425,7 @@ func TestCacheLoadMigratesLegacyCacheJSON(t *testing.T) {
 	if err := json.Unmarshal(raw, &td); err != nil {
 		t.Fatal(err)
 	}
-	if !IsEncrypted(td.UserTokens["2"]) {
+	if !isEncrypted(td.UserTokens["2"]) {
 		t.Errorf("migrated on-disk token = %q, want encrypted", td.UserTokens["2"])
 	}
 
@@ -453,7 +454,7 @@ func TestCacheLoadSplitWinsOverStaleLegacy(t *testing.T) {
 	if err := split.Save(dir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "STALE"}},
 		UserTokens:       map[string]string{"2": "STALE"},
 	})
@@ -482,7 +483,7 @@ func TestCacheLoadSplitWinsOverStaleLegacy(t *testing.T) {
 func TestCacheLoadLegacyFillsMissingSection(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "LEGACY"}},
 		UserTokens:       map[string]string{"2": "legacy-tok"},
 	})
@@ -517,7 +518,7 @@ func TestCacheLoadLegacyFillsMissingSection(t *testing.T) {
 // still fully loaded.
 func TestCacheLoadMigrationSaveFailureKeepsLegacy(t *testing.T) {
 	dir := t.TempDir()
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		UserTokens: map[string]string{"2": "legacy-tok"},
 	})
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -569,7 +570,7 @@ func TestCacheLoadMigrationSaveFailureKeepsLegacy(t *testing.T) {
 // operator who finds neither line knows the migration never ran at all.
 func TestCacheLoadMigrationAnnouncesCompletion(t *testing.T) {
 	dir := t.TempDir()
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "eng"}},
 	})
 
@@ -594,7 +595,7 @@ func TestCacheLoadMigrationAnnouncesCompletion(t *testing.T) {
 func TestCacheLoadMigratesLegacyIntents(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		Intents: map[string]map[string]streams.Intent{
 			"1": {"42": *streams.NewIntent(streams.Pair{
 				Audio:    &streams.Stream{LanguageCode: "jpn"},
@@ -640,7 +641,7 @@ func TestCacheLoadLeavesAuthoritativeSplitFilesUntouched(t *testing.T) {
 			t.Fatalf("setup: write %s: %v", name, err)
 		}
 	}
-	legacyWrite(t, dir, Data{
+	legacyWrite(t, dir, cacheData{
 		LanguageProfiles: map[string]map[string]string{"1": {"jpn": "STALE"}},
 	})
 
@@ -690,7 +691,7 @@ func TestCacheDataJSONRoundTrip(t *testing.T) {
 			processed[key] = int64(rapid.IntRange(0, 2000000000).Draw(t, fmt.Sprintf("ts_%d", i)))
 		}
 
-		original := Data{
+		original := cacheData{
 			ProcessedEpisodes: processed,
 			LanguageProfiles:  make(map[string]map[string]string),
 			UserTokens:        make(map[string]string),
@@ -701,7 +702,7 @@ func TestCacheDataJSONRoundTrip(t *testing.T) {
 			t.Fatalf("marshal: %v", err)
 		}
 
-		var decoded Data
+		var decoded cacheData
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
@@ -767,7 +768,7 @@ func TestCache_ConcurrentLearnAndSetUserTokens(t *testing.T) {
 
 func TestCacheContract(t *testing.T) {
 	t.Parallel()
-	RunContract(t, New())
+	cachecontract.Run(t, New())
 }
 
 // --- Load permissive-mode warning ---

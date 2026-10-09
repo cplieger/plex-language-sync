@@ -27,16 +27,6 @@ var _ interface {
 	Name(userID string) string
 } = (*Manager)(nil)
 
-func TestID_StringRoundTrip(t *testing.T) {
-	id := ID("42")
-	if id.String() != "42" {
-		t.Errorf("ID(%q).String() = %q, want %q", "42", id.String(), "42")
-	}
-	if ID("") != "" {
-		t.Error("empty ID should compare equal to empty string")
-	}
-}
-
 func TestManager_InitSeedsAdmin(t *testing.T) {
 	m := NewManager(fakeapi.NewCache())
 	m.Init(&plex.User{ID: "1", Name: "admin"})
@@ -51,8 +41,8 @@ func TestManager_InitSeedsAdmin(t *testing.T) {
 	if len(all) != 1 {
 		t.Fatalf("All() = %+v, want exactly the admin", all)
 	}
-	if all[0].ID != "1" || all[0].Name != "admin" {
-		t.Errorf("All()[0] = %+v, want ID=1 Name=admin", all[0])
+	if all[0].ID != "1" {
+		t.Errorf("All()[0] = %+v, want ID=1", all[0])
 	}
 }
 
@@ -83,8 +73,8 @@ func TestManager_LoadFromCacheSeedsTokens(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	if m.SharedCount() != 2 {
-		t.Errorf("SharedCount = %d, want 2", m.SharedCount())
+	if m.sharedCount() != 2 {
+		t.Errorf("sharedCount = %d, want 2", m.sharedCount())
 	}
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{})
 	if m.ClientForUser("2", adminClient).Token() != "friend-token" {
@@ -103,9 +93,9 @@ func TestManager_LoadFromCacheSkipsAdmin(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	// SharedCount should be 1 — the admin entry must be ignored.
-	if m.SharedCount() != 1 {
-		t.Errorf("SharedCount = %d, want 1 (admin should be skipped)", m.SharedCount())
+	// sharedCount should be 1 — the admin entry must be ignored.
+	if m.sharedCount() != 1 {
+		t.Errorf("sharedCount = %d, want 1 (admin should be skipped)", m.sharedCount())
 	}
 }
 
@@ -164,10 +154,10 @@ func TestManager_NameUnknownReturnsPlaceholder(t *testing.T) {
 }
 
 // TestManager_ConcurrentClientForUser_TokenRotation drives a
-// RefreshTokens-style token rotation (mutating m.shared under m.mu)
+// refreshTokens-style token rotation (mutating m.shared under m.mu)
 // concurrently with ClientForUser for the same uid. ClientForUser now
 // derives clients via ForToken entirely under m.mu (no lock-drop window),
-// so under -race (run locally; CI omits -race: CGO) this pins concurrent
+// so under -race this pins concurrent
 // access to m.shared plus one observable invariant: a returned per-user
 // client always carries a token that was live during the run, never an
 // empty or stale-zero token.
@@ -216,7 +206,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 	wg.Wait()
 }
 
-// --- RefreshTokens + retry loop tests ---
+// --- refreshTokens + retry loop tests ---
 
 // roundTripFunc adapts a function to http.RoundTripper for redirecting
 // plex.tv API calls to a local httptest server.
@@ -264,10 +254,10 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
-	if m.SharedCount() != 2 {
-		t.Fatalf("SharedCount = %d, want 2", m.SharedCount())
+	if m.sharedCount() != 2 {
+		t.Fatalf("sharedCount = %d, want 2", m.sharedCount())
 	}
 	if got := fc.UserTokens()["100"]; got != "token-100" {
 		t.Errorf("cache token 100 = %q, want token-100", got)
@@ -304,10 +294,10 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 	_ = m.ClientForUser("100", adminClient)
 	_ = m.ClientForUser("200", adminClient)
 
-	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
-	if m.SharedCount() != 1 {
-		t.Errorf("SharedCount = %d, want 1 (user 200 revoked)", m.SharedCount())
+	if m.sharedCount() != 1 {
+		t.Errorf("sharedCount = %d, want 1 (user 200 revoked)", m.sharedCount())
 	}
 	// User 100 should now return a client with the rotated token.
 	if got := m.ClientForUser("100", adminClient); got.Token() != "new-token-100" {
@@ -347,10 +337,10 @@ func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
-	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
-	if m.SharedCount() != 1 {
-		t.Errorf("SharedCount = %d, want 1 (state preserved on plex.tv failure)", m.SharedCount())
+	if m.sharedCount() != 1 {
+		t.Errorf("sharedCount = %d, want 1 (state preserved on plex.tv failure)", m.sharedCount())
 	}
 	if got := fc.UserTokens()["100"]; got != "existing-token" {
 		t.Errorf("cache should be unchanged after failure, got %q", got)
@@ -376,10 +366,10 @@ func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
-	if m.SharedCount() != 1 {
-		t.Errorf("SharedCount = %d, want 1 (blanks filtered)", m.SharedCount())
+	if m.sharedCount() != 1 {
+		t.Errorf("sharedCount = %d, want 1 (blanks filtered)", m.sharedCount())
 	}
 }
 
@@ -452,8 +442,8 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 	if attempts != 2 {
 		t.Errorf("got %d plex.tv attempts, want 2 (retry after first 500)", attempts)
 	}
-	if m.SharedCount() != 1 {
-		t.Errorf("SharedCount = %d, want 1 (second attempt populates)", m.SharedCount())
+	if m.sharedCount() != 1 {
+		t.Errorf("sharedCount = %d, want 1 (second attempt populates)", m.sharedCount())
 	}
 }
 
@@ -478,8 +468,8 @@ func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
 	if attempts != 3 {
 		t.Errorf("got %d plex.tv attempts, want 3 (exhaust max)", attempts)
 	}
-	if m.SharedCount() != 0 {
-		t.Errorf("SharedCount = %d, want 0", m.SharedCount())
+	if m.sharedCount() != 0 {
+		t.Errorf("sharedCount = %d, want 0", m.sharedCount())
 	}
 }
 
@@ -607,9 +597,8 @@ func TestManager_ClientForUser_DerivesFromAdminClient(t *testing.T) {
 // Derivation now runs entirely under m.mu (ForToken is pure, so no
 // lock-drop window exists), making single-instance convergence a hard
 // guarantee: the first caller publishes the derived client into m.clients
-// and every subsequent caller takes the cache hit. Under -race (run
-// locally; CI omits -race: CGO) this also exercises concurrent access to
-// m.clients / m.shared.
+// and every subsequent caller takes the cache hit. Under -race this also
+// exercises concurrent access to m.clients / m.shared.
 //
 // given a stable-token shared user and N concurrent ClientForUser calls
 // when they race on the manager lock
@@ -663,7 +652,7 @@ func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing
 // client would send per-user PUTs under the old (possibly revoked) token.
 //
 // The token is rotated in m.shared WITHOUT evicting the cached client (the
-// window before RefreshTokens' eviction runs), so the cached client is present
+// window before refreshTokens' eviction runs), so the cached client is present
 // but stale. Both freshness checks must reject it: the cache-hit fast path
 // (token unchanged?) and the post-build re-publish recheck. A check inverted
 // to accept the stale client would return a client carrying the old token.
@@ -700,11 +689,11 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 }
 
 // TestRefreshTokens_SkipsAdminIDInSharedList pins the admin-skip guard in
-// RefreshTokens (refresh.go): if plex.tv echoes the admin's own userID in the
+// refreshTokens (refresh.go): if plex.tv echoes the admin's own userID in the
 // shared-server list it must be excluded from m.shared, from All(), and from
 // the persisted cache tokens. Without the guard the admin lands in m.shared,
 // All() lists it twice (double-processing the admin episode), and the admin
-// token is written to cache.json. This is the RefreshTokens counterpart of the
+// token is written to cache.json. This is the refreshTokens counterpart of the
 // existing TestManager_LoadFromCacheSkipsAdmin, which only pins the cache-load
 // path.
 func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
@@ -725,10 +714,10 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 	m := NewManager(fc)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
-	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
-	if m.SharedCount() != 1 {
-		t.Errorf("SharedCount = %d, want 1 (admin ID 1 echoed by plex.tv must be skipped)", m.SharedCount())
+	if m.sharedCount() != 1 {
+		t.Errorf("sharedCount = %d, want 1 (admin ID 1 echoed by plex.tv must be skipped)", m.sharedCount())
 	}
 	if _, ok := fc.UserTokens()["1"]; ok {
 		t.Error("admin token must not be persisted to cache via the shared-user list")
@@ -773,11 +762,11 @@ func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
 }
 
 // TestRefreshTokens_LogsPrunedUsersAudit pins the shared-users-pruned audit
-// log that RefreshTokens emits when plex.tv drops a previously-shared user:
+// log that refreshTokens emits when plex.tv drops a previously-shared user:
 // it must log the INFO "shared users pruned (revoked or unshared)" carrying
 // the exact pruned count and the revoked user_id so an operator can see WHICH
 // users lost access. TestRefreshTokens_EvictsRevokedUsers pins only the
-// resulting state (SharedCount / cache tokens), never this audit line, so a
+// resulting state (sharedCount / cache tokens), never this audit line, so a
 // mutant that drops the pruned-log block or reports the wrong count survives.
 //
 // Not parallel: this test swaps the process-global default slog logger.
@@ -810,7 +799,7 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 		log.SetFlags(prevFlags)
 	})
 
-	m.RefreshTokens(t.Context(), adminClient, "machine-id-123")
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
 	out := buf.String()
 	if !strings.Contains(out, "shared users pruned") {

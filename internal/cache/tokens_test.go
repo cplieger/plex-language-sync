@@ -47,7 +47,7 @@ func TestSetUserTokensReplacesWholesale(t *testing.T) {
 
 	// A second SetUserTokens replaces the map wholesale: a key absent from
 	// the new map must be evicted, not merged. This eviction is what lets
-	// users.RefreshTokens stop using a revoked user's token.
+	// the users token refresh stop using a revoked user's token.
 	c.SetUserTokens(map[string]string{"a": "t-a2"})
 
 	got := c.UserTokens()

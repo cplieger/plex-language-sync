@@ -1,14 +1,13 @@
 // Package notify implements the Plex WebSocket notification listener.
 //
 // Stable wire contracts: the Plex NotificationContainer JSON format
-// (struct tags below), the WARN/ERROR slog keys and ReasonXxx values
-// Loki alert rules match on, and the /:/websockets/notifications path,
-// 1 MB read limit, and X-Plex-Token header.
+// (struct tags below), the /:/websockets/notifications path, the 1 MB
+// read limit, and the X-Plex-Token header.
 package notify
 
-// Notification is the top-level envelope Plex sends over the WebSocket.
+// notification is the top-level envelope Plex sends over the WebSocket.
 // Field names and tags mirror the wire format byte-for-byte.
-type Notification struct {
+type notification struct {
 	NotificationContainer struct {
 		Type                         string          `json:"type"`
 		PlaySessionStateNotification []PlayEvent     `json:"PlaySessionStateNotification"`

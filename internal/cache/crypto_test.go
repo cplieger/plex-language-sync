@@ -46,38 +46,38 @@ func TestDeriveKeyEmptyTokenErrors(t *testing.T) {
 	}
 }
 
-// --- EncryptToken / DecryptToken round-trip ---
+// --- encryptToken / decryptToken round-trip ---
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	t.Parallel()
 	key, _ := DeriveKey("test-token")
 	original := "xyzzy-user-token-12345"
 
-	ct, err := EncryptToken(key, original)
+	ct, err := encryptToken(key, original)
 	if err != nil {
-		t.Fatalf("EncryptToken() error = %v", err)
+		t.Fatalf("encryptToken() error = %v", err)
 	}
 	if ct == original {
 		t.Error("ciphertext should differ from plaintext")
 	}
-	if !IsEncrypted(ct) {
+	if !isEncrypted(ct) {
 		t.Error("ciphertext should be detected as encrypted")
 	}
 
-	plain, err := DecryptToken(key, ct)
+	plain, err := decryptToken(key, ct)
 	if err != nil {
-		t.Fatalf("DecryptToken() error = %v", err)
+		t.Fatalf("decryptToken() error = %v", err)
 	}
 	if plain != original {
-		t.Errorf("DecryptToken() = %q, want %q", plain, original)
+		t.Errorf("decryptToken() = %q, want %q", plain, original)
 	}
 }
 
 func TestEncryptTokenProducesUniqueNonces(t *testing.T) {
 	t.Parallel()
 	key, _ := DeriveKey("test-token")
-	ct1, _ := EncryptToken(key, "same-value")
-	ct2, _ := EncryptToken(key, "same-value")
+	ct1, _ := encryptToken(key, "same-value")
+	ct2, _ := encryptToken(key, "same-value")
 	if ct1 == ct2 {
 		t.Error("two encryptions of the same value should produce different ciphertext (random nonce)")
 	}
@@ -87,8 +87,8 @@ func TestDifferentKeysProduceDifferentCiphertext(t *testing.T) {
 	t.Parallel()
 	key1, _ := DeriveKey("token-A")
 	key2, _ := DeriveKey("token-B")
-	ct1, _ := EncryptToken(key1, "user-token-value")
-	ct2, _ := EncryptToken(key2, "user-token-value")
+	ct1, _ := encryptToken(key1, "user-token-value")
+	ct2, _ := encryptToken(key2, "user-token-value")
 	if ct1 == ct2 {
 		t.Error("different keys should produce different ciphertext")
 	}
@@ -98,8 +98,8 @@ func TestDecryptWithWrongKeyFails(t *testing.T) {
 	t.Parallel()
 	key1, _ := DeriveKey("token-A")
 	key2, _ := DeriveKey("token-B")
-	ct, _ := EncryptToken(key1, "secret")
-	_, err := DecryptToken(key2, ct)
+	ct, _ := encryptToken(key1, "secret")
+	_, err := decryptToken(key2, ct)
 	if err == nil {
 		t.Error("decryption with wrong key should fail")
 	}
@@ -108,32 +108,32 @@ func TestDecryptWithWrongKeyFails(t *testing.T) {
 func TestDecryptCorruptedCiphertextFails(t *testing.T) {
 	t.Parallel()
 	key, _ := DeriveKey("test-token")
-	ct, _ := EncryptToken(key, "value")
+	ct, _ := encryptToken(key, "value")
 	// Corrupt the ciphertext by flipping a character.
 	corrupted := ct[:len(ct)-2] + "XX"
-	_, err := DecryptToken(key, corrupted)
+	_, err := decryptToken(key, corrupted)
 	if err == nil {
 		t.Error("decryption of corrupted ciphertext should fail")
 	}
 }
 
-// --- DecryptToken backward-compat: plaintext pass-through ---
+// --- decryptToken backward-compat: plaintext pass-through ---
 
 func TestDecryptPlaintextPassThrough(t *testing.T) {
 	t.Parallel()
 	key, _ := DeriveKey("test-token")
 	plainToken := "abcdef123456-plex-token"
 
-	result, err := DecryptToken(key, plainToken)
+	result, err := decryptToken(key, plainToken)
 	if err != nil {
-		t.Fatalf("DecryptToken(plaintext) error = %v", err)
+		t.Fatalf("decryptToken(plaintext) error = %v", err)
 	}
 	if result != plainToken {
-		t.Errorf("DecryptToken(plaintext) = %q, want %q (pass-through)", result, plainToken)
+		t.Errorf("decryptToken(plaintext) = %q, want %q (pass-through)", result, plainToken)
 	}
 }
 
-// --- IsEncrypted ---
+// --- isEncrypted ---
 
 func TestIsEncrypted(t *testing.T) {
 	t.Parallel()
@@ -149,8 +149,8 @@ func TestIsEncrypted(t *testing.T) {
 		{"enc:x", true},      // minimal encrypted value
 	}
 	for _, tc := range cases {
-		if got := IsEncrypted(tc.input); got != tc.want {
-			t.Errorf("IsEncrypted(%q) = %v, want %v", tc.input, got, tc.want)
+		if got := isEncrypted(tc.input); got != tc.want {
+			t.Errorf("isEncrypted(%q) = %v, want %v", tc.input, got, tc.want)
 		}
 	}
 }
@@ -183,7 +183,7 @@ func TestSaveEncryptsUserTokens(t *testing.T) {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	for uid, val := range ondisk.UserTokens {
-		if !IsEncrypted(val) {
+		if !isEncrypted(val) {
 			t.Errorf("on-disk user_tokens[%s] is plaintext: %q", uid, val)
 		}
 		if strings.Contains(val, "secret-token") {
@@ -259,7 +259,7 @@ func TestLoadPlaintextTokensFileMigrates(t *testing.T) {
 	if err := json.Unmarshal(raw2, &ondisk); err != nil {
 		t.Fatal(err)
 	}
-	if !IsEncrypted(ondisk.UserTokens["u1"]) {
+	if !isEncrypted(ondisk.UserTokens["u1"]) {
 		t.Error("after save, on-disk token should be encrypted")
 	}
 }
@@ -284,16 +284,16 @@ func TestSaveWithoutKeyStoresPlaintext(t *testing.T) {
 	}
 }
 
-// --- DecryptToken ciphertext-length boundary ---
+// --- decryptToken ciphertext-length boundary ---
 
 // TestDecryptTokenCiphertextLengthBoundary pins the minimum-length guard in
-// DecryptToken. A decoded payload must be at least nonce-size + 1 byte (a
-// 12-byte nonce plus at least one byte of ciphertext) before DecryptToken
+// decryptToken. A decoded payload must be at least nonce-size + 1 byte (a
+// 12-byte nonce plus at least one byte of ciphertext) before decryptToken
 // hands it to AES-GCM:
 //
-//   - 12 bytes is one short of the minimum, so DecryptToken rejects it with a
+//   - 12 bytes is one short of the minimum, so decryptToken rejects it with a
 //     "too short" error before touching the cipher.
-//   - 13 bytes clears the guard, so DecryptToken proceeds to AES-GCM, which
+//   - 13 bytes clears the guard, so decryptToken proceeds to AES-GCM, which
 //     fails authentication on the bogus input and reports a "decrypt" error.
 //
 // Each case asserts the exact error class, so widening or narrowing the guard
@@ -326,23 +326,23 @@ func TestDecryptTokenCiphertextLengthBoundary(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			// encPrefix marks the value as ciphertext so DecryptToken does not
+			// encPrefix marks the value as ciphertext so decryptToken does not
 			// take the plaintext pass-through path. RawURLEncoding round-trips
 			// byte counts, so the decoded length equals rawLen exactly.
 			value := encPrefix + base64.RawURLEncoding.EncodeToString(make([]byte, tc.rawLen))
 
-			_, err := DecryptToken(key, value)
+			_, err := decryptToken(key, value)
 			if err == nil {
-				t.Fatalf("DecryptToken(rawLen=%d) error = nil, want error containing %q",
+				t.Fatalf("decryptToken(rawLen=%d) error = nil, want error containing %q",
 					tc.rawLen, tc.wantMsg)
 			}
 			msg := err.Error()
 			if !strings.Contains(msg, tc.wantMsg) {
-				t.Errorf("DecryptToken(rawLen=%d) error = %q, want substring %q",
+				t.Errorf("decryptToken(rawLen=%d) error = %q, want substring %q",
 					tc.rawLen, msg, tc.wantMsg)
 			}
 			if strings.Contains(msg, tc.notMsg) {
-				t.Errorf("DecryptToken(rawLen=%d) error = %q, must NOT contain %q",
+				t.Errorf("decryptToken(rawLen=%d) error = %q, must NOT contain %q",
 					tc.rawLen, msg, tc.notMsg)
 			}
 		})

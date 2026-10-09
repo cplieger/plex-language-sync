@@ -65,7 +65,7 @@ func makeStreams(n int) []*Stream {
 	for i := range n {
 		ss[i] = &Stream{
 			ID:                   plexapi.FlexInt(i + 1),
-			StreamType:           StreamTypeAudio,
+			StreamType:           plexapi.StreamTypeAudio,
 			LanguageCode:         "eng",
 			Codec:                "aac",
 			Channels:             2,
@@ -96,7 +96,7 @@ func costStreams(n int, mut func(i int, s *Stream)) []*Stream {
 // set so a class can still override the codec or a flag.
 func costSubtitles(n int, mut func(i int, s *Stream)) []*Stream {
 	return costStreams(n, func(i int, s *Stream) {
-		s.StreamType = StreamTypeSubtitle
+		s.StreamType = plexapi.StreamTypeSubtitle
 		s.Codec = "srt"
 		if mut != nil {
 			mut(i, s)
@@ -127,7 +127,7 @@ func streamValues(ss []*Stream) []Stream {
 // TestBestByScoreAllocatesNothingAtEverySize is an equality, not a ceiling,
 // because the property is EVERY size, not one.
 //
-// BestByScore returns an element of the slice it was handed (tracks best
+// bestByScore returns an element of the slice it was handed (tracks best
 // index/score in two locals) rather than building a result, so it should
 // allocate nothing at any candidate count — a result slice or a boxed score
 // would put one allocation on every episode of every show. The weekly chart
@@ -149,24 +149,24 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 		for _, n := range []int{0, 1, 10, 100, 1000} {
 			streams := costStreams(n, nil)
 			ref := &Stream{LanguageCode: "eng", Codec: "aac", Channels: 2}
-			scoreFn := func(s *Stream) int { return ScoreAudio(ref, s) }
+			scoreFn := func(s *Stream) int { return scoreAudio(ref, s) }
 			if got := testing.AllocsPerRun(costRuns, func() {
-				_ = BestByScore(streams, scoreFn)
+				_ = bestByScore(streams, scoreFn)
 			}); got != 0 {
-				t.Errorf("BestByScore(%d candidates, ScoreAudio) allocated %v times per run, want 0: it returns an element of the slice it was given, so a non-zero count means a result is being built on a path that runs once per episode of every show in the library",
+				t.Errorf("bestByScore(%d candidates, scoreAudio) allocated %v times per run, want 0: it returns an element of the slice it was given, so a non-zero count means a result is being built on a path that runs once per episode of every show in the library",
 					n, got)
 			}
 		}
 	})
 
-	// nil rather than empty: FilterByLanguage returns nil (not an empty
+	// nil rather than empty: selectByLanguage returns nil (not an empty
 	// slice) when nothing matched, which is the shape production passes.
 	t.Run("a nil candidate slice", func(t *testing.T) {
 		var streams []*Stream
 		if got := testing.AllocsPerRun(costRuns, func() {
-			_ = BestByScore(streams, func(_ *Stream) int { return 1 })
+			_ = bestByScore(streams, func(_ *Stream) int { return 1 })
 		}); got != 0 {
-			t.Errorf("BestByScore(nil, scoreFn) allocated %v times per run, want 0: nil is what FilterByLanguage returns when nothing matched, so this is the empty path production reaches",
+			t.Errorf("bestByScore(nil, scoreFn) allocated %v times per run, want 0: nil is what selectByLanguage returns when nothing matched, so this is the empty path production reaches",
 				got)
 		}
 	})
@@ -197,14 +197,14 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 			// exists to handle.
 			"all negative": func(s *Stream) int { return -int(s.ID) },
 			// The real scorer FindSubtitleByLanguage passes.
-			"subtitle codec score": func(s *Stream) int { return SubtitleCodecScore(s.Codec) },
+			"subtitle codec score": func(s *Stream) int { return subtitleCodecScore(s.Codec) },
 		}
 		for name, scoreFn := range shapes {
 			t.Run(name, func(t *testing.T) {
 				if got := testing.AllocsPerRun(costRuns, func() {
-					_ = BestByScore(streams, scoreFn)
+					_ = bestByScore(streams, scoreFn)
 				}); got != 0 {
-					t.Errorf("BestByScore(%d candidates, %s scoreFn) allocated %v times per run, want 0: the count must not depend on the score distribution, or a library whose tracks happen to tie pays an allocation per episode that a test on distinct scores would never see",
+					t.Errorf("bestByScore(%d candidates, %s scoreFn) allocated %v times per run, want 0: the count must not depend on the score distribution, or a library whose tracks happen to tie pays an allocation per episode that a test on distinct scores would never see",
 						len(streams), name, got)
 				}
 			})
@@ -212,48 +212,48 @@ func TestBestByScoreAllocatesNothingAtEverySize(t *testing.T) {
 	})
 }
 
-// TestFilterByLanguageAllocationRatePerCandidate pins the language-grading
+// TestSelectByLanguageAllocationRatePerCandidate pins the language-grading
 // rate: langtag.Parse runs once per candidate via (*Stream).Lang (three
 // allocations for a plain alpha-3 code), so a second parse or an added
 // lowercase pass would double the per-track cost of every library scan.
 //
 // Measured slope 3.01/candidate; ceiling 3.5 absorbs floor residue while
 // still failing on one added allocation per candidate.
-func TestFilterByLanguageAllocationRatePerCandidate(t *testing.T) {
+func TestSelectByLanguageAllocationRatePerCandidate(t *testing.T) {
 	const maxPerCandidate = 3.5
 
 	counts := make([]float64, len(costSizes))
 	for i, n := range costSizes {
 		// Built outside the closure: costSubtitles itself allocates.
 		candidates := costSubtitles(n, nil)
-		if got := FilterByLanguage(candidates, "eng", langtag.TierSameLanguage); len(got) != n {
-			t.Fatalf("FilterByLanguage(%d eng candidates, \"eng\", same-language) kept %d, want all %d; the fixture is meant to measure the accepting path",
+		if got := selectByLanguage(candidates, "eng", langtag.TierSameLanguage); len(got) != n {
+			t.Fatalf("selectByLanguage(%d eng candidates, \"eng\", same-language) kept %d, want all %d; the fixture is meant to measure the accepting path",
 				n, len(got), n)
 		}
 		counts[i] = testing.AllocsPerRun(costRuns, func() {
-			_ = FilterByLanguage(candidates, "eng", langtag.TierSameLanguage)
+			_ = selectByLanguage(candidates, "eng", langtag.TierSameLanguage)
 		})
 	}
 
 	low, high := costSizes[0], costSizes[len(costSizes)-1]
 	rate := (counts[len(counts)-1] - counts[0]) / float64(high-low)
 	if rate > maxPerCandidate {
-		t.Errorf("FilterByLanguage(%d eng candidates, \"eng\", same-language) allocated %v times per run against %v at %d candidates, a rate of %.4f per candidate, want at most %.2f: this app grades every track of every episode of every show, so one added allocation per candidate is multiplied by the whole library",
+		t.Errorf("selectByLanguage(%d eng candidates, \"eng\", same-language) allocated %v times per run against %v at %d candidates, a rate of %.4f per candidate, want at most %.2f: this app grades every track of every episode of every show, so one added allocation per candidate is multiplied by the whole library",
 			high, counts[len(counts)-1], counts[0], low, rate, maxPerCandidate)
 	}
-	t.Logf("FilterByLanguage: %.4f allocations per candidate over %d..%d (%v at %d, %v at %d, %v at %d); adjacent rates %.4f and %.4f",
+	t.Logf("selectByLanguage: %.4f allocations per candidate over %d..%d (%v at %d, %v at %d, %v at %d); adjacent rates %.4f and %.4f",
 		rate, low, high, counts[0], costSizes[0], counts[1], costSizes[1], counts[2], costSizes[2],
 		(counts[1]-counts[0])/float64(costSizes[1]-costSizes[0]),
 		(counts[2]-counts[1])/float64(costSizes[2]-costSizes[1]))
 }
 
 // TestFindSubtitleByLanguageAllocationRatePerCandidate covers the same
-// composition (FilterByLanguage + BestByScore) on the new-show seeding path
-// (no watch history). Gets its own contract because BestByScore contributing
-// nothing is what makes the composed rate equal FilterByLanguage's; a higher
+// composition (selectByLanguage + bestByScore) on the new-show seeding path
+// (no watch history). Gets its own contract because bestByScore contributing
+// nothing is what makes the composed rate equal selectByLanguage's; a higher
 // rate here would localize a regression in the codec ranking to this call.
 //
-// Measured 3.01/candidate, same as FilterByLanguage alone.
+// Measured 3.01/candidate, same as selectByLanguage alone.
 func TestFindSubtitleByLanguageAllocationRatePerCandidate(t *testing.T) {
 	const maxPerCandidate = 3.5
 
@@ -305,19 +305,19 @@ func TestFilterByBoolPrefAllocationRateIsEffectivelyBounded(t *testing.T) {
 		for i, n := range costSizes {
 			// Outside the closure.
 			candidates := costSubtitles(n, nil)
-			if got := FilterByBoolPref(candidates, false, (*Stream).IsAudio); len(got) != n {
-				t.Fatalf("FilterByBoolPref(%d subtitle candidates, false, IsAudio) kept %d, want all %d; the fixture is meant to make every candidate match",
+			if got := filterByBoolPref(candidates, false, (*Stream).IsAudio); len(got) != n {
+				t.Fatalf("filterByBoolPref(%d subtitle candidates, false, IsAudio) kept %d, want all %d; the fixture is meant to make every candidate match",
 					n, len(got), n)
 			}
 			counts[i] = testing.AllocsPerRun(costRuns, func() {
-				_ = FilterByBoolPref(candidates, false, (*Stream).IsAudio)
+				_ = filterByBoolPref(candidates, false, (*Stream).IsAudio)
 			})
 		}
 
 		low, high := costSizes[0], costSizes[len(costSizes)-1]
 		rate := (counts[len(counts)-1] - counts[0]) / float64(high-low)
 		if rate > maxPerCandidate {
-			t.Errorf("FilterByBoolPref(%d subtitle candidates, false, IsAudio) allocated %v times per run against %v at %d candidates, a rate of %.4f per candidate, want at most %.2f: the flag filters run twice per audio match, so a rate approaching one per candidate would double the per-track cost of every episode in the library",
+			t.Errorf("filterByBoolPref(%d subtitle candidates, false, IsAudio) allocated %v times per run against %v at %d candidates, a rate of %.4f per candidate, want at most %.2f: the flag filters run twice per audio match, so a rate approaching one per candidate would double the per-track cost of every episode in the library",
 				high, counts[len(counts)-1], counts[0], low, rate, maxPerCandidate)
 		}
 		t.Logf("matching branch: %.4f allocations per candidate over %d..%d (%v at %d, %v at %d, %v at %d), which is slice growth rather than per-candidate work",
@@ -331,22 +331,22 @@ func TestFilterByBoolPrefAllocationRateIsEffectivelyBounded(t *testing.T) {
 	t.Run("the fallback branch returns the input and allocates nothing", func(t *testing.T) {
 		for _, n := range costSizes {
 			candidates := costSubtitles(n, nil)
-			got := FilterByBoolPref(candidates, true, (*Stream).IsAudio)
+			got := filterByBoolPref(candidates, true, (*Stream).IsAudio)
 			if len(got) != n {
-				t.Fatalf("FilterByBoolPref(%d subtitle candidates, true, IsAudio) returned %d, want all %d; nothing should match, so the documented fallback must hand back the original list",
+				t.Fatalf("filterByBoolPref(%d subtitle candidates, true, IsAudio) returned %d, want all %d; nothing should match, so the documented fallback must hand back the original list",
 					n, len(got), n)
 			}
 			// Identity, not equality: the fallback must return the caller's
 			// slice, and a copy would satisfy every value comparison while
 			// allocating the whole candidate set.
 			if &got[0] != &candidates[0] {
-				t.Errorf("FilterByBoolPref(%d subtitle candidates, true, IsAudio) returned a different backing array, want the input slice itself: copying the candidate set to return it costs one allocation of the whole set on every episode of every show, and it is a cost no per-candidate rate can see",
+				t.Errorf("filterByBoolPref(%d subtitle candidates, true, IsAudio) returned a different backing array, want the input slice itself: copying the candidate set to return it costs one allocation of the whole set on every episode of every show, and it is a cost no per-candidate rate can see",
 					n)
 			}
 			if got := testing.AllocsPerRun(costRuns, func() {
-				_ = FilterByBoolPref(candidates, true, (*Stream).IsAudio)
+				_ = filterByBoolPref(candidates, true, (*Stream).IsAudio)
 			}); got != 0 {
-				t.Errorf("FilterByBoolPref(%d subtitle candidates, true, IsAudio) allocated %v times per run, want 0: nothing matched, so nothing was appended and the input is handed straight back — any allocation here is paid on every episode of every show whose reference flag no candidate carries",
+				t.Errorf("filterByBoolPref(%d subtitle candidates, true, IsAudio) allocated %v times per run, want 0: nothing matched, so nothing was appended and the input is handed straight back — any allocation here is paid on every episode of every show whose reference flag no candidate carries",
 					n, got)
 			}
 		}
@@ -369,24 +369,24 @@ func TestSelectionDoesNotMutateItsCandidateSlice(t *testing.T) {
 	// Several calls: a mutation idempotent after the first call is the one
 	// a single call cannot see.
 	for range 3 {
-		_ = FilterByLanguage(candidates, "eng", langtag.TierSameLanguage)
-		_ = FilterByBoolPref(candidates, true, (*Stream).IsSubtitle)
+		_ = selectByLanguage(candidates, "eng", langtag.TierSameLanguage)
+		_ = filterByBoolPref(candidates, true, (*Stream).IsSubtitle)
 		_ = FindSubtitleByLanguage(candidates, "eng", langtag.TierSameLanguage)
-		_ = BestByScore(candidates, func(s *Stream) int { return int(s.ID) })
+		_ = bestByScore(candidates, func(s *Stream) int { return int(s.ID) })
 	}
 
 	if got := streamValues(candidates); !slices.Equal(got, before) {
-		t.Fatalf("FilterByLanguage, FilterByBoolPref, FindSubtitleByLanguage and BestByScore over %d candidates left the slice changed, want it untouched: every allocation contract in this file measures one fixture repeatedly, so an in-place sort or write makes those numbers describe an input that no longer exists",
+		t.Fatalf("selectByLanguage, filterByBoolPref, FindSubtitleByLanguage and bestByScore over %d candidates left the slice changed, want it untouched: every allocation contract in this file measures one fixture repeatedly, so an in-place sort or write makes those numbers describe an input that no longer exists",
 			len(candidates))
 	}
 }
 
 func benchBestByScore(b *testing.B, n int) {
 	streams := makeStreams(n)
-	scoreFn := func(s *Stream) int { return ScoreAudio(streams[0], s) }
+	scoreFn := func(s *Stream) int { return scoreAudio(streams[0], s) }
 	b.ResetTimer()
 	for range b.N {
-		BestByScore(streams, scoreFn)
+		bestByScore(streams, scoreFn)
 	}
 }
 

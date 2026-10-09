@@ -802,8 +802,6 @@ func TestWaitForBackgroundLoops_budgetExceeded_onlyRefreshStuck(t *testing.T) {
 
 type fakeIgnoreChecker struct{ skip bool }
 
-func (f fakeIgnoreChecker) IgnoreLibrary(string) bool { return false }
-
 func (f fakeIgnoreChecker) ShouldSkipEpisode(context.Context, *streams.Episode) bool {
 	return f.skip
 }

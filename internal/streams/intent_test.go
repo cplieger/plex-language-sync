@@ -25,13 +25,13 @@ func drawIntentStream(t *rapid.T, label string) *Stream {
 		VisualImpaired:       rapid.Bool().Draw(t, label+"_vi"),
 		// Episode-local identity fields the projection must NOT carry:
 		ID:         plexapi.FlexInt(rapid.IntRange(1, 999).Draw(t, label+"_id")),
-		StreamType: StreamTypeAudio,
+		StreamType: plexapi.StreamTypeAudio,
 		Selected:   true,
 	}
 }
 
 // matcherFieldsEqual compares the fields the matchers/scorers consume on a
-// reference stream (see IntentStream's doc).
+// reference stream (see intentStream's doc).
 func matcherFieldsEqual(a, b *Stream) bool {
 	return a.LanguageCode == b.LanguageCode &&
 		a.Title == b.Title &&
@@ -114,11 +114,11 @@ func TestIntentCloneIsolation(t *testing.T) {
 func TestIntentReconstructedRefDrivesMatchers(t *testing.T) {
 	t.Parallel()
 	liveAudio := &Stream{
-		ID: 7, StreamType: StreamTypeAudio, Selected: true,
+		ID: 7, StreamType: plexapi.StreamTypeAudio, Selected: true,
 		LanguageCode: "jpn", Codec: "eac3", Channels: 6,
 	}
 	liveSub := &Stream{
-		ID: 8, StreamType: StreamTypeSubtitle, Selected: true,
+		ID: 8, StreamType: plexapi.StreamTypeSubtitle, Selected: true,
 		LanguageCode: "eng", Codec: "ass", Forced: false,
 	}
 

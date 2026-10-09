@@ -255,8 +255,8 @@ func TestDoJSON_ResponseExceedingCapErrors(t *testing.T) {
 	if _, ok := errors.AsType[*plexapi.ResponseTooLargeError](err); !ok {
 		t.Errorf("get() error = %v, want *plexapi.ResponseTooLargeError", err)
 	}
-	// The legacy alert string is the APP's Loki contract, emitted by the
-	// adapter's fetch paths on the library's typed over-cap error.
+	// The operator-facing WARN is the app's own, emitted by the adapter's
+	// fetch paths on the library's typed over-cap error.
 	if !strings.Contains(log, "plex API response exceeded read cap") {
 		t.Errorf("missing operator-facing WARN on cap hit; log: %q", log)
 	}

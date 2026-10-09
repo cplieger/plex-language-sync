@@ -60,17 +60,16 @@ type Config struct {
 //
 // Concurrent Run invocations collapse their overlapping deep-analysis
 // triggers onto a single in-flight run via singleflight.Group. The
-// runner goroutine that loses the dedup race still logs a WARN with
-// the "scheduler: deep analysis already in progress, skipping" key so
-// Loki alerts keyed on that string continue to fire.
+// runner goroutine that loses the dedup race logs one WARN,
+// "scheduler: deep analysis already in progress, skipping".
 type Scheduler struct {
 	plex       plexReader
 	cache      runLedger
-	sync       Syncer
+	sync       syncer
 	stamp      *scheduler.Stamp
 	dedup      singleflight.Group
-	userClient UserClientFunc
-	saveCache  CacheSaver
+	userClient userClientFunc
+	saveCache  cacheSaver
 	cfg        Config
 	// workers bounds in-flight per-item work during a deep-analysis
 	// pass; zero (the default) means deepAnalysisConcurrency. Exists as
@@ -105,12 +104,12 @@ type Deps struct {
 	// anchors the replay look-back window.
 	Stamp *scheduler.Stamp
 	// UserClient returns the per-user write client for a username.
-	UserClient UserClientFunc
+	UserClient userClientFunc
 	// Sync applies the recorded intent to an episode.
-	Sync Syncer
+	Sync syncer
 	// SaveCache flushes the cache to disk. May be nil in tests that do not
 	// exercise the disk-flush path.
-	SaveCache CacheSaver
+	SaveCache cacheSaver
 }
 
 // New constructs a Scheduler from cfg and deps.

@@ -51,7 +51,7 @@ func (f *fakeHandler) OnTimeline(_ context.Context, entries []TimelineEntry) {
 // fans each PlaySessionStateNotification entry out to OnPlay.
 func TestDispatch_Playing(t *testing.T) {
 	t.Parallel()
-	var notif Notification
+	var notif notification
 	notif.NotificationContainer.Type = "playing"
 	notif.NotificationContainer.PlaySessionStateNotification = []PlayEvent{
 		{RatingKey: "1", State: "playing"},
@@ -76,7 +76,7 @@ func TestDispatch_Playing(t *testing.T) {
 // delivers the full TimelineEntry slice in one OnTimeline call.
 func TestDispatch_Timeline(t *testing.T) {
 	t.Parallel()
-	var notif Notification
+	var notif notification
 	notif.NotificationContainer.Type = "timeline"
 	notif.NotificationContainer.TimelineEntry = []TimelineEntry{
 		{ItemID: "a", Type: plex.MetadataTypeEpisode, MetadataState: stateCreated},
@@ -102,7 +102,7 @@ func TestDispatch_Timeline(t *testing.T) {
 // upstream schema evolution does not spam the Handler.
 func TestDispatch_UnknownTypeIgnored(t *testing.T) {
 	t.Parallel()
-	var notif Notification
+	var notif notification
 	notif.NotificationContainer.Type = "activity"
 
 	h := &fakeHandler{}
@@ -115,7 +115,7 @@ func TestDispatch_UnknownTypeIgnored(t *testing.T) {
 }
 
 // TestNotificationRoundTripJSON pins the wire-format JSON tags: a
-// Notification marshals to the Plex field names Plex sends, and
+// notification marshals to the Plex field names Plex sends, and
 // unmarshal of a realistic Plex payload populates the expected fields.
 // The payload deliberately carries fields the structs do NOT declare
 // (sessionKey, viewOffset) — real Plex sends them, and the non-strict
@@ -134,7 +134,7 @@ func TestNotificationRoundTripJSON(t *testing.T) {
         }
     }`)
 
-	var n Notification
+	var n notification
 	if err := json.Unmarshal(payload, &n); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -402,12 +402,12 @@ func TestConnectAndListen_ReadIdleTimeoutFires(t *testing.T) {
 }
 
 // TestWrapReadError pins the producer side of the disconnect-classification
-// contract. classify_test.go verifies ClassifyError given already-wrapped
+// contract. classify_test.go verifies classifyError given already-wrapped
 // sentinels; this verifies wrapReadError PRODUCES the right sentinel from a
-// raw conn.Read error, end-to-end through ClassifyError. Without it, a
+// raw conn.Read error, end-to-end through classifyError. Without it, a
 // regression that wrapped the wrong sentinel would leave classify_test.go
-// green while silently corrupting the frozen Loki reason codes (contract
-// item 5). Each case also confirms the original cause survives in the error
+// green while silently corrupting the logged reason codes. Each case also
+// confirms the original cause survives in the error
 // chain (the documented double-%w wrap).
 func TestWrapReadError(t *testing.T) {
 	t.Parallel()
@@ -417,13 +417,13 @@ func TestWrapReadError(t *testing.T) {
 		name       string
 		wantReason string
 	}{
-		{websocket.ErrMessageTooBig, ErrReadLimit, "message too big", ReasonReadLimit},
-		{websocket.CloseError{Code: websocket.StatusNormalClosure}, ErrServerClose, "normal closure", ReasonServerClose},
-		{websocket.CloseError{Code: websocket.StatusGoingAway}, ErrServerClose, "going away", ReasonServerClose},
-		{websocket.CloseError{Code: websocket.StatusAbnormalClosure}, ErrServerClose, "abnormal closure", ReasonServerClose},
-		{websocket.CloseError{Code: websocket.StatusProtocolError}, ErrReadError, "non-server-close code", ReasonReadError},
-		{io.EOF, ErrServerClose, "plain EOF", ReasonServerClose},
-		{errors.New("connection reset"), ErrReadError, "generic transport error", ReasonReadError},
+		{websocket.ErrMessageTooBig, errReadLimit, "message too big", reasonReadLimit},
+		{websocket.CloseError{Code: websocket.StatusNormalClosure}, errServerClose, "normal closure", reasonServerClose},
+		{websocket.CloseError{Code: websocket.StatusGoingAway}, errServerClose, "going away", reasonServerClose},
+		{websocket.CloseError{Code: websocket.StatusAbnormalClosure}, errServerClose, "abnormal closure", reasonServerClose},
+		{websocket.CloseError{Code: websocket.StatusProtocolError}, errReadError, "non-server-close code", reasonReadError},
+		{io.EOF, errServerClose, "plain EOF", reasonServerClose},
+		{errors.New("connection reset"), errReadError, "generic transport error", reasonReadError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -435,15 +435,15 @@ func TestWrapReadError(t *testing.T) {
 			if !errors.Is(got, tc.raw) {
 				t.Errorf("wrapReadError(%v) dropped the original cause from the error chain", tc.raw)
 			}
-			if r := ClassifyError(got); r != tc.wantReason {
-				t.Errorf("ClassifyError(wrapReadError(%v)) = %q, want %q", tc.raw, r, tc.wantReason)
+			if r := classifyError(got); r != tc.wantReason {
+				t.Errorf("classifyError(wrapReadError(%v)) = %q, want %q", tc.raw, r, tc.wantReason)
 			}
 		})
 	}
 }
 
-// TestLogDisconnect_LevelAndEscalation pins the two frozen Loki-alerting
-// behaviors in logDisconnect (inviolate contract item 5): server_close
+// TestLogDisconnect_LevelAndEscalation pins the two level behaviors in
+// logDisconnect: server_close
 // disconnects log at INFO while every other reason logs at WARN, and a
 // single ERROR ("websocket reconnecting persistently") escalates once
 // consecutive reconnects reach persistentReconnectThreshold. The
@@ -465,12 +465,11 @@ func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 		log.SetFlags(prevFlags)
 	})
 
-	l := NewListener(&fakePlexClient{}, DefaultConfig())
 	ctx := t.Context()
 
 	// server_close is INFO; no escalation below the threshold.
 	buf.Reset()
-	l.logDisconnect(ctx, fmt.Errorf("%w: EOF", ErrServerClose), time.Second, false, 1)
+	logDisconnect(ctx, fmt.Errorf("%w: EOF", errServerClose), time.Second, false, 1)
 	if got := buf.String(); !strings.Contains(got, "level=INFO") {
 		t.Errorf("server_close disconnect: want level=INFO, got %q", got)
 	}
@@ -480,14 +479,14 @@ func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 
 	// dial_failed is WARN.
 	buf.Reset()
-	l.logDisconnect(ctx, fmt.Errorf("%w: refused", ErrDialFailed), time.Second, false, 1)
+	logDisconnect(ctx, fmt.Errorf("%w: refused", errDialFailed), time.Second, false, 1)
 	if got := buf.String(); !strings.Contains(got, "level=WARN") {
 		t.Errorf("dial_failed disconnect: want level=WARN, got %q", got)
 	}
 
 	// At the threshold, a single ERROR escalation fires.
 	buf.Reset()
-	l.logDisconnect(ctx, fmt.Errorf("%w: refused", ErrDialFailed), 30*time.Second, false, persistentReconnectThreshold)
+	logDisconnect(ctx, fmt.Errorf("%w: refused", errDialFailed), 30*time.Second, false, persistentReconnectThreshold)
 	if n := strings.Count(buf.String(), "reconnecting persistently"); n != 1 {
 		t.Errorf("escalation at threshold fired %d times, want 1: %q", n, buf.String())
 	}

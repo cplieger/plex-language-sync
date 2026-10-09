@@ -34,9 +34,7 @@ func (c *Client) fetchSections(ctx context.Context, path plexapi.Path) ([]Sectio
 }
 
 // warnIfOverCap emits this app's operator-facing WARN when a read blew
-// the library's response cap. The message text is this app's own
-// Loki-alerting contract, so it must not change independently of the
-// alert rule. Returns err unchanged.
+// the library's response cap. Returns err unchanged.
 func warnIfOverCap(err error, path string) error {
 	if tooLarge, ok := errors.AsType[*plexapi.ResponseTooLargeError](err); ok {
 		slog.Warn("plex API response exceeded read cap; body truncated, likely an unfiltered or oversized response",

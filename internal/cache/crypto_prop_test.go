@@ -20,19 +20,19 @@ func TestEncryptDecryptRoundTripPBT(t *testing.T) {
 	}
 	rapid.Check(t, func(t *rapid.T) {
 		plain := rapid.String().Draw(t, "plain")
-		ct, err := EncryptToken(key, plain)
+		ct, err := encryptToken(key, plain)
 		if err != nil {
-			t.Fatalf("EncryptToken(%q) error = %v", plain, err)
+			t.Fatalf("encryptToken(%q) error = %v", plain, err)
 		}
-		if !IsEncrypted(ct) {
-			t.Errorf("EncryptToken(%q) = %q, want an enc:-prefixed value", plain, ct)
+		if !isEncrypted(ct) {
+			t.Errorf("encryptToken(%q) = %q, want an enc:-prefixed value", plain, ct)
 		}
-		got, err := DecryptToken(key, ct)
+		got, err := decryptToken(key, ct)
 		if err != nil {
-			t.Fatalf("DecryptToken(EncryptToken(%q)) error = %v", plain, err)
+			t.Fatalf("decryptToken(encryptToken(%q)) error = %v", plain, err)
 		}
 		if got != plain {
-			t.Errorf("round-trip: DecryptToken(EncryptToken(%q)) = %q, want %q", plain, got, plain)
+			t.Errorf("round-trip: decryptToken(encryptToken(%q)) = %q, want %q", plain, got, plain)
 		}
 	})
 }

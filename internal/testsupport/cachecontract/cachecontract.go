@@ -1,4 +1,9 @@
-package cache
+// Package cachecontract is the persisted-cache contract suite, run against
+// both the real cache (internal/cache) and its in-memory fake
+// (internal/testsupport/fakeapi), which keeps the fake honest: a fake that
+// drifts from the real store turns every test built on it into a test of the
+// fake. Import from _test.go files only.
+package cachecontract
 
 import (
 	"sync"
@@ -8,11 +13,9 @@ import (
 )
 
 // Contract is the FULL persisted surface, and the only wide interface in this
-// app. It exists for exactly one consumer — RunContract below — because the
-// thing under test IS the whole surface; no production code depends on it, so
-// it forces no consumer to accept methods it does not call. Production
-// consumers each declare the 4, 3 or 2 methods they actually use, at their own
-// package.
+// app. Run is its one consumer, because the thing under test IS the whole
+// surface; production consumers each declare the methods they use, at their
+// own package.
 type Contract interface {
 	WasRecentlyProcessed(key string) bool
 	MarkProcessed(key string)
@@ -25,15 +28,8 @@ type Contract interface {
 	SetUserTokens(tokens map[string]string)
 }
 
-// RunContract exercises the persisted-cache contract against any
-// implementation. Both *Cache and the in-memory test fake must pass, which is
-// what keeps the fake honest: a fake that drifts from the real store turns
-// every test built on it into a test of the fake.
-//
-// It lives in an ordinary .go file, not a _test.go, because its second caller
-// is in a different package and a _test.go file is visible only to its own
-// package's test binary.
-func RunContract(t *testing.T, c Contract) {
+// Run exercises the persisted-cache contract against c.
+func Run(t *testing.T, c Contract) {
 	t.Helper()
 
 	t.Run("SetGet_roundtrip", func(t *testing.T) {
@@ -87,11 +83,9 @@ const (
 	langFRA = "fra"
 )
 
-// intentContract exercises the intent-ledger portion of the Contract
-// contract: record/read round-trip with deep-copy isolation and the
-// nil-subtitle ("no subtitles") form. Edge behaviors live in
-// intentEdgeContract. Split out of RunCacheContract to keep cognitive
-// complexity under the gate.
+// intentContract exercises the intent-ledger portion of the Contract:
+// record/read round-trip with deep-copy isolation and the nil-subtitle
+// ("no subtitles") form. Edge behaviors live in intentEdgeContract.
 func intentContract(t *testing.T, c Contract) {
 	t.Helper()
 
@@ -165,8 +159,6 @@ func intentEdgeContract(t *testing.T, c Contract) {
 
 // intentPerShowContract covers the ledger's per-show independence: two shows
 // recorded for one user are two entries, and neither write disturbs the other.
-// Split out of intentEdgeContract to keep that function's cognitive complexity
-// under the gate.
 func intentPerShowContract(t *testing.T, c Contract) {
 	t.Helper()
 
@@ -194,11 +186,8 @@ func intentPerShowContract(t *testing.T, c Contract) {
 }
 
 // checkAndMarkContract exercises the atomic test-and-set portion of the
-// Contract: CheckAndMark admits a fresh key exactly once and
-// rejects it within the recent window. This is the TOCTOU-free idempotency
-// gate scheduler.processRecentlyAddedEpisode relies on. Split out of
-// RunCacheContract to keep that function's cognitive complexity under the
-// gate.
+// Contract: CheckAndMark admits a fresh key exactly once and rejects it within
+// the recent window, the idempotency gate the recently-added path relies on.
 func checkAndMarkContract(t *testing.T, c Contract) {
 	t.Helper()
 

@@ -14,7 +14,7 @@ import (
 
 // TestClassifyError covers the substring-free, typed-sentinel
 // classification path. Each case wraps the typed sentinel with %w so
-// ClassifyError resolves via errors.Is rather than err.Error()
+// classifyError resolves via errors.Is rather than err.Error()
 // substring matching.
 func TestClassifyError(t *testing.T) {
 	t.Parallel()
@@ -23,34 +23,34 @@ func TestClassifyError(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"nil", nil, ReasonUnknown},
+		{"nil", nil, reasonUnknown},
 		{
 			"read_limit wrapped",
-			fmt.Errorf("websocket read: %w", ErrReadLimit),
-			ReasonReadLimit,
+			fmt.Errorf("websocket read: %w", errReadLimit),
+			reasonReadLimit,
 		},
 		{
 			"dial_failed wrapped",
-			fmt.Errorf("%w: connection refused", ErrDialFailed),
-			ReasonDialFailed,
+			fmt.Errorf("%w: connection refused", errDialFailed),
+			reasonDialFailed,
 		},
 		{
 			"server_close wrapped",
-			fmt.Errorf("%w: EOF", ErrServerClose),
-			ReasonServerClose,
+			fmt.Errorf("%w: EOF", errServerClose),
+			reasonServerClose,
 		},
 		{
 			"read_error wrapped",
-			fmt.Errorf("%w: i/o timeout", ErrReadError),
-			ReasonReadError,
+			fmt.Errorf("%w: i/o timeout", errReadError),
+			reasonReadError,
 		},
-		{"unknown", errors.New("something else"), ReasonUnknown},
+		{"unknown", errors.New("something else"), reasonUnknown},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := ClassifyError(tt.err); got != tt.want {
-				t.Errorf("ClassifyError(%v) = %q, want %q", tt.err, got, tt.want)
+			if got := classifyError(tt.err); got != tt.want {
+				t.Errorf("classifyError(%v) = %q, want %q", tt.err, got, tt.want)
 			}
 		})
 	}
@@ -58,8 +58,8 @@ func TestClassifyError(t *testing.T) {
 
 func TestClassifyError_DeadlineExceeded(t *testing.T) {
 	t.Parallel()
-	if got := ClassifyError(context.DeadlineExceeded); got != ReasonReadError {
-		t.Errorf("ClassifyError(DeadlineExceeded) = %q, want %q", got, ReasonReadError)
+	if got := classifyError(context.DeadlineExceeded); got != reasonReadError {
+		t.Errorf("classifyError(DeadlineExceeded) = %q, want %q", got, reasonReadError)
 	}
 }
 
@@ -73,22 +73,22 @@ func TestClassifyError_CloseError(t *testing.T) {
 		want string
 		code websocket.StatusCode
 	}{
-		{"normal_closure_1000", ReasonServerClose, websocket.StatusNormalClosure},
-		{"going_away_1001", ReasonServerClose, websocket.StatusGoingAway},
-		{"abnormal_closure_1006", ReasonServerClose, websocket.StatusAbnormalClosure},
-		{"protocol_error_1002", ReasonUnknown, websocket.StatusProtocolError},
+		{"normal_closure_1000", reasonServerClose, websocket.StatusNormalClosure},
+		{"going_away_1001", reasonServerClose, websocket.StatusGoingAway},
+		{"abnormal_closure_1006", reasonServerClose, websocket.StatusAbnormalClosure},
+		{"protocol_error_1002", reasonUnknown, websocket.StatusProtocolError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := websocket.CloseError{Code: tt.code, Reason: "fixture"}
-			if got := ClassifyError(err); got != tt.want {
-				t.Errorf("ClassifyError(CloseError{%d}) = %q, want %q", tt.code, got, tt.want)
+			if got := classifyError(err); got != tt.want {
+				t.Errorf("classifyError(CloseError{%d}) = %q, want %q", tt.code, got, tt.want)
 			}
 			// Also verify matching when wrapped.
 			wrapped := fmt.Errorf("surrounding context: %w", err)
-			if got := ClassifyError(wrapped); got != tt.want {
-				t.Errorf("ClassifyError(wrapped CloseError{%d}) = %q, want %q",
+			if got := classifyError(wrapped); got != tt.want {
+				t.Errorf("classifyError(wrapped CloseError{%d}) = %q, want %q",
 					tt.code, got, tt.want)
 			}
 		})

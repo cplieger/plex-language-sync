@@ -2,10 +2,10 @@ package cache
 
 import "testing"
 
-// FuzzDecryptToken exercises the untrusted-input boundary: DecryptToken is
+// FuzzDecryptToken exercises the untrusted-input boundary: decryptToken is
 // fed user_tokens values straight from cache.json, which an attacker with
 // access to the /config volume can tamper with. It asserts two invariants
-// over arbitrary input: (1) DecryptToken never panics (crash-safety on the
+// over arbitrary input: (1) decryptToken never panics (crash-safety on the
 // token-at-rest boundary), and (2) any value that is NOT enc:-prefixed is
 // returned verbatim with no error - the migration pass-through contract
 // LoadFrom relies on. AES-GCM authentication guarantees an enc:-prefixed
@@ -21,9 +21,9 @@ func FuzzDecryptToken(f *testing.F) {
 		f.Fatalf("DeriveKey() error = %v", err)
 	}
 	f.Fuzz(func(t *testing.T, value string) {
-		got, err := DecryptToken(key, value)
-		if !IsEncrypted(value) && (err != nil || got != value) {
-			t.Errorf("DecryptToken(non-enc %q) = (%q, %v), want (%q, nil)", value, got, err, value)
+		got, err := decryptToken(key, value)
+		if !isEncrypted(value) && (err != nil || got != value) {
+			t.Errorf("decryptToken(non-enc %q) = (%q, %v), want (%q, nil)", value, got, err, value)
 		}
 	})
 }

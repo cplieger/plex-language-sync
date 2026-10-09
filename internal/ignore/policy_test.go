@@ -53,17 +53,15 @@ func TestPolicyIgnoreShowLabels(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			p := New(Config{Labels: tc.ignore})
-			if got := p.IgnoreShowLabels(tc.labels); got != tc.want {
-				t.Errorf("IgnoreShowLabels(%+v) = %v, want %v", tc.labels, got, tc.want)
+			if got := p.ignoreShowLabels(tc.labels); got != tc.want {
+				t.Errorf("ignoreShowLabels(%+v) = %v, want %v", tc.labels, got, tc.want)
 			}
 		})
 	}
 }
 
-// stubReader implements MetadataReader, the one-method interface
-// ShouldSkipEpisode needs. It used to implement all eight methods of a shared
-// PlexReader interface and panic in seven of them; the narrow interface makes
-// those seven unwritable rather than merely unreachable.
+// stubReader implements metadataReader, the one-method interface
+// ShouldSkipEpisode needs.
 type stubReader struct {
 	show *plex.Show
 	err  error
@@ -73,8 +71,8 @@ func (r *stubReader) ShowMetadata(_ context.Context, _ plex.RatingKey) (*plex.Sh
 	return r.show, r.err
 }
 
-// stubReader must satisfy MetadataReader at compile time.
-var _ MetadataReader = (*stubReader)(nil)
+// stubReader must satisfy metadataReader at compile time.
+var _ metadataReader = (*stubReader)(nil)
 
 func TestPolicyShouldSkipEpisode(t *testing.T) {
 	t.Parallel()
@@ -167,10 +165,10 @@ func TestPolicyConstructorDefensiveCopy(t *testing.T) {
 	if !p.IgnoreLibrary("Music") {
 		t.Error("New Libraries contents corrupted")
 	}
-	if p.IgnoreShowLabels([]streams.Label{{Tag: "MUTATED"}}) {
+	if p.ignoreShowLabels([]streams.Label{{Tag: "MUTATED"}}) {
 		t.Error("New did not defensive-copy Labels")
 	}
-	if !p.IgnoreShowLabels([]streams.Label{{Tag: "SKIP"}}) {
+	if !p.ignoreShowLabels([]streams.Label{{Tag: "SKIP"}}) {
 		t.Error("New Labels contents corrupted")
 	}
 }

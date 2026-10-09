@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// None is the sentinel Desc returns for a nil stream pointer. It lands
+// none is the sentinel Desc returns for a nil stream pointer. It lands
 // in log attributes like `"audio"="none"` so downstream queries can
 // distinguish "no selection" from an absent field.
-const None = "none"
+const none = "none"
 
 // TitleForMatch returns the most-specific non-empty title field on the
 // stream, preferring ExtendedDisplayTitle > DisplayTitle > Title. Used
@@ -26,10 +26,10 @@ func (s *Stream) TitleForMatch() string {
 
 // Desc returns a human-readable description of the stream for log
 // output: the best title if any, otherwise "stream-<id>", otherwise
-// None for a nil stream.
+// none for a nil stream.
 func Desc(s *Stream) string {
 	if s == nil {
-		return None
+		return none
 	}
 	if t := s.TitleForMatch(); t != "" {
 		return t

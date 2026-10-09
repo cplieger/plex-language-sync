@@ -705,7 +705,7 @@ func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// deep-analysis fetch-error branches — inviolate Loki WARN keys
+// deep-analysis fetch-error branches — WARN keys
 // ---------------------------------------------------------------------------
 
 // captureSlog redirects the default slog logger to a buffer for the duration of
@@ -753,7 +753,7 @@ func (p *fetchErrPlex) ShowSections(ctx context.Context) ([]plex.Section, error)
 	return p.Plex.ShowSections(ctx)
 }
 
-// TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts pins the inviolate Loki
+// TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts pins the
 // WARN key on a history-fetch failure and that no per-item work runs.
 func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 	plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: errors.New("boom")}
@@ -779,7 +779,7 @@ func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 	}
 }
 
-// TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts pins the inviolate Loki
+// TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts pins the
 // WARN key on a sections-fetch failure and that no episodes are processed.
 func TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts(t *testing.T) {
 	plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, sectionsErr: errors.New("boom")}
@@ -924,7 +924,7 @@ func (p *blockingDeepAnalysisPlex) History(ctx context.Context, since int64) ([]
 // TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce pins the singleflight
 // collapse path of deepAnalysis: when two Run goroutines trigger an overlapping
 // deep-analysis tick, exactly one (the winner) executes deepAnalysisCore and the
-// other (the loser) collapses into the in-flight call, logging the inviolate Loki
+// other (the loser) collapses into the in-flight call, logging the
 // WARN key "scheduler: deep analysis already in progress, skipping" EXACTLY ONCE.
 //
 // Ordering is what makes the collapse deterministic rather than schedule-
@@ -1253,8 +1253,8 @@ func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
 // TestScheduler_ContextCanceledFetchIsDebugNotWarn pins the shutdown log
 // contract: a History or ShowSections fetch failing with context.Canceled
 // (graceful shutdown) must emit the Debug "cancelled during shutdown" line, NOT
-// the "failed to fetch" WARN. The WARN keys are a Loki-alert contract, so a
-// spurious one on every shutdown would pollute it. Reuses the fetchErrPlex
+// the "failed to fetch" WARN: a spurious one on every shutdown would bury
+// real fetch failures. Reuses the fetchErrPlex
 // wrapper and captureSlog helper already in this file. Not parallel: captureSlog
 // mutates the process-global default logger.
 func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
@@ -1310,7 +1310,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 // to completion), processRecentHistory emits one WARN reporting failed/total item
 // counts. This mirrors the recently-added path's
 // TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts; the history-path
-// WARN has no assertion pinning its Loki-alert key + attributes. A single worker
+// WARN has no assertion pinning its key + attributes. A single worker
 // makes failed_items deterministic and keeps the consecutive-error total (3)
 // below maxConsecutiveErrors (5), so the breaker never trips and all items are
 // processed. Not parallel: captureSlog mutates the process-global default logger.
@@ -1684,7 +1684,7 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 
 // TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning pins the negative half of
 // both partial-failure summaries: a pass where every fetch succeeded raises
-// neither. Both lines are WARNs an operator (and a Loki alert) reads as "this
+// neither. Both lines are WARNs an operator reads as "this
 // sweep lost items", so one that also fired on a healthy pass would make the
 // signal worthless — and the healthy pass is the one that runs every day.
 // Not parallel: captureSlog mutates the process-global default logger.
