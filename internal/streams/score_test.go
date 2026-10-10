@@ -54,40 +54,40 @@ func TestScoreAudioStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ScoreAudio(&tt.ref, &tt.s)
+			got := scoreAudio(&tt.ref, &tt.s)
 			if got != tt.wantMin {
-				t.Errorf("ScoreAudio() = %d, want %d", got, tt.wantMin)
+				t.Errorf("scoreAudio() = %d, want %d", got, tt.wantMin)
 			}
 		})
 	}
 }
 
-// --- Tests: ScoreSubtitle ---
+// --- Tests: scoreSubtitle ---
 
 func TestScoreSubtitleStream(t *testing.T) {
 	t.Run("nil ref returns 0", func(t *testing.T) {
-		got := ScoreSubtitle(nil, &Stream{})
+		got := scoreSubtitle(nil, &Stream{})
 		if got != 0 {
-			t.Errorf("ScoreSubtitle(nil) = %d, want 0", got)
+			t.Errorf("scoreSubtitle(nil) = %d, want 0", got)
 		}
 	})
 
 	t.Run("matching forced and HI adds 6", func(t *testing.T) {
 		ref := &Stream{Forced: true, HearingImpaired: true}
 		s := &Stream{Forced: true, HearingImpaired: true}
-		got := ScoreSubtitle(ref, s)
+		got := scoreSubtitle(ref, s)
 		if got < 6 {
-			t.Errorf("ScoreSubtitle() = %d, want >= 6", got)
+			t.Errorf("scoreSubtitle() = %d, want >= 6", got)
 		}
 	})
 
 	t.Run("mismatched forced loses 3", func(t *testing.T) {
 		ref := &Stream{Forced: true}
 		s := &Stream{Forced: false}
-		got := ScoreSubtitle(ref, s)
+		got := scoreSubtitle(ref, s)
 		// forced mismatch: no +3 for forced, but +3 for HI match (both false)
 		if got > 4 {
-			t.Errorf("ScoreSubtitle() = %d, want <= 4", got)
+			t.Errorf("scoreSubtitle() = %d, want <= 4", got)
 		}
 	})
 
@@ -95,9 +95,9 @@ func TestScoreSubtitleStream(t *testing.T) {
 		ref := &Stream{Codec: "srt"}
 		s := &Stream{Codec: "srt"}
 		// +3 forced match (both false) +3 HI match (both false) +1 codec
-		got := ScoreSubtitle(ref, s)
+		got := scoreSubtitle(ref, s)
 		if got != 7 {
-			t.Errorf("ScoreSubtitle() = %d, want 7", got)
+			t.Errorf("scoreSubtitle() = %d, want 7", got)
 		}
 	})
 }
@@ -112,40 +112,40 @@ func TestTitleMatchScore(t *testing.T) {
 			Title: "English", DisplayTitle: "English (EAC3)",
 			ExtendedDisplayTitle: "English (EAC3 5.1)",
 		}
-		got := TitleMatchScore(ref, s)
+		got := titleMatchScore(ref, s)
 		if got != 15 {
-			t.Errorf("TitleMatchScore() = %d, want 15", got)
+			t.Errorf("titleMatchScore() = %d, want 15", got)
 		}
 	})
 
 	t.Run("no titles match", func(t *testing.T) {
 		ref := &Stream{Title: "English"}
 		s := &Stream{Title: "Japanese"}
-		got := TitleMatchScore(ref, s)
+		got := titleMatchScore(ref, s)
 		if got != 0 {
-			t.Errorf("TitleMatchScore() = %d, want 0", got)
+			t.Errorf("titleMatchScore() = %d, want 0", got)
 		}
 	})
 
 	t.Run("empty titles no match", func(t *testing.T) {
 		ref := &Stream{}
 		s := &Stream{}
-		got := TitleMatchScore(ref, s)
+		got := titleMatchScore(ref, s)
 		if got != 0 {
-			t.Errorf("TitleMatchScore() = %d, want 0", got)
+			t.Errorf("titleMatchScore() = %d, want 0", got)
 		}
 	})
 }
 
-// --- Tests: FilterByLanguage ---
+// --- Tests: selectByLanguage ---
 
-func TestFilterByLanguage(t *testing.T) {
+func TestSelectByLanguage(t *testing.T) {
 	streams := []*Stream{
 		{ID: 1, LanguageCode: "eng"},
 		{ID: 2, LanguageCode: "jpn"},
 		{ID: 3, LanguageCode: "eng"},
 	}
-	got := FilterByLanguage(streams, "eng", langtag.TierIdentical)
+	got := selectByLanguage(streams, "eng", langtag.TierIdentical)
 	if len(got) != 2 {
 		t.Fatalf("expected 2, got %d", len(got))
 	}
@@ -153,13 +153,13 @@ func TestFilterByLanguage(t *testing.T) {
 		t.Errorf("unexpected IDs: %d, %d", got[0].ID, got[1].ID)
 	}
 
-	got = FilterByLanguage(streams, "kor", langtag.TierIdentical)
+	got = selectByLanguage(streams, "kor", langtag.TierIdentical)
 	if len(got) != 0 {
 		t.Errorf("expected 0 for kor, got %d", len(got))
 	}
 }
 
-// --- Tests: FilterByBoolPref ---
+// --- Tests: filterByBoolPref ---
 
 func TestFilterByBoolPref(t *testing.T) {
 	streams := []*Stream{
@@ -169,7 +169,7 @@ func TestFilterByBoolPref(t *testing.T) {
 	}
 
 	t.Run("filters to matching", func(t *testing.T) {
-		got := FilterByBoolPref(streams, true, func(s *Stream) bool { return s.Forced })
+		got := filterByBoolPref(streams, true, func(s *Stream) bool { return s.Forced })
 		if len(got) != 2 {
 			t.Fatalf("expected 2, got %d", len(got))
 		}
@@ -177,14 +177,14 @@ func TestFilterByBoolPref(t *testing.T) {
 
 	t.Run("returns all when none match", func(t *testing.T) {
 		all := []*Stream{{ID: 1, Forced: false}}
-		got := FilterByBoolPref(all, true, func(s *Stream) bool { return s.Forced })
+		got := filterByBoolPref(all, true, func(s *Stream) bool { return s.Forced })
 		if len(got) != 1 {
 			t.Fatalf("expected 1 (fallback to all), got %d", len(got))
 		}
 	})
 }
 
-// --- Tests: BestByScore ---
+// --- Tests: bestByScore ---
 
 func TestBestByScore(t *testing.T) {
 	streams := []*Stream{
@@ -192,7 +192,7 @@ func TestBestByScore(t *testing.T) {
 		{ID: 2, Channels: 6},
 		{ID: 3, Channels: 4},
 	}
-	got := BestByScore(streams, func(s *Stream) int { return s.Channels })
+	got := bestByScore(streams, func(s *Stream) int { return s.Channels })
 	if got.ID != 2 {
 		t.Errorf("expected ID=2 (highest channels), got ID=%d", got.ID)
 	}
@@ -200,9 +200,9 @@ func TestBestByScore(t *testing.T) {
 
 func TestBestByScoreEmpty(t *testing.T) {
 	t.Parallel()
-	got := BestByScore(nil, func(s *Stream) int { return s.Channels })
+	got := bestByScore(nil, func(s *Stream) int { return s.Channels })
 	if got != nil {
-		t.Errorf("BestByScore(nil) = %v, want nil", got)
+		t.Errorf("bestByScore(nil) = %v, want nil", got)
 	}
 }
 
@@ -211,8 +211,8 @@ func TestScoreAudioStreamChannelPreference(t *testing.T) {
 		ref := &Stream{Channels: 2}
 		low := &Stream{Channels: 2}
 		high := &Stream{Channels: 6}
-		scoreLow := ScoreAudio(ref, low)
-		scoreHigh := ScoreAudio(ref, high)
+		scoreLow := scoreAudio(ref, low)
+		scoreHigh := scoreAudio(ref, high)
 		if scoreHigh <= scoreLow {
 			t.Errorf("6ch (%d) should score higher than 2ch (%d) for 2ch ref", scoreHigh, scoreLow)
 		}
@@ -221,14 +221,14 @@ func TestScoreAudioStreamChannelPreference(t *testing.T) {
 	t.Run("high channel ref no bonus for lower", func(t *testing.T) {
 		ref := &Stream{Channels: 8, Codec: "eac3", AudioChannelLayout: "7.1"}
 		s := &Stream{Channels: 2, Codec: "aac", AudioChannelLayout: "stereo"}
-		score := ScoreAudio(ref, s)
+		score := scoreAudio(ref, s)
 		if score != 0 {
 			t.Errorf("expected 0 for lower channels with high ref and different codec/layout, got %d", score)
 		}
 	})
 }
 
-// --- Tests: ScoreSubtitle comprehensive ---
+// --- Tests: scoreSubtitle comprehensive ---
 
 func TestScoreSubtitleStreamComprehensive(t *testing.T) {
 	t.Run("all fields match", func(t *testing.T) {
@@ -242,7 +242,7 @@ func TestScoreSubtitleStreamComprehensive(t *testing.T) {
 			Title: "English", DisplayTitle: "English SDH",
 			ExtendedDisplayTitle: "English SDH (SRT)",
 		}
-		got := ScoreSubtitle(ref, s)
+		got := scoreSubtitle(ref, s)
 		// Expected: forced(3) + HI(3) + codec(1) + title(5) + display(5) + extended(5).
 		if got != 22 {
 			t.Errorf("all match score = %d, want 22", got)
@@ -252,7 +252,7 @@ func TestScoreSubtitleStreamComprehensive(t *testing.T) {
 	t.Run("nothing matches", func(t *testing.T) {
 		ref := &Stream{Forced: true, HearingImpaired: true, Codec: "srt"}
 		s := &Stream{Forced: false, HearingImpaired: false, Codec: "ass"}
-		got := ScoreSubtitle(ref, s)
+		got := scoreSubtitle(ref, s)
 		if got != 0 {
 			t.Errorf("nothing match score = %d, want 0", got)
 		}
@@ -261,26 +261,26 @@ func TestScoreSubtitleStreamComprehensive(t *testing.T) {
 
 func TestBestByScoreSingle(t *testing.T) {
 	streams := []*Stream{{ID: 1}}
-	got := BestByScore(streams, func(s *Stream) int { return 0 })
+	got := bestByScore(streams, func(s *Stream) int { return 0 })
 	if got.ID != 1 {
 		t.Errorf("expected ID=1, got ID=%d", got.ID)
 	}
 }
 
-// --- Tests: FilterByLanguage empty language ---
+// --- Tests: selectByLanguage empty language ---
 
-func TestFilterByLanguageEmptyCode(t *testing.T) {
+func TestSelectByLanguageEmptyCode(t *testing.T) {
 	streams := []*Stream{
 		{ID: 1, LanguageCode: "eng"},
 		{ID: 2, LanguageCode: ""},
 	}
-	got := FilterByLanguage(streams, "", langtag.TierIdentical)
+	got := selectByLanguage(streams, "", langtag.TierIdentical)
 	if len(got) != 1 || got[0].ID != 2 {
 		t.Errorf("expected stream with empty language code, got %v", got)
 	}
 }
 
-// --- Tests: TitleMatchScore partial matches ---
+// --- Tests: titleMatchScore partial matches ---
 
 func TestTitleMatchScorePartial(t *testing.T) {
 	ref := &Stream{
@@ -293,7 +293,7 @@ func TestTitleMatchScorePartial(t *testing.T) {
 		DisplayTitle:         "English (AAC)",
 		ExtendedDisplayTitle: "English (AAC Stereo)",
 	}
-	got := TitleMatchScore(ref, s)
+	got := titleMatchScore(ref, s)
 	if got != 5 {
 		t.Errorf("only Title matches, expected 5, got %d", got)
 	}
@@ -317,9 +317,9 @@ func TestScoreAudioStreamNonNegative(t *testing.T) {
 			DisplayTitle:         rapid.StringMatching(`[A-Za-z ]{0,20}`).Draw(t, "s_display"),
 			ExtendedDisplayTitle: rapid.StringMatching(`[A-Za-z ]{0,30}`).Draw(t, "s_ext"),
 		}
-		score := ScoreAudio(ref, s)
+		score := scoreAudio(ref, s)
 		if score < 0 {
-			t.Errorf("ScoreAudio() = %d, want >= 0", score)
+			t.Errorf("scoreAudio() = %d, want >= 0", score)
 		}
 	})
 }
@@ -342,9 +342,9 @@ func TestScoreSubtitleStreamNonNegative(t *testing.T) {
 			DisplayTitle:         rapid.StringMatching(`[A-Za-z ]{0,20}`).Draw(t, "s_display"),
 			ExtendedDisplayTitle: rapid.StringMatching(`[A-Za-z ]{0,30}`).Draw(t, "s_ext"),
 		}
-		score := ScoreSubtitle(ref, s)
+		score := scoreSubtitle(ref, s)
 		if score < 0 {
-			t.Errorf("ScoreSubtitle() = %d, want >= 0", score)
+			t.Errorf("scoreSubtitle() = %d, want >= 0", score)
 		}
 	})
 }
@@ -359,7 +359,7 @@ func TestScoreAudioStreamSelfMaximal(t *testing.T) {
 			DisplayTitle:         rapid.StringMatching(`[A-Za-z]{1,20}`).Draw(t, "display"),
 			ExtendedDisplayTitle: rapid.StringMatching(`[A-Za-z]{1,30}`).Draw(t, "ext"),
 		}
-		selfScore := ScoreAudio(s, s)
+		selfScore := scoreAudio(s, s)
 		other := &Stream{
 			Codec:                rapid.StringMatching(`[a-z0-9]{1,10}`).Draw(t, "other_codec"),
 			AudioChannelLayout:   rapid.StringMatching(`[a-z0-9.()]{1,15}`).Draw(t, "other_layout"),
@@ -368,9 +368,9 @@ func TestScoreAudioStreamSelfMaximal(t *testing.T) {
 			DisplayTitle:         rapid.StringMatching(`[A-Za-z]{1,20}`).Draw(t, "other_display"),
 			ExtendedDisplayTitle: rapid.StringMatching(`[A-Za-z]{1,30}`).Draw(t, "other_ext"),
 		}
-		otherScore := ScoreAudio(s, other)
+		otherScore := scoreAudio(s, other)
 		if otherScore > selfScore {
-			t.Errorf("ScoreAudio(s, other)=%d > ScoreAudio(s, s)=%d",
+			t.Errorf("scoreAudio(s, other)=%d > scoreAudio(s, s)=%d",
 				otherScore, selfScore)
 		}
 	})
@@ -383,9 +383,9 @@ func TestTitleMatchScoreSelfMaximal(t *testing.T) {
 			DisplayTitle:         rapid.StringMatching(`[A-Za-z]{1,20}`).Draw(t, "display"),
 			ExtendedDisplayTitle: rapid.StringMatching(`[A-Za-z]{1,30}`).Draw(t, "ext"),
 		}
-		selfScore := TitleMatchScore(s, s)
+		selfScore := titleMatchScore(s, s)
 		if selfScore != 15 {
-			t.Errorf("TitleMatchScore(s, s) = %d, want 15 (all non-empty titles match)", selfScore)
+			t.Errorf("titleMatchScore(s, s) = %d, want 15 (all non-empty titles match)", selfScore)
 		}
 	})
 }
@@ -395,9 +395,9 @@ func TestFilterByBoolPrefAllMatch(t *testing.T) {
 		{ID: 1, Forced: true},
 		{ID: 2, Forced: true},
 	}
-	got := FilterByBoolPref(streams, true, func(s *Stream) bool { return s.Forced })
+	got := filterByBoolPref(streams, true, func(s *Stream) bool { return s.Forced })
 	if len(got) != 2 {
-		t.Errorf("FilterByBoolPref all match: got %d, want 2", len(got))
+		t.Errorf("filterByBoolPref all match: got %d, want 2", len(got))
 	}
 }
 
@@ -406,18 +406,18 @@ func TestFilterByBoolPrefNoneMatch(t *testing.T) {
 		{ID: 1, Forced: false},
 		{ID: 2, Forced: false},
 	}
-	got := FilterByBoolPref(streams, true, func(s *Stream) bool { return s.Forced })
+	got := filterByBoolPref(streams, true, func(s *Stream) bool { return s.Forced })
 	// None match desired=true, so returns original list.
 	if len(got) != 2 {
-		t.Errorf("FilterByBoolPref none match: got %d, want 2 (fallback)", len(got))
+		t.Errorf("filterByBoolPref none match: got %d, want 2 (fallback)", len(got))
 	}
 }
 
 func TestFindSubtitleByLanguage(t *testing.T) {
 	t.Parallel()
-	eng := &Stream{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng"}
-	jpn := &Stream{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"}
-	fra := &Stream{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "fra"}
+	eng := &Stream{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"}
+	jpn := &Stream{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"}
+	fra := &Stream{ID: 3, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "fra"}
 
 	tests := []struct {
 		name     string
@@ -433,32 +433,32 @@ func TestFindSubtitleByLanguage(t *testing.T) {
 		{name: "empty streams", streams: nil, langCode: "eng", wantID: 0, wantNil: true},
 		{name: "empty language", streams: []*Stream{eng}, langCode: "", wantID: 0, wantNil: true},
 		{name: "returns first match", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
 		}, langCode: "eng", wantID: 10, wantNil: false},
 		{name: "prefers ASS over SRT", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "ass"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "ass"},
 		}, langCode: "eng", wantID: 11, wantNil: false},
 		{name: "prefers ASS over PGS", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "pgs"},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "ass"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "pgs"},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "ass"},
 		}, langCode: "eng", wantID: 11, wantNil: false},
 		{name: "prefers PGS over SRT", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "pgs"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "pgs"},
 		}, langCode: "eng", wantID: 11, wantNil: false},
 		{name: "prefers vobsub over SRT", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "vobsub"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "vobsub"},
 		}, langCode: "eng", wantID: 11, wantNil: false},
 		{name: "unknown codec loses to SRT", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: ""},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: ""},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 		}, langCode: "eng", wantID: 11, wantNil: false},
 		{name: "same codec picks first", streams: []*Stream{
-			{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-			{ID: 11, StreamType: StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
+			{ID: 11, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
 		}, langCode: "eng", wantID: 10, wantNil: false},
 	}
 	for _, tt := range tests {
@@ -512,9 +512,9 @@ func TestSubtitleCodecScore(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.codec, func(t *testing.T) {
 			t.Parallel()
-			got := SubtitleCodecScore(tt.codec)
+			got := subtitleCodecScore(tt.codec)
 			if got != tt.want {
-				t.Errorf("SubtitleCodecScore(%q) = %d, want %d", tt.codec, got, tt.want)
+				t.Errorf("subtitleCodecScore(%q) = %d, want %d", tt.codec, got, tt.want)
 			}
 		})
 	}
@@ -584,20 +584,20 @@ func TestFindSubtitleByLanguage_ReturnsHighestCodecScorePBT(t *testing.T) {
 		if got.LanguageCode != targetLang {
 			t.Errorf("returned stream lang=%q, want %q", got.LanguageCode, targetLang)
 		}
-		gotScore := SubtitleCodecScore(got.Codec)
+		gotScore := subtitleCodecScore(got.Codec)
 		for _, s := range candidates {
 			if s.LanguageCode != targetLang {
 				continue
 			}
-			if SubtitleCodecScore(s.Codec) > gotScore {
+			if subtitleCodecScore(s.Codec) > gotScore {
 				t.Errorf("FindSubtitleByLanguage picked codec=%q (score=%d) but candidate ID=%d codec=%q has score=%d",
-					got.Codec, gotScore, s.ID, s.Codec, SubtitleCodecScore(s.Codec))
+					got.Codec, gotScore, s.ID, s.Codec, subtitleCodecScore(s.Codec))
 			}
 		}
 	})
 }
 
-func TestFilterByLanguage_InvariantPBT(t *testing.T) {
+func TestSelectByLanguage_InvariantPBT(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		langs := []string{"eng", "jpn", "kor", "fra", ""}
 		n := rapid.IntRange(0, 12).Draw(t, "n")
@@ -609,10 +609,10 @@ func TestFilterByLanguage_InvariantPBT(t *testing.T) {
 			}
 		}
 		target := rapid.SampledFrom(langs).Draw(t, "target")
-		got := FilterByLanguage(streams, target, langtag.TierIdentical)
+		got := selectByLanguage(streams, target, langtag.TierIdentical)
 		for _, s := range got {
 			if s.LanguageCode != target {
-				t.Errorf("FilterByLanguage(%q): returned stream ID=%d has lang=%q", target, s.ID, s.LanguageCode)
+				t.Errorf("selectByLanguage(%q): returned stream ID=%d has lang=%q", target, s.ID, s.LanguageCode)
 			}
 		}
 		expected := 0
@@ -622,7 +622,7 @@ func TestFilterByLanguage_InvariantPBT(t *testing.T) {
 			}
 		}
 		if len(got) != expected {
-			t.Errorf("FilterByLanguage(%q): got %d streams, want %d", target, len(got), expected)
+			t.Errorf("selectByLanguage(%q): got %d streams, want %d", target, len(got), expected)
 		}
 	})
 }
@@ -636,25 +636,25 @@ func TestSubtitleCodecScore_OrderInvariant(t *testing.T) {
 
 	for _, s := range styled {
 		for _, i := range image {
-			if SubtitleCodecScore(s) <= SubtitleCodecScore(i) {
+			if subtitleCodecScore(s) <= subtitleCodecScore(i) {
 				t.Errorf("styled %q score <= image %q score: %d vs %d",
-					s, i, SubtitleCodecScore(s), SubtitleCodecScore(i))
+					s, i, subtitleCodecScore(s), subtitleCodecScore(i))
 			}
 		}
 	}
 	for _, i := range image {
 		for _, p := range plain {
-			if SubtitleCodecScore(i) <= SubtitleCodecScore(p) {
+			if subtitleCodecScore(i) <= subtitleCodecScore(p) {
 				t.Errorf("image %q score <= plain %q score: %d vs %d",
-					i, p, SubtitleCodecScore(i), SubtitleCodecScore(p))
+					i, p, subtitleCodecScore(i), subtitleCodecScore(p))
 			}
 		}
 	}
 	for _, p := range plain {
 		for _, u := range unknown {
-			if SubtitleCodecScore(p) <= SubtitleCodecScore(u) {
+			if subtitleCodecScore(p) <= subtitleCodecScore(u) {
 				t.Errorf("plain %q score <= unknown %q score: %d vs %d",
-					p, u, SubtitleCodecScore(p), SubtitleCodecScore(u))
+					p, u, subtitleCodecScore(p), subtitleCodecScore(u))
 			}
 		}
 	}
@@ -669,7 +669,7 @@ func TestSubtitleCodecScore_OrderInvariant(t *testing.T) {
 // 0 < ref.Channels < 3 and s.Channels > ref.Channels.
 //
 // given a reference/candidate pair sitting exactly on a comparator boundary
-// when ScoreAudio is computed with no other matching fields
+// when scoreAudio is computed with no other matching fields
 // then the channel bonus must NOT apply (score stays 0).
 func TestScoreAudio_PreferMoreChannelsBoundaries(t *testing.T) {
 	t.Parallel()
@@ -694,10 +694,10 @@ func TestScoreAudio_PreferMoreChannelsBoundaries(t *testing.T) {
 			ref := &Stream{Channels: tc.refChannels}
 			s := &Stream{Channels: tc.sChannels}
 
-			got := ScoreAudio(ref, s)
+			got := scoreAudio(ref, s)
 
 			if got != tc.want {
-				t.Errorf("ScoreAudio(ref.Channels=%d, s.Channels=%d) = %d, want %d",
+				t.Errorf("scoreAudio(ref.Channels=%d, s.Channels=%d) = %d, want %d",
 					tc.refChannels, tc.sChannels, got, tc.want)
 			}
 		})
@@ -719,10 +719,10 @@ func TestBestByScore_SelectsHighestAmongNegativeScores(t *testing.T) {
 		return 0
 	}
 
-	got := BestByScore(streams, scoreFn)
+	got := bestByScore(streams, scoreFn)
 
 	if got == nil || got.ID != 2 {
-		t.Errorf("BestByScore with scores [-10, 0] = %v, want stream ID=2 (the 0-score max)", got)
+		t.Errorf("bestByScore with scores [-10, 0] = %v, want stream ID=2 (the 0-score max)", got)
 	}
 }
 
@@ -734,22 +734,22 @@ func TestBestByScore_TieGoesToEarliest(t *testing.T) {
 	streams := []*Stream{{ID: 1}, {ID: 2}}
 	scoreFn := func(_ *Stream) int { return 5 }
 
-	got := BestByScore(streams, scoreFn)
+	got := bestByScore(streams, scoreFn)
 
 	if got == nil || got.ID != 1 {
-		t.Errorf("BestByScore with tied scores = %v, want stream ID=1 (earliest on tie)", got)
+		t.Errorf("bestByScore with tied scores = %v, want stream ID=1 (earliest on tie)", got)
 	}
 }
 
 // TestScoreAudioNilRef pins the defensive nil-ref contract symmetric to
-// ScoreSubtitle's (TestScoreSubtitleStream/"nil ref returns 0"). ScoreAudio
+// scoreSubtitle's (TestScoreSubtitleStream/"nil ref returns 0"). scoreAudio
 // guards `if ref == nil { return 0 }` and it is the one branch left uncovered
-// in the package (go tool cover reports ScoreAudio at 66.7%). A mutant dropping
+// in the package (go tool cover reports scoreAudio at 66.7%). A mutant dropping
 // the guard would dereference a nil ref inside the audioScoreRules predicates
 // and panic.
 func TestScoreAudioNilRef(t *testing.T) {
 	t.Parallel()
-	if got := ScoreAudio(nil, &Stream{Codec: "eac3", Channels: 6}); got != 0 {
-		t.Errorf("ScoreAudio(nil, s) = %d, want 0", got)
+	if got := scoreAudio(nil, &Stream{Codec: "eac3", Channels: 6}); got != 0 {
+		t.Errorf("scoreAudio(nil, s) = %d, want 0", got)
 	}
 }

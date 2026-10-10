@@ -4,11 +4,8 @@
 // Inviolate contracts:
 //
 //   - The on-disk cache schema is untouched; the Manager reads and writes
-//     tokens through the tokenStore interface, never by mutating cache.Data
+//     tokens through the tokenStore interface, never by mutating the cache state
 //     directly.
-//   - WARN/ERROR slog keys for token refresh ("failed to refresh shared
-//     user tokens", "shared user tokens refreshed") are byte-for-byte
-//     identical across versions; Loki alerts grep them.
 //   - Initial-refresh retry semantics (5 attempts, 5s base, 2x backoff,
 //     60s cap, short-circuit on cached users, context-cancel aware) live on
 //     a RefreshConfig value so tests can shrink them.
@@ -20,37 +17,34 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
-// ID is the typed user identifier. Plex user IDs are numeric strings but are
+// id is the typed user identifier. Plex user IDs are numeric strings but are
 // routinely treated as opaque keys; the typed wrapper keeps them from being
 // conflated with other string keys (ratingKey, tokens, session keys) inside
 // this package while still round-tripping through APIs that expect strings.
 //
-// Public methods accept plain strings rather than ID so a consumer can
+// Public methods accept plain strings rather than id so a consumer can
 // declare its own lookup interface without importing this package.
-type ID string
-
-// String returns the ID as a plain string for APIs that accept strings.
-func (i ID) String() string { return string(i) }
+type id string
 
 // record is the manager's own per-user entry: the typed ID, display name, and
 // Plex access token. Unexported because of that token — a struct that can
 // carry a secret must not cross a package boundary. Callers get Account
 // instead.
 type record struct {
-	ID   ID
+	ID   id
 	Name string
 	// Token is plex.Token, not a string: it is compared against
 	// (*Client).Token() and handed to ForToken.
 	Token plex.Token
 }
 
-// Account is a user's identity as every other package sees it: an ID and a
-// display name, with no token field, so leaking a token through this struct
-// is structurally impossible. Anything needing to act as a user goes through
-// ClientForUser, which looks the token up internally and never returns it.
+// Account is a user's identity as every other package sees it: an ID with no
+// token field, so leaking a token through this struct is structurally
+// impossible. Display names come from Manager.Name. Anything needing to act
+// as a user goes through ClientForUser, which looks the token up internally
+// and never returns it.
 type Account struct {
-	ID   string
-	Name string
+	ID string
 }
 
 // tokenStore is the persistence this package needs: read and write the
@@ -66,8 +60,8 @@ type tokenStore interface {
 // safe for concurrent use.
 type Manager struct {
 	cache   tokenStore
-	shared  map[ID]record       // keyed by typed userID
-	clients map[ID]*plex.Client // cached per-user clients
+	shared  map[id]record       // keyed by typed userID
+	clients map[id]*plex.Client // cached per-user clients
 	admin   record
 	mu      sync.Mutex
 }
@@ -78,8 +72,8 @@ type Manager struct {
 func NewManager(c tokenStore) *Manager {
 	return &Manager{
 		cache:   c,
-		shared:  make(map[ID]record),
-		clients: make(map[ID]*plex.Client),
+		shared:  make(map[id]record),
+		clients: make(map[id]*plex.Client),
 	}
 }
 
@@ -89,11 +83,11 @@ func NewManager(c tokenStore) *Manager {
 func (m *Manager) Init(admin *plex.User) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.admin = record{ID: ID(admin.ID), Name: admin.Name}
+	m.admin = record{ID: id(admin.ID), Name: admin.Name}
 	if m.shared == nil {
-		m.shared = make(map[ID]record)
+		m.shared = make(map[id]record)
 	}
-	m.clients = make(map[ID]*plex.Client)
+	m.clients = make(map[id]*plex.Client)
 }
 
 // LoadFromCache seeds the shared-user map from cached tokens. Cached entries
@@ -106,8 +100,8 @@ func (m *Manager) LoadFromCache() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for uidStr, token := range tokensCopy {
-		uid := ID(uidStr)
-		// Mirrors the s.AccessToken == "" guard in RefreshTokens so a
+		uid := id(uidStr)
+		// Mirrors the s.AccessToken == "" guard in refreshTokens so a
 		// corrupted-cache phantom user never enters m.shared.
 		if uid == m.admin.ID || token == "" {
 			continue
@@ -138,7 +132,7 @@ func (m *Manager) LoadFromCache() {
 // userID is a plain string so consumers need not import this package for
 // the ID type.
 func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.Client {
-	uid := ID(userID)
+	uid := id(userID)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -160,10 +154,10 @@ func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.C
 	return c
 }
 
-// SharedCount returns the number of shared (non-admin) users currently
+// sharedCount returns the number of shared (non-admin) users currently
 // known. Used by InitialRefreshWithRetry to detect whether a refresh
 // populated any users, independent of whether the plex.tv call succeeded.
-func (m *Manager) SharedCount() int {
+func (m *Manager) sharedCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.shared)
@@ -176,15 +170,9 @@ func (m *Manager) All() []Account {
 	defer m.mu.Unlock()
 
 	out := make([]Account, 0, 1+len(m.shared))
-	out = append(out, Account{
-		ID:   m.admin.ID.String(),
-		Name: m.admin.Name,
-	})
+	out = append(out, Account{ID: string(m.admin.ID)})
 	for _, u := range m.shared {
-		out = append(out, Account{
-			ID:   u.ID.String(),
-			Name: u.Name,
-		})
+		out = append(out, Account{ID: string(u.ID)})
 	}
 	return out
 }
@@ -192,7 +180,7 @@ func (m *Manager) All() []Account {
 // Name returns the display name for a userID. Unknown users get an
 // "unknown-{id}" placeholder so log lines remain parseable.
 func (m *Manager) Name(userID string) string {
-	uid := ID(userID)
+	uid := id(userID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if uid == m.admin.ID {

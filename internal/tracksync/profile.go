@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/plexapi/v2"
 )
 
-// ApplyLanguageProfile applies a learned language profile to a new
+// applyLanguageProfile applies a learned language profile to a new
 // episode when no reference episode exists in the show. This handles
 // the case where a brand-new show is added and the user has
 // established preferences (e.g., Japanese audio → English subtitles
@@ -35,7 +35,7 @@ import (
 // token, preserving per-user isolation (writing a shared user's
 // selection under the admin token would corrupt the admin's per-user
 // state and not apply the intended user's).
-func (s *Syncer) ApplyLanguageProfile(
+func (s *Syncer) applyLanguageProfile(
 	ctx context.Context,
 	userClient plexWriter,
 	userID string,
@@ -79,7 +79,7 @@ func (s *Syncer) ApplyLanguageProfile(
 // changed.
 //
 // Unexported but documented: the tests exercise this through
-// ApplyLanguageProfile rather than directly, keeping the package's
+// applyLanguageProfile rather than directly, keeping the package's
 // public surface small.
 func applyProfileSubtitle(
 	ctx context.Context,

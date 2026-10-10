@@ -44,9 +44,9 @@ func DeriveKey(plexToken string) ([]byte, error) {
 	return key, nil
 }
 
-// EncryptToken encrypts a plaintext token using AES-256-GCM with a random
+// encryptToken encrypts a plaintext token using AES-256-GCM with a random
 // 12-byte nonce. Returns "enc:" + base64url(nonce || ciphertext).
-func EncryptToken(key []byte, plaintext string) (string, error) {
+func encryptToken(key []byte, plaintext string) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("cache/crypto: new cipher: %w", err)
@@ -66,11 +66,11 @@ func EncryptToken(key []byte, plaintext string) (string, error) {
 	return encPrefix + encoded, nil
 }
 
-// DecryptToken reverses EncryptToken. If the value does not carry the
+// decryptToken reverses encryptToken. If the value does not carry the
 // "enc:" prefix (legacy plaintext), it is returned unchanged — this
 // enables transparent migration of pre-encryption cache files.
-func DecryptToken(key []byte, value string) (string, error) {
-	if !IsEncrypted(value) {
+func decryptToken(key []byte, value string) (string, error) {
+	if !isEncrypted(value) {
 		return value, nil // plaintext pass-through (migration path)
 	}
 
@@ -100,8 +100,8 @@ func DecryptToken(key []byte, value string) (string, error) {
 	return string(plaintext), nil
 }
 
-// IsEncrypted reports whether a stored value carries the encryption
-// prefix, indicating it was produced by EncryptToken.
-func IsEncrypted(value string) bool {
+// isEncrypted reports whether a stored value carries the encryption
+// prefix, indicating it was produced by encryptToken.
+func isEncrypted(value string) bool {
 	return len(value) > len(encPrefix) && value[:len(encPrefix)] == encPrefix
 }

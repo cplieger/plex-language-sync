@@ -15,7 +15,7 @@ func (c *Client) ShowSections(ctx context.Context) ([]Section, error) {
 	}
 	shows := sections[:0]
 	for _, s := range sections {
-		if s.Type == SectionTypeShow {
+		if s.Type == plexapi.SectionTypeShow {
 			shows = append(shows, s)
 		}
 	}

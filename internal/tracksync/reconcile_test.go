@@ -8,6 +8,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // ---------------------------------------------------------------------------
@@ -87,7 +88,7 @@ func TestObserveAndPropagate_CommentaryAudioStillRecordsIntent(t *testing.T) {
 		GrandparentTitle:     "Show",
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
 			{
-				ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "eng",
+				ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng",
 				Title: "Director Commentary", Selected: true,
 			},
 		}}}}},
@@ -130,8 +131,8 @@ func replayedEpisode() *streams.Episode {
 		ParentIndex:          1,
 		Index:                1,
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-			{ID: 10, StreamType: streams.StreamTypeAudio, LanguageCode: "eng", Selected: true},
-			{ID: 11, StreamType: streams.StreamTypeAudio, LanguageCode: "jpn"},
+			{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", Selected: true},
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
 		}}}}},
 	}
 }
@@ -277,7 +278,7 @@ func TestProcessNewOrUpdatedEpisode_IntentTierBeatsSharedReference(t *testing.T)
 	}
 	c := fakeapi.NewCache()
 	seedIntent(c, 1000) // user 1 wants jpn for show 42
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "one"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, lookup)
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), newEp, "scan_new")
@@ -311,7 +312,7 @@ func TestProcessNewOrUpdatedEpisode_IntentlessUserFallsToReference(t *testing.T)
 		},
 	}
 	c := fakeapi.NewCache() // no intents
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1", Name: "one"}}}
+	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
 	s := newSyncer(Config{UpdateLevel: LevelShow}, plx, c, lookup)
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), newEp, "scan_new")

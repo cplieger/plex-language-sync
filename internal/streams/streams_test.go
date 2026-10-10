@@ -3,15 +3,9 @@ package streams
 import (
 	"testing"
 
+	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )
-
-// streamTypeVideo is the Plex wire value for a video stream. Production
-// code never names it (see the StreamType const block: the app only asks
-// is-audio / is-subtitle), but the tests need a third kind to prove the
-// predicates and filters REJECT everything that is not audio or subtitle
-// — so the value lives with its only consumer.
-const streamTypeVideo StreamType = 1
 
 func TestContainsDescriptive(t *testing.T) {
 	tests := []struct {
@@ -65,18 +59,18 @@ func TestEpisodeMethodsZero(t *testing.T) {
 }
 
 func TestStreamIsAudioIsSubtitle(t *testing.T) {
-	audio := Stream{StreamType: StreamTypeAudio}
-	sub := Stream{StreamType: StreamTypeSubtitle}
-	video := Stream{StreamType: streamTypeVideo}
+	audio := Stream{StreamType: plexapi.StreamTypeAudio}
+	sub := Stream{StreamType: plexapi.StreamTypeSubtitle}
+	video := Stream{StreamType: plexapi.StreamTypeVideo}
 
 	if !audio.IsAudio() {
-		t.Error("expected isAudio() true for StreamTypeAudio")
+		t.Error("expected isAudio() true for plexapi.StreamTypeAudio")
 	}
 	if audio.IsSubtitle() {
-		t.Error("expected isSubtitle() false for StreamTypeAudio")
+		t.Error("expected isSubtitle() false for plexapi.StreamTypeAudio")
 	}
 	if !sub.IsSubtitle() {
-		t.Error("expected isSubtitle() true for StreamTypeSubtitle")
+		t.Error("expected isSubtitle() true for plexapi.StreamTypeSubtitle")
 	}
 	if video.IsAudio() || video.IsSubtitle() {
 		t.Error("video stream should not be audio or subtitle")

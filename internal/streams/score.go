@@ -6,25 +6,22 @@ import (
 	"github.com/cplieger/langtag/v2"
 )
 
-// scoreRule defines a single scoring criterion: a named predicate that
-// contributes weight points when it returns true for a (ref, candidate) pair.
+// scoreRule defines a single scoring criterion: a predicate that contributes
+// weight points when it returns true for a (ref, candidate) pair.
 type scoreRule struct {
 	predicate func(ref, s *Stream) bool
-	name      string
 	weight    int
 }
 
-// audioScoreRules is the declarative rule table for ScoreAudio.
+// audioScoreRules is the declarative rule table for scoreAudio.
 var audioScoreRules = []scoreRule{
 	{
-		name:   "codec_match",
 		weight: 5,
 		predicate: func(ref, s *Stream) bool {
 			return ref.Codec != "" && s.Codec != "" && ref.Codec == s.Codec
 		},
 	},
 	{
-		name:   "channel_layout_match",
 		weight: 3,
 		predicate: func(ref, s *Stream) bool {
 			return ref.AudioChannelLayout != "" && s.AudioChannelLayout != "" &&
@@ -32,7 +29,6 @@ var audioScoreRules = []scoreRule{
 		},
 	},
 	{
-		name:   "prefer_more_channels",
 		weight: 2,
 		predicate: func(ref, s *Stream) bool {
 			return ref.Channels > 0 && s.Channels > 0 &&
@@ -41,10 +37,9 @@ var audioScoreRules = []scoreRule{
 	},
 }
 
-// titleScoreRules is the declarative rule table for TitleMatchScore.
+// titleScoreRules is the declarative rule table for titleMatchScore.
 var titleScoreRules = []scoreRule{
 	{
-		name:   "extended_display_title",
 		weight: 5,
 		predicate: func(ref, s *Stream) bool {
 			return ref.ExtendedDisplayTitle != "" && s.ExtendedDisplayTitle != "" &&
@@ -52,7 +47,6 @@ var titleScoreRules = []scoreRule{
 		},
 	},
 	{
-		name:   "display_title",
 		weight: 5,
 		predicate: func(ref, s *Stream) bool {
 			return ref.DisplayTitle != "" && s.DisplayTitle != "" &&
@@ -60,7 +54,6 @@ var titleScoreRules = []scoreRule{
 		},
 	},
 	{
-		name:   "title",
 		weight: 5,
 		predicate: func(ref, s *Stream) bool {
 			return ref.Title != "" && s.Title != "" && ref.Title == s.Title
@@ -68,24 +61,21 @@ var titleScoreRules = []scoreRule{
 	},
 }
 
-// subtitleScoreRules is the declarative rule table for ScoreSubtitle.
+// subtitleScoreRules is the declarative rule table for scoreSubtitle.
 var subtitleScoreRules = []scoreRule{
 	{
-		name:   "forced_match",
 		weight: 3,
 		predicate: func(ref, s *Stream) bool {
 			return ref.Forced == s.Forced
 		},
 	},
 	{
-		name:   "hearing_impaired_match",
 		weight: 3,
 		predicate: func(ref, s *Stream) bool {
 			return ref.HearingImpaired == s.HearingImpaired
 		},
 	},
 	{
-		name:   "codec_match",
 		weight: 1,
 		predicate: func(ref, s *Stream) bool {
 			return ref.Codec != "" && s.Codec != "" && ref.Codec == s.Codec
@@ -104,28 +94,28 @@ func sumRules(rules []scoreRule, ref, s *Stream) int {
 	return score
 }
 
-// ScoreAudio ranks a candidate audio stream against a reference for
+// scoreAudio ranks a candidate audio stream against a reference for
 // the tie-break stage of MatchAudio. Higher is better. Codec match,
 // channel layout match, and the same title fields each contribute.
-func ScoreAudio(ref, s *Stream) int {
+func scoreAudio(ref, s *Stream) int {
 	if ref == nil {
 		return 0
 	}
-	return sumRules(audioScoreRules, ref, s) + TitleMatchScore(ref, s)
+	return sumRules(audioScoreRules, ref, s) + titleMatchScore(ref, s)
 }
 
-// ScoreSubtitle ranks a candidate subtitle stream against a reference.
+// scoreSubtitle ranks a candidate subtitle stream against a reference.
 // Higher is better. Returns 0 when ref is nil.
-func ScoreSubtitle(ref, s *Stream) int {
+func scoreSubtitle(ref, s *Stream) int {
 	if ref == nil {
 		return 0
 	}
-	return sumRules(subtitleScoreRules, ref, s) + TitleMatchScore(ref, s)
+	return sumRules(subtitleScoreRules, ref, s) + titleMatchScore(ref, s)
 }
 
-// TitleMatchScore rewards exact equality on any of the three title
+// titleMatchScore rewards exact equality on any of the three title
 // fields. Each match adds 5. Empty fields never contribute.
-func TitleMatchScore(ref, s *Stream) int {
+func titleMatchScore(ref, s *Stream) int {
 	return sumRules(titleScoreRules, ref, s)
 }
 
@@ -162,24 +152,17 @@ var subtitleCodecScores = map[string]int{
 	codecWebVTT:          1,
 }
 
-// SubtitleCodecScore ranks subtitle codecs by quality/reliability.
+// subtitleCodecScore ranks subtitle codecs by quality/reliability.
 // Higher is better: styled text > image-based (source) > plain text
 // (Bazarr). Scores are defined in the subtitleCodecScores table above.
-func SubtitleCodecScore(codec string) int {
+func subtitleCodecScore(codec string) int {
 	return subtitleCodecScores[strings.ToLower(codec)]
 }
 
-// FilterByLanguage returns the streams whose language is an acceptable stand-in
-// for langCode, within floor. Every returned stream sits at the same language
-// distance. See selectByLanguage for how a code langtag cannot read is handled.
-func FilterByLanguage(streams []*Stream, langCode string, floor langtag.Tier) []*Stream {
-	return selectByLanguage(streams, langCode, floor)
-}
-
-// FilterByBoolPref returns streams whose fn value matches desired. If
+// filterByBoolPref returns streams whose fn value matches desired. If
 // no streams match, the original list is returned unchanged — callers
 // treat the predicate as a preference, not a requirement.
-func FilterByBoolPref(streams []*Stream, desired bool, fn func(*Stream) bool) []*Stream {
+func filterByBoolPref(streams []*Stream, desired bool, fn func(*Stream) bool) []*Stream {
 	var matching []*Stream
 	for _, s := range streams {
 		if fn(s) == desired {
@@ -192,9 +175,9 @@ func FilterByBoolPref(streams []*Stream, desired bool, fn func(*Stream) bool) []
 	return streams
 }
 
-// BestByScore returns the stream with the highest scoreFn value. Ties
+// bestByScore returns the stream with the highest scoreFn value. Ties
 // go to the earlier entry. Returns nil for an empty list.
-func BestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
+func bestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
 	if len(streams) == 0 {
 		return nil
 	}
@@ -213,7 +196,7 @@ func BestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
 
 // FindSubtitleByLanguage returns the best subtitle stream whose language is an
 // acceptable stand-in for langCode within floor, preferring higher-quality
-// codecs (see SubtitleCodecScore). Returns nil if none match.
+// codecs (see subtitleCodecScore). Returns nil if none match.
 //
 // This is the learned-profile path: langCode comes from the profile map rather
 // than from a track on the reference episode, so it is graded on the same scale
@@ -221,7 +204,7 @@ func BestByScore(streams []*Stream, scoreFn func(*Stream) int) *Stream {
 // audio means nob subtitles" would get no subtitle on a new show carrying only
 // nor, which is the reported bug in a second guise.
 func FindSubtitleByLanguage(streams []*Stream, langCode string, floor langtag.Tier) *Stream {
-	return BestByScore(FilterByLanguage(streams, langCode, floor), func(s *Stream) int {
-		return SubtitleCodecScore(s.Codec)
+	return bestByScore(selectByLanguage(streams, langCode, floor), func(s *Stream) int {
+		return subtitleCodecScore(s.Codec)
 	})
 }

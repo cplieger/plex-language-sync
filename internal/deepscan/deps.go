@@ -18,8 +18,8 @@ type plexReader interface {
 }
 
 // EpisodeReader is the one thing the deep scan asks of a per-user client:
-// resolve an episode under that user's token. Exported because it is the
-// result type of UserClientFunc.
+// resolve an episode under that user's token. Exported because the
+// composition root names it as the per-user client's result type.
 //
 // One method, because tracksync derives its own client from the userID
 // rather than taking one — the mismatch between "whose client" and "whose
@@ -28,9 +28,9 @@ type EpisodeReader interface {
 	Episode(ctx context.Context, ratingKey plex.RatingKey) (*streams.Episode, error)
 }
 
-// UserClientFunc returns the per-user client for a userID, or nil when none can
+// userClientFunc returns the per-user client for a userID, or nil when none can
 // be built. Nil means skip the history item for that user.
-type UserClientFunc func(userID string) EpisodeReader
+type userClientFunc func(userID string) EpisodeReader
 
 // runLedger is the persistence the pass needs: the dedup gate that keeps a
 // recently-added episode from being processed twice.
@@ -46,14 +46,14 @@ type skipChecker interface {
 	ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool
 }
 
-// Syncer is the propagation this pass drives, declared here so deepscan does
+// syncer is the propagation this pass drives, declared here so deepscan does
 // not import internal/tracksync.
-type Syncer interface {
+type syncer interface {
 	ReconcileWithIntent(ctx context.Context, userID string, episode *streams.Episode, viewedAt int64, trigger string)
 	ProcessNewOrUpdatedEpisodeAllUsers(ctx context.Context, episode *streams.Episode, trigger string)
 }
 
-// CacheSaver flushes the cache to disk at the end of a tick. Separate from
+// cacheSaver flushes the cache to disk at the end of a tick. Separate from
 // runLedger (which excludes file-system concerns), so the pass can trigger a
 // flush without the ledger's consumers knowing about the persistence path.
-type CacheSaver func() error
+type cacheSaver func() error

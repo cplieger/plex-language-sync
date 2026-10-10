@@ -122,7 +122,7 @@ func TestMatchAudioAllocationRatePerCandidate(t *testing.T) {
 		},
 		{
 			// No language at all on either side, which routes through the
-			// langAbsent branch: HasNoLanguage is two TrimSpace calls and no
+			// langAbsent branch: hasNoLanguage is two TrimSpace calls and no
 			// parse, so the rate collapses to the descriptive check's single
 			// lowercase pass. Measured 1.02, and the tight ceiling is the point
 			// — it is what catches a change that starts parsing a track this
@@ -214,7 +214,7 @@ func TestMatchAudioAllocationRatePerCandidate(t *testing.T) {
 			desc: "jpn reference against eng candidates",
 			build: func(n int) (*Stream, []*Stream) {
 				return &Stream{
-					StreamType:   StreamTypeAudio,
+					StreamType:   plexapi.StreamTypeAudio,
 					LanguageCode: "jpn",
 					DisplayTitle: "Japanese (AAC Stereo)",
 				}, costStreams(n, nil)
@@ -417,7 +417,7 @@ func TestMatchSubtitleAllocationRatePerCandidate(t *testing.T) {
 			desc: "jpn reference against eng srt candidates",
 			build: func(n int) (*Stream, []*Stream) {
 				return &Stream{
-					StreamType:   StreamTypeSubtitle,
+					StreamType:   plexapi.StreamTypeSubtitle,
 					LanguageCode: "jpn",
 					Codec:        "srt",
 					DisplayTitle: "Japanese (SRT)",
@@ -491,7 +491,7 @@ func TestMatchSubtitleDiscardsForcedNonMatchesBeforeParsing(t *testing.T) {
 	const maxShareOfAllForced = 0.60
 
 	ref := &Stream{
-		StreamType:   StreamTypeSubtitle,
+		StreamType:   plexapi.StreamTypeSubtitle,
 		LanguageCode: "eng",
 		Codec:        "srt",
 		Forced:       true,

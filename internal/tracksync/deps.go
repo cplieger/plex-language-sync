@@ -28,18 +28,18 @@ type plexWriter interface {
 }
 
 // PlexReadWriter is a per-user client: it reads an episode's current state and
-// writes the new selection through the same token. Exported because it is the
-// result type of UserClientFunc, which the composition root has to name.
+// writes the new selection through the same token. Exported because the
+// composition root names it as the per-user client's result type.
 type PlexReadWriter interface {
 	plexReader
 	plexWriter
 }
 
-// UserClientFunc returns the per-user read+write Plex client for a userID, or
+// userClientFunc returns the per-user read+write Plex client for a userID, or
 // nil when none can be built. Nil means skip the user: falling back to the
 // admin client would record the selection against the admin's account and
 // silently drop the target user's preference.
-type UserClientFunc func(userID string) PlexReadWriter
+type userClientFunc func(userID string) PlexReadWriter
 
 // cacheStore is the knowledge this package creates and re-reads: the learned
 // audio->subtitle profiles and the per-(user, show) intent ledger.

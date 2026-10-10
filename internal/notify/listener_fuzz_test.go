@@ -33,7 +33,7 @@ func FuzzNotificationUnmarshal(f *testing.F) {
 	f.Add([]byte(`not json`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		var n Notification
+		var n notification
 		if err := json.Unmarshal(data, &n); err != nil {
 			return
 		}

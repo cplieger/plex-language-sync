@@ -2,6 +2,8 @@ package streams
 
 import (
 	"testing"
+
+	"github.com/cplieger/plexapi/v2"
 )
 
 func TestSelectedStreams(t *testing.T) {
@@ -9,11 +11,11 @@ func TestSelectedStreams(t *testing.T) {
 		Media: []Media{{
 			Part: []Part{{
 				Stream: []Stream{
-					{ID: 1, StreamType: streamTypeVideo, Selected: true},
-					{ID: 2, StreamType: StreamTypeAudio, Selected: false, LanguageCode: "eng"},
-					{ID: 3, StreamType: StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-					{ID: 4, StreamType: StreamTypeSubtitle, Selected: true, LanguageCode: "eng"},
-					{ID: 5, StreamType: StreamTypeSubtitle, Selected: false, LanguageCode: "jpn"},
+					{ID: 1, StreamType: plexapi.StreamTypeVideo, Selected: true},
+					{ID: 2, StreamType: plexapi.StreamTypeAudio, Selected: false, LanguageCode: "eng"},
+					{ID: 3, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+					{ID: 4, StreamType: plexapi.StreamTypeSubtitle, Selected: true, LanguageCode: "eng"},
+					{ID: 5, StreamType: plexapi.StreamTypeSubtitle, Selected: false, LanguageCode: "jpn"},
 				},
 			}},
 		}},
@@ -60,10 +62,10 @@ func TestFirstPartID(t *testing.T) {
 func TestAudioStreams(t *testing.T) {
 	ep := &Episode{
 		Media: []Media{{Part: []Part{{Stream: []Stream{
-			{ID: 1, StreamType: streamTypeVideo},
-			{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng"},
-			{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
-			{ID: 4, StreamType: StreamTypeAudio, LanguageCode: "jpn"},
+			{ID: 1, StreamType: plexapi.StreamTypeVideo},
+			{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng"},
+			{ID: 3, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
+			{ID: 4, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn"},
 		}}}}},
 	}
 	got := Audio(ep)
@@ -78,9 +80,9 @@ func TestAudioStreams(t *testing.T) {
 func TestSubtitleStreams(t *testing.T) {
 	ep := &Episode{
 		Media: []Media{{Part: []Part{{Stream: []Stream{
-			{ID: 1, StreamType: StreamTypeAudio},
-			{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng"},
-			{ID: 3, StreamType: StreamTypeSubtitle, LanguageCode: "jpn"},
+			{ID: 1, StreamType: plexapi.StreamTypeAudio},
+			{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng"},
+			{ID: 3, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "jpn"},
 		}}}}},
 	}
 	got := Subtitle(ep)
@@ -126,8 +128,8 @@ func TestSelectedStreamsNoSelection(t *testing.T) {
 		Media: []Media{{
 			Part: []Part{{
 				Stream: []Stream{
-					{ID: 1, StreamType: StreamTypeAudio, Selected: false},
-					{ID: 2, StreamType: StreamTypeSubtitle, Selected: false},
+					{ID: 1, StreamType: plexapi.StreamTypeAudio, Selected: false},
+					{ID: 2, StreamType: plexapi.StreamTypeSubtitle, Selected: false},
 				},
 			}},
 		}},
@@ -147,10 +149,10 @@ func TestSelectedStreamsMultipleMedia(t *testing.T) {
 	ep := &Episode{
 		Media: []Media{
 			{Part: []Part{{Stream: []Stream{
-				{ID: 1, StreamType: StreamTypeAudio, Selected: true, LanguageCode: "eng"},
+				{ID: 1, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "eng"},
 			}}}},
 			{Part: []Part{{Stream: []Stream{
-				{ID: 2, StreamType: StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
+				{ID: 2, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
 			}}}},
 		},
 	}

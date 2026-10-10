@@ -1,9 +1,7 @@
 // Package fakeapi provides shared concurrency-safe test fakes for the Plex
 // client and the persisted cache. Consumes no I/O. Import from _test.go files
-// only — the package name carries no internal build tag, but tests across
-// internal/{tracksync,deepscan,notify,users} previously declared three
-// near-identical fakeCache types; this package consolidates them into one
-// honest implementation, kept honest by cache.RunContract.
+// only. The cache fake is one implementation shared by every package's tests,
+// kept honest against the real cache by cachecontract.Run.
 //
 // The fakes implement the full surface of what they stand in for; each
 // CONSUMER declares the narrow subset it uses, so a fake satisfying everything
@@ -22,8 +20,8 @@ import (
 // Every accessor takes a short-held lock; consumers can share one Cache
 // across goroutines without additional synchronization.
 //
-// The surface is exactly cache.Contract, and cache.RunContract is run against
-// it: consumers assert on the fake through the same readers production code
+// The surface is exactly cachecontract.Contract, and cachecontract.Run is run
+// against it: consumers assert on the fake through the same readers production code
 // uses (WasRecentlyProcessed, IntentFor, UserTokens) rather than through
 // fake-only inspectors.
 type Cache struct {

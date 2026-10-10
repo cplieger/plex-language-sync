@@ -19,11 +19,11 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// MetadataReader is the one Plex read the label check needs: a show's
+// metadataReader is the one Plex read the label check needs: a show's
 // metadata, for its labels. Declared here rather than accepted per call
 // because every caller passed the same admin-scoped client — the label
 // check is a property of the show, not of the user asking.
-type MetadataReader interface {
+type metadataReader interface {
 	ShowMetadata(ctx context.Context, showRatingKey plex.RatingKey) (*plex.Show, error)
 }
 
@@ -34,7 +34,7 @@ type MetadataReader interface {
 type Config struct {
 	// Reader fetches show metadata for the label check. Nil disables the
 	// label half of ShouldSkipEpisode (the library check still applies).
-	Reader MetadataReader
+	Reader metadataReader
 	// Libraries are library section titles to skip entirely.
 	Libraries []string
 	// Labels are Plex label tags that exclude a show.
@@ -45,7 +45,7 @@ type Config struct {
 // library, show, or episode. The zero value is valid and never skips
 // anything.
 type Policy struct {
-	reader    MetadataReader
+	reader    metadataReader
 	libraries []string
 	labels    []string
 }
@@ -70,9 +70,9 @@ func (p *Policy) IgnoreLibrary(title string) bool {
 	return slices.Contains(p.libraries, title)
 }
 
-// IgnoreShowLabels reports whether any of the show's labels match the
+// ignoreShowLabels reports whether any of the show's labels match the
 // ignore list. Case-sensitive equality on label.Tag.
-func (p *Policy) IgnoreShowLabels(labels []streams.Label) bool {
+func (p *Policy) ignoreShowLabels(labels []streams.Label) bool {
 	for _, label := range labels {
 		if slices.Contains(p.labels, label.Tag) {
 			return true
@@ -82,7 +82,7 @@ func (p *Policy) IgnoreShowLabels(labels []streams.Label) bool {
 }
 
 // ShouldSkipEpisode combines IgnoreLibrary + a ShowMetadata fetch +
-// IgnoreShowLabels into a single decision. Returns true if the episode
+// ignoreShowLabels into a single decision. Returns true if the episode
 // should be skipped for any reason.
 //
 // A nil ref is treated as "no reason to skip" (false) so callers can
@@ -93,9 +93,6 @@ func (p *Policy) IgnoreShowLabels(labels []streams.Label) bool {
 // conservatism here trades a single episode processed against a
 // transient Plex blip for never silently dropping work on a real
 // error.
-//
-// DEBUG log keys ("library ignored", "show ignored") are preserved
-// verbatim so any Loki query grepping on those strings keeps firing.
 func (p *Policy) ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool {
 	if ref == nil {
 		return false
@@ -113,7 +110,7 @@ func (p *Policy) ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bo
 			"show", ref.GrandparentTitle, "error", err)
 		return false
 	}
-	if p.IgnoreShowLabels(show.Label) {
+	if p.ignoreShowLabels(show.Label) {
 		slog.Debug("show ignored", "show", ref.GrandparentTitle)
 		return true
 	}

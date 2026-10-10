@@ -36,7 +36,7 @@ func (c *Client) History(ctx context.Context, sinceUnix int64) ([]HistoryItem, e
 // that could not be read is returned wrapped, and a list that was read
 // without the client in it matches ErrNoSessionForClient.
 func (c *Client) UserFromSession(ctx context.Context, clientIdentifier string) (userID, username string, err error) {
-	sessions, err := c.fetchMetadata[Session](ctx, plexapi.SessionsPath())
+	sessions, err := c.fetchMetadata[session](ctx, plexapi.SessionsPath())
 	if err != nil {
 		return "", "", fmt.Errorf("fetching sessions: %w", err)
 	}

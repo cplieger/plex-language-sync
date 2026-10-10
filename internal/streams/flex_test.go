@@ -59,10 +59,10 @@ func TestFlexInt_UnmarshalJSON(t *testing.T) {
 	}
 }
 
-// TestFlexInt_ErrorPrefix guards inviolate item 5 (log-grep compat):
-// flexInt parse failures must NOT emit the "invalid rating key"
-// phrasing that plex.RatingKey.Validate owns. Conflating the two
-// would break Loki alerts keyed on rating-key validation errors.
+// TestFlexInt_ErrorPrefix pins that FlexInt parse failures carry the
+// "flexint:" prefix and never the "invalid rating key" phrasing that
+// plex.RatingKey.Validate owns, so the two failures stay distinguishable
+// in logs.
 func TestFlexInt_ErrorPrefix(t *testing.T) {
 	t.Parallel()
 	var v FlexInt

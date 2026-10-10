@@ -49,7 +49,7 @@ var _ tracksync.PlexReadWriter = (*plex.Client)(nil)
 
 // cacheDir is the on-disk directory for the persisted cache (the split
 // profiles.json / tokens.json / state.json layout; a legacy cache.json is
-// migrated on first load). Frozen by inviolate contract item 7 (file paths).
+// migrated on first load). Moving it strands every existing install's state.
 const cacheDir = "/config"
 
 // lastRunStampName is the deep-analysis last-run record (a scheduler.Stamp

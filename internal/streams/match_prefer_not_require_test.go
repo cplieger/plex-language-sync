@@ -4,21 +4,22 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/plexapi/v2"
 )
 
 // TestMatchAudioStream_VIPreferNotRequire pins the "prefer, not require"
 // contract at the MatchAudio boundary: when the reference is VisualImpaired
-// but NO candidate is VI, FilterByBoolPref falls back to the full list
+// but NO candidate is VI, filterByBoolPref falls back to the full list
 // rather than returning nil, so the VI user still gets a track.
-// FilterByBoolPref's fallback is unit-tested directly, but no test pins
+// filterByBoolPref's fallback is unit-tested directly, but no test pins
 // that MatchAudio preserves it, so a refactor that inlined an exact VI
 // filter returning nil on empty would regress a VI user silently and slip
-// past the FilterByBoolPref unit test.
+// past the filterByBoolPref unit test.
 func TestMatchAudioStream_VIPreferNotRequire(t *testing.T) {
-	ref := &Stream{ID: 10, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true}
+	ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: true}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false, Codec: "aac"},
-		{ID: 2, StreamType: StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false, Codec: "eac3"},
+		{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false, Codec: "aac"},
+		{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng", VisualImpaired: false, Codec: "eac3"},
 	}
 	got := MatchAudio(ref, candidates)
 	if got == nil {
@@ -31,12 +32,12 @@ func TestMatchAudioStream_VIPreferNotRequire(t *testing.T) {
 
 // TestMatchSubtitleStream_HIPreferNotRequire is the subtitle analog: an HI
 // reference with no HI candidate must still return a (non-HI) subtitle via
-// FilterByBoolPref's fallback, not nil.
+// filterByBoolPref's fallback, not nil.
 func TestMatchSubtitleStream_HIPreferNotRequire(t *testing.T) {
-	ref := &Stream{ID: 10, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true}
+	ref := &Stream{ID: 10, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: true}
 	candidates := []*Stream{
-		{ID: 1, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false, Codec: "srt"},
-		{ID: 2, StreamType: StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false, Codec: "ass"},
+		{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false, Codec: "srt"},
+		{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", HearingImpaired: false, Codec: "ass"},
 	}
 	got := MatchSubtitle(ref, candidates, langtag.TierIdentical)
 	if got == nil {
