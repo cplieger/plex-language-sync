@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // RecordIntent stores a user's observed track selection for a show,
@@ -25,9 +26,9 @@ func (c *Cache) RecordIntent(userID, showKey string, intent *streams.Intent) {
 	}
 	c.data.Intents[userID][showKey] = intent.Clone()
 	slog.Debug("intent recorded",
-		"user", userID,
-		"show_key", showKey,
-		"audio_lang", intent.Audio.LanguageCode)
+		"user", runesafe.SanitizeSingleLine(userID),
+		"show_key", runesafe.SanitizeSingleLine(showKey),
+		"audio_lang", runesafe.SanitizeSingleLine(intent.Audio.LanguageCode))
 }
 
 // IntentFor returns the recorded intent for a (user, show) pair, deep-

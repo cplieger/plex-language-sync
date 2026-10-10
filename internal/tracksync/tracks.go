@@ -40,6 +40,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // Config captures the subset of application configuration the Syncer
@@ -199,7 +200,7 @@ func (s *Syncer) ReconcileWithIntent(
 	userClient := s.userClient(userID)
 	if userClient == nil {
 		slog.Warn("reconcile: no per-user client, skipping user",
-			"user_id", userID, "user", username)
+			"user_id", runesafe.SanitizeSingleLine(userID), "user", username)
 		return
 	}
 	showKey := episode.GrandparentRatingKey
@@ -313,7 +314,7 @@ func (s *Syncer) updateEpisodeStreams(
 ) bool {
 	full, err := userClient.Episode(ctx, ratingKey)
 	if err != nil {
-		slog.Warn("failed to reload episode", "key", ratingKey, "user", username, "error", err)
+		slog.Warn("failed to reload episode", "key", runesafe.SanitizeSingleLine(ratingKey.String()), "user", username, "error", err)
 		return false
 	}
 
@@ -435,16 +436,18 @@ const (
 	kindSubtitle = "subtitle"
 )
 
-// logAttrs builds the attribute list shared by both log levels.
+// logAttrs builds the attribute list shared by both log levels. The language
+// fields are sanitized because Plex passes a file's own tag through, malformed
+// or not.
 func logAttrs(ep *streams.Episode, username, kind string, ref, matched *streams.Stream, tier langtag.Tier) []any {
 	return []any{
 		"episode", ep.ShortName(),
 		"user", username,
 		"kind", kind,
-		"from", ref.LanguageCode,
-		"to", matched.LanguageCode,
-		"from_tag", ref.LanguageTag,
-		"to_tag", matched.LanguageTag,
+		"from", runesafe.SanitizeSingleLine(ref.LanguageCode),
+		"to", runesafe.SanitizeSingleLine(matched.LanguageCode),
+		"from_tag", runesafe.SanitizeSingleLine(ref.LanguageTag),
+		"to_tag", runesafe.SanitizeSingleLine(matched.LanguageTag),
 		"match_tier", tier.String(),
 	}
 }

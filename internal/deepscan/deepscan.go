@@ -20,6 +20,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/scheduler/v4"
 	"golang.org/x/sync/singleflight"
 )
@@ -380,7 +381,7 @@ func (s *Scheduler) processHistoryItem(
 		consecutiveErrors.Add(1)
 		totalErrors.Add(1)
 		slog.Debug("scheduler: skipping history item, fetch failed",
-			"key", item.RatingKey, "user", userID, "error", fetchErr)
+			"key", runesafe.SanitizeSingleLine(item.RatingKey), "user", userID, "error", fetchErr)
 		return
 	}
 	consecutiveErrors.Store(0)
@@ -452,7 +453,7 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 		if err != nil {
 			failed++
 			slog.Debug("scheduler: failed to fetch recently added",
-				"section", section.Title, "error", err)
+				"section", runesafe.SanitizeSingleLine(section.Title), "error", err)
 			continue
 		}
 		if !feedEpisodes(ctx, work, episodes) {
@@ -495,7 +496,7 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 	if fetchErr != nil {
 		if !errors.Is(fetchErr, plex.ErrNotFound) {
 			slog.Debug("scheduler: failed to fetch recently added episode",
-				"key", ep.RatingKey, "error", fetchErr)
+				"key", runesafe.SanitizeSingleLine(ep.RatingKey), "error", fetchErr)
 		}
 		return
 	}

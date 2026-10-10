@@ -39,6 +39,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/scheduler/v4"
 )
 
@@ -119,11 +120,7 @@ func run() int {
 		slog.Error("cannot establish initial plex connection", "error", err)
 		return 1
 	}
-	slog.Info("connected to plex server",
-		"name", identity.FriendlyName,
-		"id", identity.MachineIdentifier,
-		"version", identity.Version)
-	slog.Info("authenticated as admin user", "name", admin.Name, "id", admin.ID)
+	logConnected(identity, admin)
 
 	// Cache — load persistent state, or start fresh on error. The encryption
 	// key (derived above) makes user-token decryption work offline on restart.
@@ -399,6 +396,18 @@ func connectOnce(ctx context.Context, client *plex.Client) (*plex.ServerIdentity
 	return identity, admin, nil
 }
 
+// logConnected records the server identity and admin account read from
+// Plex at startup.
+func logConnected(identity *plex.ServerIdentity, admin *plex.User) {
+	slog.Info("connected to plex server",
+		"name", runesafe.SanitizeSingleLine(identity.FriendlyName),
+		"id", runesafe.SanitizeSingleLine(identity.MachineIdentifier),
+		"version", runesafe.SanitizeSingleLine(identity.Version))
+	slog.Info("authenticated as admin user",
+		"name", runesafe.SanitizeSingleLine(admin.Name),
+		"id", runesafe.SanitizeSingleLine(admin.ID))
+}
+
 // startupBackoff returns the delay before retry attempt n (0-indexed):
 // startupBaseBackoff * 2^n, capped at startupMaxBackoff. The shift is guarded
 // so a large attempt count cannot overflow the duration to a negative value.
@@ -508,14 +517,14 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 	userClient := n.users.ClientForUser(userID, n.client)
 	if userClient == nil {
 		slog.Warn("play event: no per-user client available, skipping",
-			"user", username, "key", ev.RatingKey)
+			"user", username, "key", runesafe.SanitizeSingleLine(ev.RatingKey))
 		return
 	}
 	episode, err := userClient.Episode(ctx, plex.RatingKey(ev.RatingKey))
 	if err != nil {
 		if !errors.Is(err, plex.ErrNotFound) {
 			slog.Debug("play event: failed to fetch episode",
-				"key", ev.RatingKey, "user", username, "error", err)
+				"key", runesafe.SanitizeSingleLine(ev.RatingKey), "user", username, "error", err)
 		}
 		return
 	}
@@ -537,7 +546,7 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 	slog.Info("play event detected",
 		"episode", episode.ShortName(),
 		"user", username,
-		"state", ev.State)
+		"state", runesafe.SanitizeSingleLine(ev.State))
 
 	n.syncer.ObserveAndPropagate(ctx, userClient, userID, episode, "play")
 }
@@ -570,7 +579,8 @@ func (n *notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.Play
 		slog.Info("play event: user resolution recovered",
 			"after_consecutive_failures", after)
 	}
-	return uid, uname, true
+	// The account holder chooses the name and callers only log it.
+	return uid, runesafe.SanitizeSingleLine(uname), true
 }
 
 // errUnattributedNoClient is the cause recorded when Plex sends a play
@@ -600,8 +610,10 @@ var errUnattributedNoClient = errors.New("event carries no client identifier")
 // — see resolveStallCounter for how it tells the two shapes apart.
 func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
 	slog.Debug("play event: skipping, user not attributed",
-		"client", ev.ClientIdentifier, "key", ev.RatingKey,
-		"state", ev.State, "error", cause)
+		"client", runesafe.SanitizeSingleLine(ev.ClientIdentifier),
+		"key", runesafe.SanitizeSingleLine(ev.RatingKey),
+		"state", runesafe.SanitizeSingleLine(ev.State),
+		"error", runesafe.SanitizeSingleLine(cause.Error()))
 
 	// A skip is either an ABSENCE (the session list was read and did not
 	// carry this client, or the notification named no client to look up)
@@ -615,7 +627,8 @@ func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause err
 			"cause", string(v.cause),
 			"consecutive_failures", v.consecutive,
 			"absent_pairs", v.absentPairs,
-			"last_client", ev.ClientIdentifier, "last_key", ev.RatingKey)
+			"last_client", runesafe.SanitizeSingleLine(ev.ClientIdentifier),
+			"last_key", runesafe.SanitizeSingleLine(ev.RatingKey))
 	}
 }
 
@@ -803,7 +816,7 @@ func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.Tim
 		episode, err := n.client.Episode(ctx, plex.RatingKey(entry.ItemID))
 		if err != nil {
 			slog.Debug("timeline: failed to fetch episode",
-				"id", entry.ItemID, "error", err)
+				"id", runesafe.SanitizeSingleLine(entry.ItemID), "error", err)
 			continue
 		}
 		if episode.Type != plex.TypeEpisode {

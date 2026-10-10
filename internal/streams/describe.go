@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/cplieger/runesafe/v2"
 )
 
 // none is the sentinel Desc returns for a nil stream pointer. It lands
@@ -25,14 +27,15 @@ func (s *Stream) TitleForMatch() string {
 }
 
 // Desc returns a human-readable description of the stream for log
-// output: the best title if any, otherwise "stream-<id>", otherwise
-// none for a nil stream.
+// output: the best title if any (sanitized to one line, since titles come
+// from media-file tags), otherwise "stream-<id>", otherwise none for a nil
+// stream.
 func Desc(s *Stream) string {
 	if s == nil {
 		return none
 	}
 	if t := s.TitleForMatch(); t != "" {
-		return t
+		return runesafe.SanitizeSingleLine(t)
 	}
 	return fmt.Sprintf("stream-%d", s.ID)
 }
