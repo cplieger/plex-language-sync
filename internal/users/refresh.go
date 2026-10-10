@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // RefreshConfig bundles retry tunables for the initial token-refresh
@@ -61,7 +62,7 @@ func (m *Manager) refreshTokens(ctx context.Context, adminClient *plex.Client, m
 	var removed []string
 	for uid := range m.shared {
 		if _, ok := newShared[uid]; !ok {
-			removed = append(removed, string(uid))
+			removed = append(removed, runesafe.SanitizeSingleLine(string(uid)))
 		}
 	}
 	m.shared = newShared

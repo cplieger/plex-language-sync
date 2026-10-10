@@ -6,8 +6,85 @@ import (
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/slogx/capture"
 	"pgregory.net/rapid"
 )
+
+// Not parallel: it swaps the process-global default logger.
+func TestCacheLogsSanitizeLanguageCodes(t *testing.T) {
+	const hostile = "jpn\nlevel=ERROR \u202ex"
+	want := runesafe.SanitizeSingleLine(hostile)
+
+	t.Run("profile", func(t *testing.T) {
+		rec := capture.Default(t)
+		New().LearnLanguageProfile("1", streams.LanguageChoice{Audio: hostile, Subtitle: hostile})
+		for _, key := range []string{"audio_lang", "subtitle_lang"} {
+			if !rec.HasAttr("language profile updated", key, want) {
+				t.Errorf("%s was not logged as %q; a language code comes from the media file: %v", key, want, rec.Records())
+			}
+		}
+	})
+	t.Run("intent", func(t *testing.T) {
+		rec := capture.Default(t)
+		New().RecordIntent("1", "42", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: hostile}}, 1))
+		if !rec.HasAttr("intent recorded", "audio_lang", want) {
+			t.Errorf("audio_lang was not logged as %q; a language code comes from the media file: %v", want, rec.Records())
+		}
+	})
+}
+
+// User IDs come from plex.tv and show keys from the server's REST listings,
+// so a hostile value must reach the log as one line.
+//
+// Not parallel: it swaps the process-global default logger.
+func TestCacheLogsSanitizePlexIdentifiers(t *testing.T) {
+	const hostile = "7\nlevel=ERROR \u202ex"
+	want := runesafe.SanitizeSingleLine(hostile)
+
+	t.Run("profile user", func(t *testing.T) {
+		rec := capture.Default(t)
+		New().LearnLanguageProfile(hostile, streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+		if !rec.HasAttr("language profile updated", "user", want) {
+			t.Errorf("user was not logged as %q: %v", want, rec.Records())
+		}
+	})
+	t.Run("intent user and show key", func(t *testing.T) {
+		rec := capture.Default(t)
+		New().RecordIntent(hostile, hostile, streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "jpn"}}, 1))
+		for _, key := range []string{"user", "show_key"} {
+			if !rec.HasAttr("intent recorded", key, want) {
+				t.Errorf("%s was not logged as %q: %v", key, want, rec.Records())
+			}
+		}
+	})
+	t.Run("undecryptable token user", func(t *testing.T) {
+		dir := t.TempDir()
+		keyA, err := DeriveKey("token-A")
+		if err != nil {
+			t.Fatalf("DeriveKey(A) error = %v", err)
+		}
+		keyB, err := DeriveKey("token-B")
+		if err != nil {
+			t.Fatalf("DeriveKey(B) error = %v", err)
+		}
+		orig := New()
+		orig.SetEncryptionKey(keyA)
+		orig.SetUserTokens(map[string]string{hostile: "secret-1"})
+		if err := orig.Save(dir); err != nil {
+			t.Fatalf("Save() error = %v", err)
+		}
+		rec := capture.Default(t)
+		loaded := New()
+		loaded.SetEncryptionKey(keyB)
+		if err := loaded.Load(dir); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if !rec.HasAttr("cache: failed to decrypt user token", "user", want) {
+			t.Errorf("user was not logged as %q: %v", want, rec.Records())
+		}
+	})
+}
 
 func TestCacheLanguageProfilePerUser(t *testing.T) {
 	c := New()

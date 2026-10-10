@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/users"
 	"github.com/cplieger/plexapi/v2"
 	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/slogx/capture"
 )
 
 // ---------------------------------------------------------------------------
@@ -1325,4 +1326,96 @@ func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Not parallel: it swaps the process-global default logger.
+func TestLogSubstitution_sanitizesLanguageFields(t *testing.T) {
+	rec := capture.Default(t)
+	const hostile = "nob\nlevel=ERROR \u202ex"
+
+	logSubstitution(&streams.Episode{GrandparentTitle: "Show"}, "alice", kindSubtitle,
+		&streams.Stream{LanguageCode: hostile, LanguageTag: hostile},
+		&streams.Stream{LanguageCode: hostile, LanguageTag: hostile})
+
+	want := runesafe.SanitizeSingleLine(hostile)
+	for _, key := range []string{"from", "to", "from_tag", "to_tag"} {
+		if !rec.HasAttr("track language", key, want) {
+			t.Errorf("%s was not logged as %q; a stream's language comes from the media file and reached the log raw: %v", key, want, rec.Records())
+		}
+	}
+}
+
+// An unreadable language code is learned and matched verbatim, so a
+// malformed file tag reaches the profile-applied record.
+//
+// Not parallel: it swaps the process-global default logger.
+func TestApplyLanguageProfile_sanitizesLanguageFieldsInLog(t *testing.T) {
+	rec := capture.Default(t)
+	const (
+		hostileAudio = "jpn\nlevel=ERROR \u202ea"
+		hostileSub   = "eng\nlevel=ERROR \u202es"
+	)
+	plx := &fakeapi.Plex{}
+	c := fakeapi.NewCache()
+	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: hostileAudio, Subtitle: hostileSub})
+	s := newSyncer(Config{LanguageProfiles: true}, plx, c, &fakeUsers{})
+	ep := &streams.Episode{
+		RatingKey: "100",
+		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
+			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: hostileAudio},
+			{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: hostileSub, Codec: "srt"},
+		}}}}},
+	}
+
+	if !s.applyLanguageProfile(t.Context(), plx, "1", ep, "test") {
+		t.Fatalf("applyLanguageProfile = false, want true (calls=%v)", plx.CallNames())
+	}
+
+	for key, raw := range map[string]string{"audio_lang": hostileAudio, "subtitle_lang": hostileSub} {
+		want := runesafe.SanitizeSingleLine(raw)
+		if !rec.HasAttr("language profile applied", key, want) {
+			t.Errorf("%s was not logged as %q; a learned language comes from the media file and reached the log raw: %v", key, want, rec.Records())
+		}
+	}
+}
+
+// User IDs come from plex.tv and the session list, and rating keys from the
+// server's REST listings, so a hostile value must reach the log as one line.
+//
+// Not parallel: it swaps the process-global default logger.
+func TestSyncerLogs_sanitizePlexIdentifiers(t *testing.T) {
+	const hostile = "7\nlevel=ERROR \u202ex"
+	want := runesafe.SanitizeSingleLine(hostile)
+	noClient := func(string) PlexReadWriter { return nil }
+
+	t.Run("fan-out user id", func(t *testing.T) {
+		rec := capture.Default(t)
+		s := New(Config{}, Deps{
+			Plex: &fakeapi.Plex{}, Cache: fakeapi.NewCache(), UserClient: noClient,
+			Users: &fakeUsers{AllResult: []users.Account{{ID: hostile}}},
+		})
+		s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), &streams.Episode{RatingKey: "100"}, "scan_new")
+		if !rec.HasAttr("sync: no per-user client, skipping user", "user_id", want) {
+			t.Errorf("user_id was not logged as %q: %v", want, rec.Records())
+		}
+	})
+	t.Run("reconcile user id", func(t *testing.T) {
+		rec := capture.Default(t)
+		s := New(Config{}, Deps{
+			Plex: &fakeapi.Plex{}, Cache: fakeapi.NewCache(), UserClient: noClient, Users: &fakeUsers{},
+		})
+		s.ReconcileWithIntent(t.Context(), hostile, &streams.Episode{RatingKey: "100"}, 0, "scheduler")
+		if !rec.HasAttr("reconcile: no per-user client, skipping user", "user_id", want) {
+			t.Errorf("user_id was not logged as %q: %v", want, rec.Records())
+		}
+	})
+	t.Run("reload key", func(t *testing.T) {
+		rec := capture.Default(t)
+		plx := &fakeapi.Plex{EpisodeErr: errors.New("boom")}
+		s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
+		s.updateEpisodeStreams(t.Context(), plx, "user", hostile, streams.Pair{})
+		if !rec.HasAttr("failed to reload episode", "key", want) {
+			t.Errorf("key was not logged as %q: %v", want, rec.Records())
+		}
+	})
 }

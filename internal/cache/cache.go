@@ -31,6 +31,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // maxCacheSize caps each cache file at 50 MB. A file at this size is almost
@@ -326,7 +327,7 @@ func (c *Cache) decryptTokensLocked() {
 		plain, decErr := decryptToken(c.encKey, val)
 		if decErr != nil {
 			slog.Warn("cache: failed to decrypt user token, will refresh from plex.tv",
-				"user", uid, "error", decErr)
+				"user", runesafe.SanitizeSingleLine(uid), "error", decErr)
 			delete(c.data.UserTokens, uid)
 			continue
 		}

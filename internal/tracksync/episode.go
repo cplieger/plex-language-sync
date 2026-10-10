@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // episodeRef bundles a shared reference episode and its selected
@@ -72,7 +73,7 @@ func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
 		}
 		userClient := s.userClient(u.ID)
 		if userClient == nil {
-			slog.Warn("sync: no per-user client, skipping user", "user_id", u.ID)
+			slog.Warn("sync: no per-user client, skipping user", "user_id", runesafe.SanitizeSingleLine(u.ID))
 			continue
 		}
 		s.applyEpisodeForUser(ctx, userClient, u.ID, episode, refOnce, trigger)
