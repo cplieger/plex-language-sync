@@ -5,7 +5,7 @@ import (
 
 	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // profileKey canonicalizes a language code for use as a profile-map key, so

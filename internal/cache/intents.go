@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // RecordIntent stores a user's observed track selection for a show,

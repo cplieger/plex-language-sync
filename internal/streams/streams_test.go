@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"pgregory.net/rapid"
 )
 

@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // none is the sentinel Desc returns for a nil stream pointer. It lands
