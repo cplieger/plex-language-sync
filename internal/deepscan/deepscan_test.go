@@ -20,7 +20,9 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/scheduler/v4"
+	"github.com/cplieger/slogx/capture"
 )
 
 // ---------------------------------------------------------------------------
@@ -1724,4 +1726,56 @@ func TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning(t *testing.T) {
 	if strings.Contains(out, "recently-added sweep incomplete") {
 		t.Errorf("a pass with no failed section raised the sweep-incomplete WARN; log: %q", out)
 	}
+}
+
+// Section titles and rating keys come from the Plex server's REST
+// responses, so a hostile value must reach the log as one line.
+//
+// Not parallel: it swaps the process-global default logger.
+func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
+	const hostile = "7\nlevel=ERROR \u202ex"
+	want := runesafe.SanitizeSingleLine(hostile)
+
+	t.Run("history key", func(t *testing.T) {
+		rec := capture.Default(t)
+		plx := &fakeapi.Plex{
+			HistoryItems: []plex.HistoryItem{{RatingKey: hostile, Type: plex.TypeEpisode}},
+			EpisodeErr:   errors.New("boom"),
+		}
+		sched := New(Config{Enable: true}, Deps{
+			Plex: plx, Cache: fakeapi.NewCache(), Sync: &fakeSyncer{},
+			UserClient: func(string) EpisodeReader { return plx },
+		})
+		sched.processRecentHistory(t.Context(), time.Now().Unix())
+		if !rec.HasAttr("scheduler: skipping history item, fetch failed", "key", want) {
+			t.Errorf("key was not logged as %q: %v", want, rec.Records())
+		}
+	})
+	t.Run("section title", func(t *testing.T) {
+		rec := capture.Default(t)
+		plx := &recentlyAddedErrPlex{
+			Plex:         &fakeapi.Plex{Sections: []plex.Section{{Key: "1", Title: hostile}}},
+			failSections: map[string]bool{"1": true},
+		}
+		sched := New(Config{Enable: true}, Deps{
+			Plex: plx, Cache: fakeapi.NewCache(), Sync: &fakeSyncer{},
+			UserClient: func(string) EpisodeReader { return plx.Plex },
+		})
+		sched.processRecentlyAdded(t.Context(), time.Now().Unix())
+		if !rec.HasAttr("scheduler: failed to fetch recently added", "section", want) {
+			t.Errorf("section was not logged as %q: %v", want, rec.Records())
+		}
+	})
+	t.Run("recently added key", func(t *testing.T) {
+		rec := capture.Default(t)
+		plx := &fakeapi.Plex{EpisodeErr: errors.New("boom")}
+		sched := New(Config{Enable: true}, Deps{
+			Plex: plx, Cache: fakeapi.NewCache(), Sync: &fakeSyncer{},
+			UserClient: func(string) EpisodeReader { return plx },
+		})
+		sched.processRecentlyAddedEpisode(t.Context(), &streams.Episode{RatingKey: hostile})
+		if !rec.HasAttr("scheduler: failed to fetch recently added episode", "key", want) {
+			t.Errorf("key was not logged as %q: %v", want, rec.Records())
+		}
+	})
 }

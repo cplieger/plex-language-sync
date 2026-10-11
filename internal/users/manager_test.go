@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,8 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
+	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/slogx/capture"
 )
 
 // Verify *Manager satisfies the lookup surface its consumers declare. Spelled
@@ -267,6 +270,39 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 	}
 	if got := m.ClientForUser("100", adminClient); got.Token() != "token-100" {
 		t.Errorf("ClientForUser(100) token = %q, want token-100", got.Token())
+	}
+}
+
+func TestManager_NameSanitizesAccountNames(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<MediaContainer>` +
+			`<SharedServer id="1" username="friend&#10;level=ERROR &#x202E;x" userID="100" accessToken="token-100"/>` +
+			`</MediaContainer>`))
+	}))
+	t.Cleanup(srv.Close)
+	parsed, _ := url.Parse("http://plex:32400")
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
+
+	m := NewManager(fakeapi.NewCache())
+	m.Init(&plex.User{ID: "1", Name: "admin\r\nlevel=ERROR"})
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
+
+	tests := []struct {
+		name, userID, want string
+	}{
+		{name: "admin", userID: "1", want: "admin  level=ERROR"},
+		{name: "shared", userID: "100", want: "friend level=ERROR  x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := m.Name(tt.userID); got != tt.want {
+				t.Errorf("Name(%s) = %q, want %q; an account name is logged on every sync line, so a raw line break forges records", tt.userID, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -810,5 +846,40 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 	}
 	if !strings.Contains(out, "user_ids=[200]") {
 		t.Errorf("pruned audit log must name the revoked user_id 200; log = %q", out)
+	}
+}
+
+// A pruned user ID was read from plex.tv or the cache, so a hostile one must
+// reach the audit line as one line.
+//
+// Not parallel: it swaps the process-global default logger.
+func TestRefreshTokens_PrunedUserIDsSanitizedInLog(t *testing.T) {
+	const hostile = "200\nlevel=ERROR \u202ex"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<MediaContainer>` +
+			`<SharedServer id="1" username="friend1" userID="100" accessToken="token-100"/>` +
+			`</MediaContainer>`))
+	}))
+	t.Cleanup(srv.Close)
+	parsed, _ := url.Parse("http://plex:32400")
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
+
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"100": "old-token-100", hostile: "token-200"})
+	m := NewManager(fc)
+	m.Init(&plex.User{ID: "1", Name: "admin"})
+	m.LoadFromCache()
+	rec := capture.Default(t)
+
+	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
+
+	v, ok := rec.Attr("shared users pruned", "user_ids")
+	if !ok {
+		t.Fatalf("no user_ids on the pruned audit line: %v", rec.Records())
+	}
+	want := []string{runesafe.SanitizeSingleLine(hostile)}
+	if got, _ := v.Any().([]string); !slices.Equal(got, want) {
+		t.Errorf("user_ids = %q, want %q", v.Any(), want)
 	}
 }

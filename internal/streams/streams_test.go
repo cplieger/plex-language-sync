@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/runesafe/v2"
 	"pgregory.net/rapid"
 )
 
@@ -111,6 +112,7 @@ func TestStreamDescAllBranches(t *testing.T) {
 		{"title only", &Stream{Title: "Eng"}, "Eng"},
 		{"fallback to ID", &Stream{ID: 42}, "stream-42"},
 		{"ID zero", &Stream{}, "stream-0"},
+		{"title from a hostile file tag", &Stream{Title: "Eng\nlevel=ERROR \u202ex"}, runesafe.SanitizeSingleLine("Eng\nlevel=ERROR \u202ex")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
