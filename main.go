@@ -39,7 +39,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/scheduler/v4"
 )
 

@@ -31,7 +31,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // maxCacheSize caps each cache file at 50 MB. A file at this size is almost

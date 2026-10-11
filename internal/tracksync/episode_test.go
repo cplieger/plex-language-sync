@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
 	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // mkSelectedAudioEpisode builds an episode whose single part carries one
@@ -59,7 +60,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testin
 		},
 	}
 	s := newSyncer(Config{LanguageProfiles: false}, plx, fakeapi.NewCache(), lookup)
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
@@ -218,7 +219,7 @@ func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
 			buf := captureLogs(t)
 
 			s := newSyncer(Config{}, tc.plex, fakeapi.NewCache(), &fakeUsers{})
-			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 
 			if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
 				t.Fatalf("findEpisodeReference = %+v, want nil (no usable reference)", ref)
@@ -247,7 +248,7 @@ func TestFindEpisodeReference_logsShowEpisodesFetchError(t *testing.T) {
 
 	buf := captureLogs(t)
 
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
 
 	if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
@@ -299,7 +300,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T)
 			return plx
 		},
 	})
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 
 	buf := captureLogs(t)
 
@@ -367,7 +368,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *te
 	}
 	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
 	s := newSyncer(Config{}, plx, fakeapi.NewCache(), lookup)
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 
 	buf := captureLogs(t)
 
