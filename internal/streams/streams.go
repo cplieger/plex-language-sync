@@ -12,7 +12,7 @@ import (
 
 	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // Label represents a label tag on a Plex metadata item.

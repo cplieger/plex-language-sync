@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/langtag/v2"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // applyLanguageProfile applies a learned language profile to a new

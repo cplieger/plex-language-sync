@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/slogx/capture"
 )
 
