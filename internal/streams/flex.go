@@ -25,8 +25,6 @@ type FlexInt int
 // rejects hex floats, "Inf"/"NaN" and underscore separators, and never
 // round-trips through float64. Errors carry a "flexint:" prefix so a log
 // reader can tell them apart from plex.RatingKey.Validate's "invalid rating key".
-//
-//deadset:ignore DS1004,DS1101 -- encoding/json calls it through json.Unmarshaler, which fixes its exported name, when plexapi decodes Plex responses into Episode and HistoryItem.
 func (f *FlexInt) UnmarshalJSON(data []byte) error {
 	*f = 0
 	n, err := jsonx.ParseInt64(data, jsonx.StrictAbsentZero())
