@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
 	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/slogx/capture"
 )
 
@@ -123,7 +123,7 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 				},
 			}
 			policy := ignore.New(ignore.Config{Reader: plx, Libraries: tc.ignoreLibs, Labels: tc.ignoreLabels})
-			ref := &streams.Episode{LibraryTitle: runesafe.Untrusted(tc.episodeLibrary), GrandparentRatingKey: tc.episodeShowKey}
+			ref := &streams.Episode{LibraryTitle: runesafe.NewUntrusted(tc.episodeLibrary), GrandparentRatingKey: tc.episodeShowKey}
 			if got := policy.ShouldSkipEpisode(t.Context(), ref); got != tc.want {
 				t.Errorf("policy.ShouldSkipEpisode = %v, want %v", got, tc.want)
 			}
@@ -400,7 +400,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ReferenceSearchedOnce(t *testing.T) 
 		},
 	}
 	s := newSyncer(Config{LanguageProfiles: false}, plx, c, lookup)
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	var showEpisodesCalls int
@@ -751,7 +751,7 @@ func refWithSelectedAudio(lang, show, parent string, season, index int) *streams
 		RatingKey:            "1",
 		GrandparentRatingKey: show,
 		ParentRatingKey:      parent,
-		GrandparentTitle:     "Show",
+		GrandparentTitle:     runesafe.NewUntrusted("Show"),
 		ParentIndex:          streams.FlexInt(season),
 		Index:                streams.FlexInt(index),
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
@@ -1312,7 +1312,7 @@ func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := captureLogs(t)
 
-			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: "Show"}
+			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
 			logSubstitution(ep, "alice", tt.kind,
 				&streams.Stream{LanguageCode: tt.refLang},
 				&streams.Stream{LanguageCode: tt.matchLang})
@@ -1333,7 +1333,7 @@ func TestLogSubstitution_sanitizesLanguageFields(t *testing.T) {
 	rec := capture.Default(t)
 	const hostile = "nob\nlevel=ERROR \u202ex"
 
-	logSubstitution(&streams.Episode{GrandparentTitle: "Show"}, "alice", kindSubtitle,
+	logSubstitution(&streams.Episode{GrandparentTitle: runesafe.NewUntrusted("Show")}, "alice", kindSubtitle,
 		&streams.Stream{LanguageCode: hostile, LanguageTag: hostile},
 		&streams.Stream{LanguageCode: hostile, LanguageTag: hostile})
 

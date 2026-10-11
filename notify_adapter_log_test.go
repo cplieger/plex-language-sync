@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"github.com/cplieger/slogx/capture"
 )
 

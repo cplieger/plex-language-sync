@@ -9,6 +9,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
 	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ func TestObserveAndPropagate_CommentaryAudioStillRecordsIntent(t *testing.T) {
 		RatingKey:            "1",
 		GrandparentRatingKey: "42",
 		ParentRatingKey:      "7",
-		GrandparentTitle:     "Show",
+		GrandparentTitle:     runesafe.NewUntrusted("Show"),
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
 			{
 				ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "eng",
@@ -127,7 +128,7 @@ func replayedEpisode() *streams.Episode {
 		RatingKey:            "1",
 		GrandparentRatingKey: "42",
 		ParentRatingKey:      "7",
-		GrandparentTitle:     "Show",
+		GrandparentTitle:     runesafe.NewUntrusted("Show"),
 		ParentIndex:          1,
 		Index:                1,
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{

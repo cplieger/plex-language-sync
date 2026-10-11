@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 	"pgregory.net/rapid"
 )
 
@@ -30,7 +30,7 @@ func TestEpisodeMethods(t *testing.T) {
 	ep := &Episode{
 		ParentIndex:      2,
 		Index:            5,
-		GrandparentTitle: "Breaking Bad",
+		GrandparentTitle: runesafe.NewUntrusted("Breaking Bad"),
 	}
 	if got := ep.SeasonNum(); got != 2 {
 		t.Errorf("seasonNum() = %d, want 2", got)
@@ -149,17 +149,17 @@ func TestEpisodeShortNameFormatting(t *testing.T) {
 	}{
 		{
 			name: "single digit season and episode",
-			ep:   Episode{ParentIndex: 1, Index: 3, GrandparentTitle: "Show"},
+			ep:   Episode{ParentIndex: 1, Index: 3, GrandparentTitle: runesafe.NewUntrusted("Show")},
 			want: "'Show' (S01E03)",
 		},
 		{
 			name: "double digit",
-			ep:   Episode{ParentIndex: 12, Index: 24, GrandparentTitle: "Big Show"},
+			ep:   Episode{ParentIndex: 12, Index: 24, GrandparentTitle: runesafe.NewUntrusted("Big Show")},
 			want: "'Big Show' (S12E24)",
 		},
 		{
 			name: "zero (absent or null JSON)",
-			ep:   Episode{GrandparentTitle: "Bad"},
+			ep:   Episode{GrandparentTitle: runesafe.NewUntrusted("Bad")},
 			want: "'Bad' (S00E00)",
 		},
 	}
