@@ -7,6 +7,7 @@ import (
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
+	"github.com/cplieger/runesafe/v3"
 )
 
 func TestPolicyIgnoreLibrary(t *testing.T) {
@@ -92,35 +93,35 @@ func TestPolicyShouldSkipEpisode(t *testing.T) {
 		{
 			name:      "library match",
 			libraries: []string{"Music"},
-			ref:       &streams.Episode{LibraryTitle: "Music", GrandparentRatingKey: "42"},
+			ref:       &streams.Episode{LibraryTitle: runesafe.NewUntrusted("Music"), GrandparentRatingKey: "42"},
 			reader:    &stubReader{show: &plex.Show{}},
 			want:      true,
 		},
 		{
 			name:   "label match",
 			labels: []string{"SKIP"},
-			ref:    &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: "42"},
+			ref:    &streams.Episode{LibraryTitle: runesafe.NewUntrusted("TV"), GrandparentRatingKey: "42"},
 			reader: &stubReader{show: &plex.Show{Label: []streams.Label{{Tag: "SKIP"}}}},
 			want:   true,
 		},
 		{
 			name:   "no match",
 			labels: []string{"SKIP"},
-			ref:    &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: "42"},
+			ref:    &streams.Episode{LibraryTitle: runesafe.NewUntrusted("TV"), GrandparentRatingKey: "42"},
 			reader: &stubReader{show: &plex.Show{Label: []streams.Label{{Tag: "OTHER"}}}},
 			want:   false,
 		},
 		{
 			name:   "ShowMetadata error returns false",
 			labels: []string{"SKIP"},
-			ref:    &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: "42"},
+			ref:    &streams.Episode{LibraryTitle: runesafe.NewUntrusted("TV"), GrandparentRatingKey: "42"},
 			reader: &stubReader{err: errors.New("boom")},
 			want:   false,
 		},
 		{
 			name:   "empty grandparent short-circuits ShowMetadata",
 			labels: []string{"SKIP"},
-			ref:    &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: ""},
+			ref:    &streams.Episode{LibraryTitle: runesafe.NewUntrusted("TV"), GrandparentRatingKey: ""},
 			reader: nil, // never called
 			want:   false,
 		},
@@ -130,7 +131,7 @@ func TestPolicyShouldSkipEpisode(t *testing.T) {
 			// guard, not just the empty-grandparent guard, has to hold.
 			name:   "nil reader with grandparent returns false",
 			labels: []string{"SKIP"},
-			ref:    &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: "42"},
+			ref:    &streams.Episode{LibraryTitle: runesafe.NewUntrusted("TV"), GrandparentRatingKey: "42"},
 			reader: nil, // ShouldSkipEpisode must not dereference it
 			want:   false,
 		},
@@ -185,7 +186,7 @@ func TestPolicyShouldSkipEpisodeEmptyGrandparentSkipsLabelFetch(t *testing.T) {
 	t.Parallel()
 	reader := &stubReader{show: &plex.Show{Label: []streams.Label{{Tag: "SKIP"}}}}
 	p := New(Config{Reader: reader, Labels: []string{"SKIP"}})
-	ref := &streams.Episode{LibraryTitle: "TV", GrandparentRatingKey: ""}
+	ref := &streams.Episode{LibraryTitle: runesafe.NewUntrusted("TV"), GrandparentRatingKey: ""}
 	if p.ShouldSkipEpisode(t.Context(), ref) {
 		t.Error("ShouldSkipEpisode with empty GrandparentRatingKey = true, want false " +
 			"(the empty-grandparent guard must short-circuit before the show-label fetch)")

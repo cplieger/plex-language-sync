@@ -15,7 +15,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // id is the typed user identifier. Plex user IDs are numeric strings but are

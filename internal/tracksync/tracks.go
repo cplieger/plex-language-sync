@@ -40,7 +40,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v2"
+	"github.com/cplieger/runesafe/v3"
 )
 
 // Config captures the subset of application configuration the Syncer

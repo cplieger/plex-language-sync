@@ -52,8 +52,8 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 		t.Fatalf("json.Unmarshal(Episode) err = %v, want nil", err)
 	}
 
-	if ep.GrandparentTitle != "Breaking Bad" {
-		t.Errorf("GrandparentTitle = %q, want %q", ep.GrandparentTitle, "Breaking Bad")
+	if ep.GrandparentTitle.Raw() != "Breaking Bad" {
+		t.Errorf("GrandparentTitle = %q, want %q", ep.GrandparentTitle.Raw(), "Breaking Bad")
 	}
 	if got := ep.Num(); got != 5 {
 		t.Errorf("Num() = %d, want 5 (bare-number FlexInt in situ)", got)
