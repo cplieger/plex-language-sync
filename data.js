@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1791931545346,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/plex-language-sync",
   "entries": {
     "Benchmark": [
       {
@@ -1199,10 +1199,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "c0fd11f07f039f4aba63c4e461884a9f652b5193",
-          "message": "chore(deps): update module golang.org/x/exp to v0.0.0-20261013213113-2ab7f3cbc5fb (#810)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
-          "timestamp": "2026-10-13T22:10:39Z",
-          "url": "https://github.com/cplieger/ci/commit/c0fd11f07f039f4aba63c4e461884a9f652b5193"
+          "id": "01de93116422fdbe31f3597856de99b83f8a4a41",
+          "message": "chore(sync): synced file(s) with cplieger/ci (#692)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-12T23:33:06Z",
+          "url": "https://github.com/cplieger/plex-language-sync/commit/01de93116422fdbe31f3597856de99b83f8a4a41"
         },
         "date": 1791931544908,
         "tool": "customSmallerIsBetter",
