@@ -3,7 +3,7 @@ package streams
 import (
 	"testing"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plexapi/v2"
 )
 
@@ -225,7 +225,8 @@ func TestMatchTierReportsTheDistance(t *testing.T) {
 	}{
 		"same tag":       {sub(1, "nob", "nb"), sub(2, "nob", "nb"), langtag.TierIdentical},
 		"macrolanguage":  {sub(1, "nob", "nb"), sub(2, "nor", "no"), langtag.TierSameLanguage},
-		"region only":    {sub(1, "spa", "es-ES"), sub(2, "spa", "es-419"), langtag.TierSameLanguage},
+		"region cluster": {sub(1, "spa", "es-MX"), sub(2, "spa", "es-419"), langtag.TierSameLanguage},
+		"other region":   {sub(1, "spa", "es-ES"), sub(2, "spa", "es-419"), langtag.TierOtherRegion},
 		"other script":   {sub(1, "chi", "zh-Hans"), sub(2, "chi", "zh-Hant"), langtag.TierOtherScript},
 		"close language": {sub(1, "nob", "nb"), sub(2, "nno", "nn"), langtag.TierIntelligible},
 		"unrelated":      {sub(1, "nob", "nb"), sub(2, "swe", "sv"), langtag.TierNone},
@@ -295,7 +296,7 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 		// At the strictest floor this is the exact behavior of the old
 		// string comparison, so it must not regress.
 		for _, floor := range []langtag.Tier{
-			langtag.TierIdentical, langtag.TierSameLanguage,
+			langtag.TierIdentical, langtag.TierSameLanguage, langtag.TierOtherRegion,
 			langtag.TierOtherScript, langtag.TierIntelligible,
 		} {
 			got := MatchSubtitle(ref, []*Stream{exactNonHI, foreignHI}, floor)
@@ -372,7 +373,7 @@ func TestUntaggedSubtitleReferenceMatchesNothing(t *testing.T) {
 	candidates := []*Stream{sub(1, "eng", "en"), sub(2, "", "")}
 
 	for _, floor := range []langtag.Tier{
-		langtag.TierIdentical, langtag.TierSameLanguage,
+		langtag.TierIdentical, langtag.TierSameLanguage, langtag.TierOtherRegion,
 		langtag.TierOtherScript, langtag.TierIntelligible, langtag.TierSharedLiteracy,
 	} {
 		if got := MatchSubtitle(ref, candidates, floor); got != nil {

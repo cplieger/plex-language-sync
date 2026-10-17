@@ -183,7 +183,7 @@ func (f *fakePlexClient) RedirectPolicy() func(*http.Request, []*http.Request) e
 // BaseTransport returns nil: the fake owns its http.Client (like any
 // WithHTTPClient-built plexapi client), so dialClient exercises its
 // DefaultTransport-clone fallback path.
-func (f *fakePlexClient) BaseTransport() *http.Transport { return nil }
+func (*fakePlexClient) BaseTransport() *http.Transport { return nil }
 
 // TestNewListener_UsesProvidedConfig confirms the Config shrinkage
 // tests can pass without mutating globals.

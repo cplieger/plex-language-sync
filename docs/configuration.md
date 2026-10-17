@@ -22,25 +22,13 @@ A show you leave out is never changed, and plex-language-sync does not learn you
 
 Media files disagree about how to name a language. One episode carries a subtitle Plex labels "Norwegian Bokmål" and reports as `nob`. The next carries one labelled "Norwegian" and reports as `nor`. Both name the same thing, but comparing the codes as text finds no match, so the second episode would be left alone.
 
-plex-language-sync reads language codes with [`langtag`](https://github.com/cplieger/langtag), which brings the several published spellings of one language to one form and grades how close a candidate track is to the one you chose. `SUBTITLE_MATCH_TIER` sets how far a subtitle substitution may reach when no exact match exists:
+plex-language-sync reads language codes with [`langtag`](https://github.com/cplieger/langtag), which brings the several published spellings of one language to one form and grades how close a candidate track is to the one you chose. `SUBTITLE_MATCH_TIER` sets how far a subtitle substitution may reach when no exact match exists. Its values, narrowest first, are `identical`, `same-language`, `other-region`, `other-script`, `intelligible` and `shared-literacy`, and each accepts what the values before it accept. [langtag's tier table](https://github.com/cplieger/langtag#tiers) says what each one accepts.
 
-| Value | Accepts | Example |
-| --- | --- | --- |
-| `identical` | Only the same language, written another way | `ger` and `deu` |
-| `same-language` (default) | One language a reader takes in without effort | `nob` and `nor`, `es-ES` and `es-419`, Serbian in either script |
-| `other-script` | One language in another script | Simplified and Traditional Chinese |
-| `intelligible` | A different but close language | Bokmål and Nynorsk, Norwegian and Danish |
-| `shared-literacy` | A different language its readers are usually schooled in | Catalan and Spanish |
+The default is `other-region`, which langtag defines as one language in two regional standards CLDR, the Unicode locale data, rates apart. It puts `pt-PT` subtitles on a `pt-BR` choice, and `es-ES` on an `es-419` one, when an episode has nothing closer. Set `same-language` to refuse those. Wherever both are present, on audio and subtitles alike, the closer track wins: a `pt-BR` choice takes a plain `pt` track over a `pt-PT` one, and an `es-419` choice takes `es-MX` over `es-ES`.
 
-The default never gives you a different language. It covers the Norwegian case above and leaves every debatable substitution off.
+Audio has no setting and stops at `other-script`: audio tagged `zh-CN` still matches `zh-TW`, but Danish never plays for a Norwegian selection. Subtitles you can read past or turn off, while wrong audio is the thing you notice.
 
-The default does allow one script difference, for Serbian, which is written in both Latin and Cyrillic and whose readers are taught both. That is the only pair the Unicode locale data rates as close, at 5 against the 50 it gives a script substitution it does not vouch for.
-
-Each tier past the default costs something specific. `other-script` asks you to read Traditional Chinese when you chose Simplified. The Unicode locale data scores that kind of substitution at 50, where every close-language pair it carries scores between 4 and 20. `intelligible` puts Danish subtitles on a Norwegian selection when no Norwegian track exists. `shared-literacy` puts Spanish on a Catalan one.
-
-Audio has no setting and never switches to another language. It accepts a regional variant, so audio tagged `zh-CN` still matches `zh-TW`, but Danish never plays for a Norwegian selection. Subtitles you can read past or turn off, while wrong audio is the thing you notice.
-
-A subtitle set in another script or another language is logged at INFO with how close the match was, so a surprising one can be traced. Closer matches, and every audio match, log `track language matched` at DEBUG. An INFO line looks like this:
+A subtitle matched past `other-region` is logged at INFO with how close the match was, so a surprising one can be traced. Closer subtitle matches, and audio matches at any tier, log `track language matched` at DEBUG. An INFO line looks like this:
 
 ```text
 level=INFO msg="track language substituted" kind=subtitle from=nob to=nno match_tier=intelligible
