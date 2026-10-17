@@ -3,18 +3,13 @@ package streams
 import (
 	"strings"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 )
 
 // audioFloor is the language distance the audio path accepts, fixed rather
-// than configurable.
-//
-// It sits one tier looser than the subtitle default, and the two mean the
-// same thing: script cannot matter for a spoken track, but langtag infers a
-// script from the region, so two Mandarin tracks tagged zh-CN and zh-TW
-// differ by "script" purely as an artifact of that inference. Both report
-// languageCode="chi" and matched before this change, so flooring audio at
-// TierSameLanguage would stop propagating regional audio that propagates now.
+// than configurable, and never another language: a spoken track has no script,
+// but langtag infers one from the region, so Mandarin audio tagged zh-CN and
+// zh-TW differs by script only as an artifact, and a tighter floor refuses it.
 const audioFloor = langtag.TierOtherScript
 
 // languageMatch is how a reference's language relates to a candidate's when

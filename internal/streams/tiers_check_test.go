@@ -3,7 +3,7 @@ package streams
 import (
 	"testing"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plexapi/v2"
 )
 
@@ -51,28 +51,23 @@ func TestAudioAdmitsOnlyTheChosenLanguage(t *testing.T) {
 }
 
 // TestSubtitleDefaultFloorAdmits is the same table for subtitles at the shipped
-// default, which is one tier tighter: a script difference is real work for a
-// reader even though it is not a different language.
+// default, one tier tighter than the audio floor.
 func TestSubtitleDefaultFloorAdmits(t *testing.T) {
 	t.Parallel()
-	const defaultFloor = langtag.TierSameLanguage
+	const defaultFloor = langtag.TierOtherRegion
 	cases := map[string]struct {
 		refTag, candTag string
 		admit           bool
 	}{
 		"identical":              {"nb", "nb", true},
 		"macrolanguage spelling": {"nb", "no", true},
-		"regional variant":       {"es-ES", "es-419", true},
+		"regional variant":       {"es-MX", "es-419", true},
+		"regional standards":     {"pt-BR", "pt-PT", true},
 		"bare against regional":  {"pt", "pt-BR", true},
-
-		// Serbian is written in both scripts and Serbian schooling teaches both,
-		// so the pair reads as one language and the default floor accepts it.
-		// The Unicode locale data agrees and is why this is not a judgment: it
-		// scores the pair 5, against 50 for a script substitution it does not
-		// explicitly vouch for, which is where Chinese lands.
-		"serbian scripts read as one": {"sr-Cyrl", "sr-Latn", true},
+		"serbian scripts":        {"sr-Cyrl", "sr-Latn", true},
 
 		"chinese scripts":       {"zh-Hans", "zh-Hant", false},
+		"inferred chinese":      {"zh-CN", "zh-TW", false},
 		"nynorsk for bokmal":    {"nb", "nn", false},
 		"danish for norwegian":  {"nb", "da", false},
 		"spanish for catalan":   {"ca", "es", false},
@@ -101,16 +96,18 @@ func TestSubtitleFloorsAreReachableInOrder(t *testing.T) {
 		refTag, candTag string
 		floor           langtag.Tier
 	}{
-		"same tag":        {"nb", "nb", langtag.TierIdentical},
-		"macrolanguage":   {"nb", "no", langtag.TierSameLanguage},
-		"chinese scripts": {"zh-Hans", "zh-Hant", langtag.TierOtherScript},
-		"serbian scripts": {"sr-Cyrl", "sr-Latn", langtag.TierSameLanguage},
-		"nynorsk":         {"nb", "nn", langtag.TierIntelligible},
-		"catalan":         {"ca", "es", langtag.TierSharedLiteracy},
+		"same tag":           {"nb", "nb", langtag.TierIdentical},
+		"macrolanguage":      {"nb", "no", langtag.TierSameLanguage},
+		"one region cluster": {"es-MX", "es-419", langtag.TierSameLanguage},
+		"regional standards": {"en-US", "en-GB", langtag.TierOtherRegion},
+		"chinese scripts":    {"zh-Hans", "zh-Hant", langtag.TierOtherScript},
+		"serbian scripts":    {"sr-Cyrl", "sr-Latn", langtag.TierSameLanguage},
+		"nynorsk":            {"nb", "nn", langtag.TierIntelligible},
+		"catalan":            {"ca", "es", langtag.TierSharedLiteracy},
 	}
 	floors := []langtag.Tier{
-		langtag.TierIdentical, langtag.TierSameLanguage, langtag.TierOtherScript,
-		langtag.TierIntelligible, langtag.TierSharedLiteracy,
+		langtag.TierIdentical, langtag.TierSameLanguage, langtag.TierOtherRegion,
+		langtag.TierOtherScript, langtag.TierIntelligible, langtag.TierSharedLiteracy,
 	}
 	for name, tc := range firstAdmitting {
 		t.Run(name, func(t *testing.T) {
@@ -136,8 +133,8 @@ func TestSubtitleFloorsAreReachableInOrder(t *testing.T) {
 func TestNoMatchMeansNoMatch(t *testing.T) {
 	t.Parallel()
 	floors := []langtag.Tier{
-		langtag.TierIdentical, langtag.TierSameLanguage, langtag.TierOtherScript,
-		langtag.TierIntelligible, langtag.TierSharedLiteracy,
+		langtag.TierIdentical, langtag.TierSameLanguage, langtag.TierOtherRegion,
+		langtag.TierOtherScript, langtag.TierIntelligible, langtag.TierSharedLiteracy,
 	}
 	// A Norwegian reference against an episode carrying nothing Norwegian.
 	audRef := &Stream{StreamType: plexapi.StreamTypeAudio, LanguageTag: "nb"}

@@ -8,7 +8,7 @@ plex-language-sync has no metrics endpoint and opens no port. Its state is in it
 
 - At start it logs `configuration loaded` with every setting, showing the token only as `configured`. Then come `connected to plex server` and `authenticated as admin user`.
 - Each handled play logs `play event detected`, and each new or updated episode logs `library scan event detected`.
-- A subtitle set in another script or another language logs `track language substituted` with the codes and the `match_tier`. Closer matches log `track language matched` at DEBUG.
+- A subtitle matched past the `other-region` tier logs `track language substituted` with the codes and the `match_tier`. Closer matches log `track language matched` at DEBUG.
 - The daily deep scan logs `scheduled deep analysis starting` and `deep analysis completed`.
 - When no playback can be attributed to any user for a sustained run, it logs `user resolution stalled` once at WARN with a `cause` field, then `user resolution recovered` when attribution works again.
 - `LOG_LEVEL=debug` adds the reason each event was skipped and the detail of each track match.

@@ -57,7 +57,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -159,9 +159,10 @@ func TestLoadSubtitleTier(t *testing.T) {
 		val  string
 		want langtag.Tier
 	}{
-		{"unset takes the default", "", defaultSubtitleTier},
+		{"unset takes the default", "", langtag.TierOtherRegion},
 		{"identical", "identical", langtag.TierIdentical},
 		{"same-language", "same-language", langtag.TierSameLanguage},
+		{"other-region", "other-region", langtag.TierOtherRegion},
 		{"other-script", "other-script", langtag.TierOtherScript},
 		{"intelligible", "intelligible", langtag.TierIntelligible},
 		{"shared-literacy", "shared-literacy", langtag.TierSharedLiteracy},

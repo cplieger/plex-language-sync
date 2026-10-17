@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )
@@ -630,4 +630,77 @@ func TestMatchSubtitleStream_ForcedAndHIRefExcludesNonForced(t *testing.T) {
 	if got == nil || got.ID != 1 {
 		t.Fatalf("forced+HI ref must apply the forced exact-filter and exclude the non-forced HI candidate ID=2, falling back to forced ID=1; got %v", got)
 	}
+}
+
+// TestMatchSubtitleScriptCorrections pins three verdicts at the shipped default
+// that langtag v3's CLDR 48 script data and unknown-script rule decide;
+// langtag's docs/tiers.md owns why each pair sits on its tier.
+func TestMatchSubtitleScriptCorrections(t *testing.T) {
+	t.Parallel()
+	const floor = langtag.TierOtherRegion
+	cases := map[string]struct {
+		refTag, candTag string
+		admit           bool
+	}{
+		"traditional chinese refuses malaysian chinese": {"zh-Hant", "zh-MY", false},
+		"kurdish refuses iraqi kurdish":                 {"ku", "ku-IQ", false},
+		"montenegrin accepts latin montenegrin":         {"cnr", "cnr-Latn", true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ref := &Stream{StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.refTag}
+			cand := &Stream{ID: 7, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.candTag}
+			got := MatchSubtitle(ref, []*Stream{cand}, floor)
+			if tc.admit != (got != nil) {
+				t.Errorf("MatchSubtitle(%s, [%s], %v) admitted=%v, want %v",
+					tc.refTag, tc.candTag, floor, got != nil, tc.admit)
+			}
+		})
+	}
+}
+
+// TestV3Picks pins that both paths keep only the closest language tier before
+// scoring. A same-region-cluster or region-free candidate outranks one from the
+// other regional standard even when the latter scores higher on codec and
+// title, so a Brazilian reference picks bare pt over a matching pt-PT track.
+func TestV3Picks(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		refTag, farTag, closeTag string
+	}{
+		"brazilian portuguese picks bare portuguese": {"pt-BR", "pt-PT", "pt"},
+		"latin american spanish picks mexican":       {"es-419", "es-ES", "es-MX"},
+	}
+	for name, tc := range cases {
+		t.Run(name+"/subtitle", func(t *testing.T) {
+			t.Parallel()
+			ref := &Stream{StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.refTag, Title: "Full", Codec: "srt"}
+			far := &Stream{ID: 1, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.farTag, Title: "Full", Codec: "srt"}
+			near := &Stream{ID: 2, StreamType: plexapi.StreamTypeSubtitle, LanguageTag: tc.closeTag}
+			got := MatchSubtitle(ref, []*Stream{far, near}, langtag.TierOtherRegion)
+			if got == nil || got.ID != near.ID {
+				t.Errorf("MatchSubtitle(%s, [%s (higher score), %s]) = %s, want %s",
+					tc.refTag, tc.farTag, tc.closeTag, pickedTag(got), tc.closeTag)
+			}
+		})
+		t.Run(name+"/audio", func(t *testing.T) {
+			t.Parallel()
+			ref := &Stream{StreamType: plexapi.StreamTypeAudio, LanguageTag: tc.refTag, Codec: "eac3"}
+			far := &Stream{ID: 1, StreamType: plexapi.StreamTypeAudio, LanguageTag: tc.farTag, Codec: "eac3"}
+			near := &Stream{ID: 2, StreamType: plexapi.StreamTypeAudio, LanguageTag: tc.closeTag, Codec: "aac"}
+			got := MatchAudio(ref, []*Stream{far, near})
+			if got == nil || got.ID != near.ID {
+				t.Errorf("MatchAudio(%s, [%s (higher score), %s]) = %s, want %s",
+					tc.refTag, tc.farTag, tc.closeTag, pickedTag(got), tc.closeTag)
+			}
+		})
+	}
+}
+
+func pickedTag(s *Stream) string {
+	if s == nil {
+		return "nil"
+	}
+	return s.LanguageTag
 }
