@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plexapi/v2"
 	"pgregory.net/rapid"
 )

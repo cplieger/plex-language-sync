@@ -36,7 +36,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
@@ -404,15 +404,12 @@ func (s *Syncer) applySubtitleStream(
 }
 
 // logSubstitution records a track change and the language distance it was
-// accepted at, so a surprising choice is diagnosable from logs without
-// reproducing it.
-//
-// Only a substitution a user might question reaches INFO. The audio path cannot
-// exceed its own floor, and every tier within that floor names one language, so
-// audio is always routine however it matched; logging it at INFO would emit a
-// line per episode for a regional variant nobody would notice. On the subtitle
-// path anything past same-language crossed a boundary worth recording, and
-// carries the table's recorded justification when there was one.
+// accepted at, so a surprising choice is diagnosable from logs. A subtitle
+// past langtag.TierOtherRegion logs at INFO, with the table's recorded
+// justification when there is one: only a SUBTITLE_MATCH_TIER widened past the
+// default (defaultSubtitleTier in package main) admits it. Other subtitle
+// matches, and audio at any tier (its floor is fixed), log at DEBUG, where a
+// line per episode costs nothing.
 func logSubstitution(ep *streams.Episode, username, kind string, ref, matched *streams.Stream) {
 	tier := streams.MatchTier(ref, matched)
 	if kind == kindAudio {
@@ -420,7 +417,7 @@ func logSubstitution(ep *streams.Episode, username, kind string, ref, matched *s
 		return
 	}
 	attrs := logAttrs(ep, username, kind, ref, matched, tier)
-	if tier <= langtag.TierSameLanguage {
+	if tier <= langtag.TierOtherRegion {
 		slog.Debug("track language matched", attrs...)
 		return
 	}

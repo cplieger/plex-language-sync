@@ -1285,14 +1285,8 @@ func TestObserveAndPropagate_stopsOnCancelledContext(t *testing.T) {
 // logSubstitution — which track changes reach INFO
 // ---------------------------------------------------------------------------
 
-// TestLogSubstitution_levelByKindAndDistance pins the log-level policy for an
-// applied track change, which is the only record a user's surprising subtitle
-// leaves. Two rules meet here: a subtitle that crossed a language boundary is
-// worth an operator's attention at INFO, and everything else — any audio match,
-// and a subtitle inside the user's own language — is routine and stays at DEBUG.
-// Getting either wrong is quietly expensive: audio at INFO emits a line per
-// episode for a regional variant nobody would notice, and a cross-language
-// subtitle at DEBUG loses the one line that explains a complaint.
+// TestLogSubstitution_levelByKindAndDistance pins logSubstitution's level
+// policy on both sides of its tier cut, for each kind.
 // Not parallel: it swaps the process-global default logger.
 func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
 	tests := []struct {
@@ -1303,10 +1297,13 @@ func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
 		wantLevel string
 		wantMsg   string
 	}{
-		{"audio within one language is routine", kindAudio, "nob", "nor", "level=DEBUG", `msg="track language matched"`},
-		{"audio across languages is still routine", kindAudio, "nob", "nno", "level=DEBUG", `msg="track language matched"`},
-		{"subtitle within one language is routine", kindSubtitle, "nob", "nor", "level=DEBUG", `msg="track language matched"`},
-		{"subtitle across languages is recorded", kindSubtitle, "nob", "nno", "level=INFO", `msg="track language substituted"`},
+		{"audio at same-language is routine", kindAudio, "nob", "nor", "level=DEBUG", `msg="track language matched"`},
+		{"audio at other-script is still routine", kindAudio, "zh-CN", "zh-TW", "level=DEBUG", `msg="track language matched"`},
+		{"subtitle at same-language is routine", kindSubtitle, "nob", "nor", "level=DEBUG", `msg="track language matched"`},
+		{"subtitle at other-region is routine", kindSubtitle, "pt-BR", "pt-PT", "level=DEBUG", `msg="track language matched"`},
+		{"subtitle at same-language in another script is routine", kindSubtitle, "sr-Latn", "sr-Cyrl", "level=DEBUG", `msg="track language matched"`},
+		{"subtitle at other-script is recorded", kindSubtitle, "zh-Hans", "zh-Hant", "level=INFO", `msg="track language substituted"`},
+		{"subtitle at intelligible is recorded", kindSubtitle, "nob", "nno", "level=INFO", `msg="track language substituted"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

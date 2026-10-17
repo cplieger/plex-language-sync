@@ -79,14 +79,14 @@ Settings are environment variables. The app reads them once at start, so restart
 | `TRIGGER_ON_PLAY` | Follow the tracks you choose while watching | `true` |
 | `TRIGGER_ON_SCAN` | Set tracks on episodes Plex adds or updates | `true` |
 | `LEARN_LANGUAGE_PROFILES` | Learn audio and subtitle pairs, and use them on new shows Plex adds | `true` |
-| `SUBTITLE_MATCH_TIER` | How close a subtitle's language must be to your choice: `identical`, `same-language`, `other-script`, `intelligible` or `shared-literacy`. The default never switches language | `same-language` |
+| `SUBTITLE_MATCH_TIER` | Subtitles reach `identical`, `same-language`, `other-region`, `other-script`, `intelligible` or `shared-literacy`. Default `other-region`: one language in two regional standards CLDR rates apart. `same-language` keeps your standard. [Tiers](https://github.com/cplieger/langtag#tiers) | `other-region` |
 | `DEEP_SCAN_INTERVAL` | How often a scan of recent history repairs missed episodes, such as `24h` or `12h`. `off` turns it off | `24h` |
 | `IGNORE_LABELS` | Comma-separated Plex labels that leave a show out. Setting it replaces the defaults | `PAL_IGNORE,PLS_IGNORE` |
 | `IGNORE_LIBRARIES` | Comma-separated library names to leave out | _(unset)_ |
 | `PLEX_CA_CERT_PATH` | Certificate authority file for an `https://` Plex address with a self-signed or private certificate | _(unset)_ |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. `debug` shows why each event was skipped | `info` |
 
-Labels and library names match exactly, with case counted. Audio never switches to another language, whatever the tier. [Configuration](docs/configuration.md) explains each tier, https setup and the files kept in `/config`.
+Labels and library names match exactly, with case counted. Audio never switches to another language, whatever the tier. [Configuration](docs/configuration.md) explains the subtitle tier, https setup and the files kept in `/config`.
 
 | Mount | Description |
 | --- | --- |

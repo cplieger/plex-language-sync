@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/slogx"
 )
@@ -30,22 +30,13 @@ const (
 	defaultSchedulerInterval = 24 * time.Hour
 )
 
-// defaultSubtitleTier is the furthest language distance a subtitle substitution
-// reaches unless SUBTITLE_MATCH_TIER says otherwise.
-//
-// Same-language, which pairs with the fixed audio floor to mean one thing on
-// both paths: never a different language. The tier numbers differ only because
-// a spoken track has no script, so the audio path has to absorb a script
-// difference that is an artifact of inferring one from the region.
-//
-// It stops one tier short of what looks like the last judgment-free rung.
-// Crossing a script boundary is judgment-free but it is not free for the
-// reader: CLDR rates a generic cross-script substitution at distance 50, where
-// every curated close-language pair is between 4 and 20, and there is no
-// Simplified-to-Traditional Chinese entry at all so Chinese falls to that
-// generic 50. Handing a Simplified reader Traditional subtitles across a whole
-// show is a bigger imposition than any tier above this one, so it is opt-in.
-const defaultSubtitleTier = langtag.TierSameLanguage
+// defaultSubtitleTier is the furthest a subtitle substitution reaches unless
+// SUBTITLE_MATCH_TIER says otherwise. langtag defines other-region as "one
+// language in two regional standards CLDR rates apart", so a pt-BR choice gets
+// pt-PT subtitles, and an es-419 choice es-ES, when an episode has nothing
+// closer. langtag owns what each tier accepts:
+// https://github.com/cplieger/langtag#tiers
+const defaultSubtitleTier = langtag.TierOtherRegion
 
 // Default ignore labels applied when IGNORE_LABELS is not set.
 const (
