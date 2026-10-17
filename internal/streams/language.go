@@ -3,7 +3,7 @@ package streams
 import (
 	"strings"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 )
 
 // audioFloor is the language distance the audio path accepts, fixed rather

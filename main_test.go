@@ -57,7 +57,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"

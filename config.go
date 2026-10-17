@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/slogx"
 )

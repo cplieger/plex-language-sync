@@ -3,7 +3,7 @@ package streams
 import (
 	"strings"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 )
 
 // MatchAudio finds the best matching audio stream from candidates against a

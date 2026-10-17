@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/langtag/v2"
+	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v2"
 	"github.com/cplieger/runesafe/v3"
