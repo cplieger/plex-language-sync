@@ -1421,6 +1421,17 @@ func TestIsFatalStartupError(t *testing.T) {
 	}
 }
 
+func TestIsFatalStartupErrorFollowsIsTransient(t *testing.T) {
+	for _, code := range []int{408, 429, 500, 503, 401} {
+		statusErr := &plex.HTTPStatusError{Code: code, Method: "GET", Path: "/"}
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			if got, want := isFatalStartupError(statusErr), !statusErr.IsTransient(); got != want {
+				t.Errorf("isFatalStartupError(%d) = %v, want %v (the inverse of plexapi IsTransient)", code, got, want)
+			}
+		})
+	}
+}
+
 func TestStartupBackoff(t *testing.T) {
 	if got := startupBackoff(0); got != startupBaseBackoff {
 		t.Errorf("startupBackoff(0) = %v, want %v", got, startupBaseBackoff)
