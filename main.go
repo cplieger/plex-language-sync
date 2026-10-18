@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -426,18 +425,12 @@ func startupBackoff(attempt int) time.Duration {
 // error is a configuration or authentication problem that will not resolve
 // without operator action (so run() should exit) rather than a transient
 // connectivity failure (so run() should start degraded and keep retrying). A
-// bad token (401/403) or other 4xx, a 404 (wrong server), and TLS/certificate
-// errors are fatal; dial/DNS/timeout errors, 5xx (a Plex still starting up),
-// and 429/408 (throttle/timeout signals) are treated as transient.
+// Plex status the library's IsTransient does not report (a bad token or other
+// 4xx), a 404 (wrong server), and TLS/certificate errors are fatal;
+// dial/DNS/timeout errors and transient statuses are not.
 func isFatalStartupError(err error) bool {
 	if statusErr, ok := errors.AsType[*plex.HTTPStatusError](err); ok {
-		// 429 (Too Many Requests) and 408 (Request Timeout) are throttle/timeout
-		// signals, not config/auth errors: treat them as transient so a busy or
-		// slow Plex backs off and retries rather than exiting and crash-looping.
-		if statusErr.Code == http.StatusTooManyRequests || statusErr.Code == http.StatusRequestTimeout {
-			return false
-		}
-		return statusErr.Code < 500
+		return !statusErr.IsTransient()
 	}
 	// 404 on the identity endpoint: reached Plex, wrong server.
 	if errors.Is(err, plex.ErrNotFound) {
