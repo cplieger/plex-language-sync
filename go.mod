@@ -6,13 +6,13 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/cplieger/atomicfile/v4 v4.1.0
 	github.com/cplieger/envx/v2 v2.0.7
-	github.com/cplieger/health v1.9.0-dev.1
+	github.com/cplieger/health v1.9.0
 	github.com/cplieger/httpx/v5 v5.1.0
 	github.com/cplieger/jsonx/v2 v2.0.3
 	github.com/cplieger/keyenc v1.1.0-dev.1
 	github.com/cplieger/langtag/v3 v3.1.0-dev.2
 	github.com/cplieger/plexapi/v2 v2.3.0-dev.5
-	github.com/cplieger/runesafe/v3 v3.1.0-dev.1
+	github.com/cplieger/runesafe/v3 v3.1.0
 	github.com/cplieger/scheduler/v4 v4.2.3
 	github.com/cplieger/slogx v1.7.0
 	golang.org/x/sync v0.24.0
