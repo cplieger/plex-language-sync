@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -713,21 +712,10 @@ func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 // captureSlog redirects the default slog logger to a buffer for the duration of
 // fn and returns everything logged, restoring the previous logger afterward.
 // Tests using it must not be parallel (the default logger is process-global).
-//
-// slog.SetDefault also points the log package at the installed handler and
-// zeroes its flags, and skips that redirect for slog's own default handler, so
-// restoring slog alone leaves log writing into a dead buffer. slog goes back
-// first: reinstalling a non-default prev re-runs the redirect.
 func captureSlog(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
-	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	fn()
 	return buf.String()
 }

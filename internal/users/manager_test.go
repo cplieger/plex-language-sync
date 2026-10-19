@@ -3,7 +3,6 @@ package users
 import (
 	"bytes"
 	"context"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -824,16 +823,7 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 	m.LoadFromCache()
 
 	var buf bytes.Buffer
-	// slog.SetDefault also redirects the log package's writer and flags and
-	// skips that redirect for slog's own default handler, so all three are
-	// saved here and slog is restored first.
-	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
