@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,6 +19,7 @@ import (
 	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/cachecontract"
+	"github.com/cplieger/slogx/capture"
 	"pgregory.net/rapid"
 )
 
@@ -776,21 +776,10 @@ func TestCacheContract(t *testing.T) {
 // captureSlog redirects the default slog logger to a buffer for the duration
 // of fn and returns everything logged. Tests using it must NOT be parallel
 // (they mutate the process-global default logger).
-//
-// slog.SetDefault also points the log package at the installed handler and
-// zeroes its flags, and skips that redirect for slog's own default handler, so
-// restoring slog alone leaves log writing into a dead buffer. slog goes back
-// first: reinstalling a non-default prev re-runs the redirect.
 func captureSlog(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
-	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	fn()
 	return buf.String()
 }
