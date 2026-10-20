@@ -2,8 +2,8 @@ github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNU
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/cplieger/atomicfile/v4 v4.2.0-dev.1 h1:lixaaBswMeINmVqdDCLOjtrbP8Sv4A//sEZc5Job0CY=
 github.com/cplieger/atomicfile/v4 v4.2.0-dev.1/go.mod h1:hwmPt/GCOA/SHUX3hrxNRqdhQeaC2P1Ku1FxpnOi3fA=
-github.com/cplieger/envx/v2 v2.1.0-dev.1 h1:FBSikBTXY7Ie0fCWHg++xX7Z5rndZdNC3DUQh1KQqK8=
-github.com/cplieger/envx/v2 v2.1.0-dev.1/go.mod h1:DyAKBfKouU25nVmOjxeUe8T5EzKpC2DtqDNbIHmVDVE=
+github.com/cplieger/envx/v2 v2.1.0-dev.2 h1:I/j28m/0smRDw7i4q6rDna5adr1u9iU8y7FtqDUW9GY=
+github.com/cplieger/envx/v2 v2.1.0-dev.2/go.mod h1:ypEtpJ0OQgLStSk6YU8qoTjN7Gaf22qLyye4iRWsAwk=
 github.com/cplieger/health v1.10.0-dev.1 h1:IJhPNa3a5VBBKzY0QM2Uzt/9J8qO+a9+l7gVtOrOU2k=
 github.com/cplieger/health v1.10.0-dev.1/go.mod h1:Y1YQqGeH4YeEoTYzoNtzO/cp7+ummHliN/JsU/0UlKM=
 github.com/cplieger/httpx/v5 v5.2.0-dev.1 h1:wRLE1Tk0BfHS36q4CAmFOFae2zKE1FVdxq+yrMNpdA0=
@@ -16,8 +16,8 @@ github.com/cplieger/langtag/v3 v3.1.0-dev.3 h1:Hz5VNk2KzlKrqjFS3xO5gC6abSz6j+9mu
 github.com/cplieger/langtag/v3 v3.1.0-dev.3/go.mod h1:l9xswWicp31qquRod3FKzweWF0gJ06XKj/rqsNGESAQ=
 github.com/cplieger/pathinside/v2 v2.1.0-dev.1 h1:R/Zcvz0vKRh8R+vDga8xPAmVhSDrD6AwL+X7uwEdqnE=
 github.com/cplieger/pathinside/v2 v2.1.0-dev.1/go.mod h1:sMHw6mQSFsGWsirWPQyQZ1+kqrAsXf9VcMUTUJsqm0w=
-github.com/cplieger/plexapi/v2 v2.3.0-dev.6 h1:kIIHuIXQJs1VrqhKcuXqsSL1D6AW79YYfP2JYiAu3FE=
-github.com/cplieger/plexapi/v2 v2.3.0-dev.6/go.mod h1:A9+iJP3sUz5MEq1dOOU+nDqU8/Q2lqeRxLIZrkst7MY=
+github.com/cplieger/plexapi/v2 v2.3.0-dev.7 h1:iX5/jfQAvZJg6/kC3PTGRnrrftwEG9hBBTTNa6IFYnM=
+github.com/cplieger/plexapi/v2 v2.3.0-dev.7/go.mod h1:kxcX6btDKK6ahW4iHrV/RaVGBvXnNOE9iqRCOwpPz5U=
 github.com/cplieger/runesafe/v3 v3.2.0-dev.1 h1:91ehcUtH+PxLgkX0kFMCdT51ptb3aInEfyP9EjdWF4w=
 github.com/cplieger/runesafe/v3 v3.2.0-dev.1/go.mod h1:5XDABx7qgrlEAYnvKiXdak6rRQ5Zac6MyuQcksZUdEc=
 github.com/cplieger/scheduler/v4 v4.3.0-dev.1 h1:D2UjDkl0uj2HK7rTJQZUu/Wcfe1KD2zr7WPGXxMVFVs=
