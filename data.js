@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1793140926244,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/plex-language-sync",
   "entries": {
     "Benchmark": [
       {
@@ -1495,10 +1495,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "a4adc2450f849e94a70171386398350c33f7b66f",
-          "message": "chore(deps): update cplieger/ci digest to a00f6a5 (#890)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
-          "timestamp": "2026-10-27T02:08:25Z",
-          "url": "https://github.com/cplieger/ci/commit/a4adc2450f849e94a70171386398350c33f7b66f"
+          "id": "f29e76ea117fd7f50c971fe0b5dc5b8a1b0d81f5",
+          "message": "chore(sync): synced file(s) with cplieger/ci (#786)\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-27T02:54:00Z",
+          "url": "https://github.com/cplieger/plex-language-sync/commit/f29e76ea117fd7f50c971fe0b5dc5b8a1b0d81f5"
         },
         "date": 1793140925814,
         "tool": "customSmallerIsBetter",
