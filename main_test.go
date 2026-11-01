@@ -42,7 +42,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +64,7 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/slogx/capture"
 )
 
 // ---------------------------------------------------------------------------
@@ -971,21 +971,10 @@ func TestResolvePlayEventUser_unresolvedSessionFailsClosed(t *testing.T) {
 
 // captureLogs redirects the default logger at level for the test and returns
 // the buffer holding everything written to it.
-//
-// slog.SetDefault also points the log package at the installed handler and
-// zeroes its flags, and skips that redirect for slog's own default handler, so
-// restoring slog alone leaves log writing into a dead buffer. slog goes back
-// first: reinstalling a non-default prev re-runs the redirect.
 func captureLogs(t *testing.T, level slog.Level) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-		log.SetOutput(prevWriter)
-		log.SetFlags(prevFlags)
-	})
+	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level})))
 	return &buf
 }
 
@@ -1416,6 +1405,17 @@ func TestIsFatalStartupError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isFatalStartupError(tt.err); got != tt.want {
 				t.Errorf("isFatalStartupError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsFatalStartupErrorFollowsIsTransient(t *testing.T) {
+	for _, code := range []int{408, 429, 500, 503, 401} {
+		statusErr := &plex.HTTPStatusError{Code: code, Method: "GET", Path: "/"}
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			if got, want := isFatalStartupError(statusErr), !statusErr.IsTransient(); got != want {
+				t.Errorf("isFatalStartupError(%d) = %v, want %v (the inverse of plexapi IsTransient)", code, got, want)
 			}
 		})
 	}
