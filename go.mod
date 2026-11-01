@@ -11,7 +11,7 @@ require (
 	github.com/cplieger/jsonx/v2 v2.1.0-dev.1
 	github.com/cplieger/keyenc v1.1.0
 	github.com/cplieger/langtag/v3 v3.1.0
-	github.com/cplieger/plexapi/v2 v2.3.0-dev.9
+	github.com/cplieger/plexapi/v2 v2.3.0
 	github.com/cplieger/runesafe/v3 v3.2.0
 	github.com/cplieger/scheduler/v4 v4.3.0
 	github.com/cplieger/slogx v1.8.0
