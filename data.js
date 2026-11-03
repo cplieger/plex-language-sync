@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793140926244,
-  "repoUrl": "https://github.com/cplieger/plex-language-sync",
+  "lastUpdate": 1793745577053,
+  "repoUrl": "https://github.com/cplieger/ci",
   "entries": {
     "Benchmark": [
       {
@@ -1626,6 +1626,154 @@ window.BENCHMARK_DATA = {
             "name": "BenchmarkMatchAudio1000",
             "value": 623976.5,
             "range": "± 11200",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Christopher Plieger",
+            "username": "cplieger",
+            "email": "917744+cplieger@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "9ead40e51a68dd7202d29b68a7ab6cbcb6e5d0cb",
+          "message": "chore(audit): expect AGPL-3.0 for grelot (#915)",
+          "timestamp": "2026-11-03T19:17:26Z",
+          "url": "https://github.com/cplieger/ci/commit/9ead40e51a68dd7202d29b68a7ab6cbcb6e5d0cb"
+        },
+        "date": 1793745576592,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "BenchmarkBestByScore10 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore10 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore10",
+            "value": 184.25,
+            "range": "± 8.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore100 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore100 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore100",
+            "value": 1499.5,
+            "range": "± 50.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore1000 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore1000 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore1000",
+            "value": 14429,
+            "range": "± 626.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio10 - B/op",
+            "value": 3404,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio10 - allocs/op",
+            "value": 53,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio10",
+            "value": 7006.5,
+            "range": "± 113",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio100 - B/op",
+            "value": 31844,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio100 - allocs/op",
+            "value": 422,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio100",
+            "value": 63657.5,
+            "range": "± 3147",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio1000 - B/op",
+            "value": 304726,
+            "range": "± 0.5",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio1000 - allocs/op",
+            "value": 4031,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio1000",
+            "value": 635841.5,
+            "range": "± 14456.5",
             "unit": "ns/op",
             "extra": "10 samples, median"
           }
