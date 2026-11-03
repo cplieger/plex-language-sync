@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1793745577053,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/plex-language-sync",
   "entries": {
     "Benchmark": [
       {
@@ -1634,19 +1634,19 @@ window.BENCHMARK_DATA = {
       {
         "commit": {
           "author": {
-            "name": "Christopher Plieger",
-            "username": "cplieger",
-            "email": "917744+cplieger@users.noreply.github.com"
+            "name": "tribble-trouble[bot]",
+            "username": "tribble-trouble[bot]",
+            "email": "338123824+tribble-trouble[bot]@users.noreply.github.com"
           },
           "committer": {
             "name": "GitHub",
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "9ead40e51a68dd7202d29b68a7ab6cbcb6e5d0cb",
-          "message": "chore(audit): expect AGPL-3.0 for grelot (#915)",
-          "timestamp": "2026-11-03T19:17:26Z",
-          "url": "https://github.com/cplieger/ci/commit/9ead40e51a68dd7202d29b68a7ab6cbcb6e5d0cb"
+          "id": "f1707ba2be0fa3fbff87b2f1ccbc913db35cfa99",
+          "message": "fix(deps): update module github.com/cplieger/langtag/v3 to v3.2.0-dev.1 (#809)\n\nfix(deps): update module github.com/cplieger/langtag/v3 to v3.2.0-dev.1\n\nCo-authored-by: tribble-trouble[bot] <338123824+tribble-trouble[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-03T21:05:02Z",
+          "url": "https://github.com/cplieger/plex-language-sync/commit/f1707ba2be0fa3fbff87b2f1ccbc913db35cfa99"
         },
         "date": 1793745576592,
         "tool": "customSmallerIsBetter",
