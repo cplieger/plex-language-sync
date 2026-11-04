@@ -4,10 +4,10 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // applyLanguageProfile applies a learned language profile to a new
@@ -69,8 +69,8 @@ func (s *Syncer) applyLanguageProfile(
 			"trigger", trigger,
 			"user", username,
 			"episode", target.ShortName(),
-			"audio_lang", runesafe.SanitizeSingleLine(cur.Audio.LanguageCode),
-			"subtitle_lang", runesafe.SanitizeSingleLine(subLang))
+			"audio_lang", textsafe.SanitizeSingleLine(cur.Audio.LanguageCode),
+			"subtitle_lang", textsafe.SanitizeSingleLine(subLang))
 	}
 	return changed
 }

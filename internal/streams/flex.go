@@ -3,7 +3,7 @@ package streams
 import (
 	"fmt"
 
-	"github.com/cplieger/jsonx/v2"
+	"github.com/cplieger/go/jsonx"
 )
 
 // FlexInt unmarshals a Plex JSON field that may arrive as a number or a

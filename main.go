@@ -28,8 +28,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/health"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/deepscan"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
@@ -38,8 +40,6 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/scheduler/v4"
 )
 
 // Compile-time assertion that the real client satisfies the per-user surface
@@ -134,7 +134,7 @@ func run() int {
 	// Reap any temp orphaned by an interrupted Save so they don't accumulate
 	// on the persistent /config volume. Best-effort: a cleanup failure is
 	// non-fatal at startup, so log at Warn and continue.
-	if _, err := atomicfile.CleanupStaleTemps(ctx, cacheDir, time.Hour); err != nil {
+	if _, err := filesafe.CleanupStaleTemps(ctx, cacheDir, time.Hour); err != nil {
 		slog.Warn("stale temp cleanup failed", "path", cacheDir, "error", err)
 	}
 
@@ -288,7 +288,7 @@ func checkCacheDir(ctx context.Context, marker *health.Marker) (code int, ok boo
 // A mode the filesystem would not store is an ACL or mount-option problem,
 // which ownership changes cannot fix.
 func logCacheUnwritable(dir string, err error) {
-	if errors.Is(err, atomicfile.ErrModeNotStored) {
+	if errors.Is(err, filesafe.ErrModeNotStored) {
 		slog.Error("cache directory cannot hold owner-only files; remove the inherited ACL or mount option that widens new files, since the cache keeps user tokens",
 			"path", dir, "error", err)
 		return
@@ -399,12 +399,12 @@ func connectOnce(ctx context.Context, client *plex.Client) (*plex.ServerIdentity
 // Plex at startup.
 func logConnected(identity *plex.ServerIdentity, admin *plex.User) {
 	slog.Info("connected to plex server",
-		"name", runesafe.SanitizeSingleLine(identity.FriendlyName),
-		"id", runesafe.SanitizeSingleLine(identity.MachineIdentifier),
-		"version", runesafe.SanitizeSingleLine(identity.Version))
+		"name", textsafe.SanitizeSingleLine(identity.FriendlyName),
+		"id", textsafe.SanitizeSingleLine(identity.MachineIdentifier),
+		"version", textsafe.SanitizeSingleLine(identity.Version))
 	slog.Info("authenticated as admin user",
-		"name", runesafe.SanitizeSingleLine(admin.Name),
-		"id", runesafe.SanitizeSingleLine(admin.ID))
+		"name", textsafe.SanitizeSingleLine(admin.Name),
+		"id", textsafe.SanitizeSingleLine(admin.ID))
 }
 
 // startupBackoff returns the delay before retry attempt n (0-indexed):
@@ -510,14 +510,14 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 	userClient := n.users.ClientForUser(userID, n.client)
 	if userClient == nil {
 		slog.Warn("play event: no per-user client available, skipping",
-			"user", username, "key", runesafe.SanitizeSingleLine(ev.RatingKey))
+			"user", username, "key", textsafe.SanitizeSingleLine(ev.RatingKey))
 		return
 	}
 	episode, err := userClient.Episode(ctx, plex.RatingKey(ev.RatingKey))
 	if err != nil {
 		if !errors.Is(err, plex.ErrNotFound) {
 			slog.Debug("play event: failed to fetch episode",
-				"key", runesafe.SanitizeSingleLine(ev.RatingKey), "user", username, "error", err)
+				"key", textsafe.SanitizeSingleLine(ev.RatingKey), "user", username, "error", err)
 		}
 		return
 	}
@@ -539,7 +539,7 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 	slog.Info("play event detected",
 		"episode", episode.ShortName(),
 		"user", username,
-		"state", runesafe.SanitizeSingleLine(ev.State))
+		"state", textsafe.SanitizeSingleLine(ev.State))
 
 	n.syncer.ObserveAndPropagate(ctx, userClient, userID, episode, "play")
 }
@@ -573,7 +573,7 @@ func (n *notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.Play
 			"after_consecutive_failures", after)
 	}
 	// The account holder chooses the name and callers only log it.
-	return uid, runesafe.SanitizeSingleLine(uname), true
+	return uid, textsafe.SanitizeSingleLine(uname), true
 }
 
 // errUnattributedNoClient is the cause recorded when Plex sends a play
@@ -603,10 +603,10 @@ var errUnattributedNoClient = errors.New("event carries no client identifier")
 // — see resolveStallCounter for how it tells the two shapes apart.
 func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause error) {
 	slog.Debug("play event: skipping, user not attributed",
-		"client", runesafe.SanitizeSingleLine(ev.ClientIdentifier),
-		"key", runesafe.SanitizeSingleLine(ev.RatingKey),
-		"state", runesafe.SanitizeSingleLine(ev.State),
-		"error", runesafe.SanitizeSingleLine(cause.Error()))
+		"client", textsafe.SanitizeSingleLine(ev.ClientIdentifier),
+		"key", textsafe.SanitizeSingleLine(ev.RatingKey),
+		"state", textsafe.SanitizeSingleLine(ev.State),
+		"error", textsafe.SanitizeSingleLine(cause.Error()))
 
 	// A skip is either an ABSENCE (the session list was read and did not
 	// carry this client, or the notification named no client to look up)
@@ -620,8 +620,8 @@ func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause err
 			"cause", string(v.cause),
 			"consecutive_failures", v.consecutive,
 			"absent_pairs", v.absentPairs,
-			"last_client", runesafe.SanitizeSingleLine(ev.ClientIdentifier),
-			"last_key", runesafe.SanitizeSingleLine(ev.RatingKey))
+			"last_client", textsafe.SanitizeSingleLine(ev.ClientIdentifier),
+			"last_key", textsafe.SanitizeSingleLine(ev.RatingKey))
 	}
 }
 
@@ -809,7 +809,7 @@ func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.Tim
 		episode, err := n.client.Episode(ctx, plex.RatingKey(entry.ItemID))
 		if err != nil {
 			slog.Debug("timeline: failed to fetch episode",
-				"id", runesafe.SanitizeSingleLine(entry.ItemID), "error", err)
+				"id", textsafe.SanitizeSingleLine(entry.ItemID), "error", err)
 			continue
 		}
 		if episode.Type != plex.TypeEpisode {

@@ -3,9 +3,9 @@ package cache
 import (
 	"log/slog"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // profileKey canonicalizes a language code for use as a profile-map key, so
@@ -56,9 +56,9 @@ func (c *Cache) LearnLanguageProfile(userID string, choice streams.LanguageChoic
 	if !exists || prev != subtitleLang {
 		c.data.LanguageProfiles[userID][audioLang] = subtitleLang
 		slog.Info("language profile updated",
-			"user", runesafe.SanitizeSingleLine(userID),
-			"audio_lang", runesafe.SanitizeSingleLine(audioLang),
-			"subtitle_lang", runesafe.SanitizeSingleLine(subtitleLang))
+			"user", textsafe.SanitizeSingleLine(userID),
+			"audio_lang", textsafe.SanitizeSingleLine(audioLang),
+			"subtitle_lang", textsafe.SanitizeSingleLine(subtitleLang))
 	}
 }
 

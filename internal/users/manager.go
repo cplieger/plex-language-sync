@@ -14,8 +14,8 @@ package users
 import (
 	"sync"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // id is the typed user identifier. Plex user IDs are numeric strings but are
@@ -182,7 +182,7 @@ func (m *Manager) All() []Account {
 // line, since each plex.tv account holder chooses their own. Unknown users get
 // an "unknown-{id}" placeholder so log lines remain parseable.
 func (m *Manager) Name(userID string) string {
-	return runesafe.SanitizeSingleLine(m.rawName(userID))
+	return textsafe.SanitizeSingleLine(m.rawName(userID))
 }
 
 func (m *Manager) rawName(userID string) string {

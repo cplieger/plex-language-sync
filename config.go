@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/envx/v2"
+	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
-	"github.com/cplieger/slogx"
 )
 
 // ---------------------------------------------------------------------------

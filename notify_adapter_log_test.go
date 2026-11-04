@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
 )
 
 // hostile carries a line break that would start a forged record in a
@@ -23,12 +23,12 @@ import (
 const hostile = "1\nlevel=ERROR msg=forged \u202eevil\x1b[2J"
 
 // assertNoUnsafeRunes fails for every captured attribute value that still
-// carries a rune runesafe's single-line policy replaces.
+// carries a rune textsafe's single-line policy replaces.
 func assertNoUnsafeRunes(t *testing.T, rec *capture.Recorder) {
 	t.Helper()
 	for _, r := range rec.Records() {
 		r.Attrs(func(a slog.Attr) bool {
-			if v := a.Value.String(); runesafe.SanitizeSingleLine(v) != v {
+			if v := a.Value.String(); textsafe.SanitizeSingleLine(v) != v {
 				t.Errorf("%q logged %s=%q unsanitized; a value from the notification stream reached the log raw", r.Message, a.Key, v)
 			}
 			return true
@@ -76,7 +76,7 @@ func TestHandlePlayEvent_sanitizesNotificationValuesInLogs(t *testing.T) {
 
 			adapter.OnPlay(t.Context(), notify.PlayEvent{State: "playing", RatingKey: hostile, ClientIdentifier: "mac-A"})
 
-			if !rec.HasAttr(tt.wantMsg, "key", runesafe.SanitizeSingleLine(hostile)) {
+			if !rec.HasAttr(tt.wantMsg, "key", textsafe.SanitizeSingleLine(hostile)) {
 				t.Fatalf("no %q record carrying the sanitized rating key; got %v", tt.wantMsg, rec.Messages())
 			}
 			if !rec.HasAttr(tt.wantMsg, "user", "bob level=ERROR  evil") {
@@ -104,7 +104,7 @@ func TestSkipUnattributedPlayEvent_sanitizesNotificationValuesInLogs(t *testing.
 	if rec.CountLevel(slog.LevelDebug, "play event: skipping, user not attributed") != resolveAbsentPairThreshold {
 		t.Fatalf("skip records = %v, want %d per-event Debug lines", rec.Messages(), resolveAbsentPairThreshold)
 	}
-	if !rec.HasAttr("user resolution stalled", "last_key", runesafe.SanitizeSingleLine(hostile)) {
+	if !rec.HasAttr("user resolution stalled", "last_key", textsafe.SanitizeSingleLine(hostile)) {
 		t.Fatalf("the stall Warn did not carry the sanitized last key; got %v", rec.Messages())
 	}
 	assertNoUnsafeRunes(t, rec)
@@ -116,7 +116,7 @@ func TestHandleTimeline_sanitizesItemIDInLogs(t *testing.T) {
 
 	adapter.OnTimeline(t.Context(), []notify.TimelineEntry{{ItemID: hostile, Type: 4, MetadataState: "created"}})
 
-	if !rec.HasAttr("timeline: failed to fetch episode", "id", runesafe.SanitizeSingleLine(hostile)) {
+	if !rec.HasAttr("timeline: failed to fetch episode", "id", textsafe.SanitizeSingleLine(hostile)) {
 		t.Fatalf("no fetch-failure record carrying the sanitized item id; got %v", rec.Messages())
 	}
 	assertNoUnsafeRunes(t, rec)

@@ -36,11 +36,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // Config captures the subset of application configuration the Syncer
@@ -200,7 +200,7 @@ func (s *Syncer) ReconcileWithIntent(
 	userClient := s.userClient(userID)
 	if userClient == nil {
 		slog.Warn("reconcile: no per-user client, skipping user",
-			"user_id", runesafe.SanitizeSingleLine(userID), "user", username)
+			"user_id", textsafe.SanitizeSingleLine(userID), "user", username)
 		return
 	}
 	showKey := episode.GrandparentRatingKey
@@ -314,7 +314,7 @@ func (s *Syncer) updateEpisodeStreams(
 ) bool {
 	full, err := userClient.Episode(ctx, ratingKey)
 	if err != nil {
-		slog.Warn("failed to reload episode", "key", runesafe.SanitizeSingleLine(ratingKey.String()), "user", username, "error", err)
+		slog.Warn("failed to reload episode", "key", textsafe.SanitizeSingleLine(ratingKey.String()), "user", username, "error", err)
 		return false
 	}
 
@@ -441,10 +441,10 @@ func logAttrs(ep *streams.Episode, username, kind string, ref, matched *streams.
 		"episode", ep.ShortName(),
 		"user", username,
 		"kind", kind,
-		"from", runesafe.SanitizeSingleLine(ref.LanguageCode),
-		"to", runesafe.SanitizeSingleLine(matched.LanguageCode),
-		"from_tag", runesafe.SanitizeSingleLine(ref.LanguageTag),
-		"to_tag", runesafe.SanitizeSingleLine(matched.LanguageTag),
+		"from", textsafe.SanitizeSingleLine(ref.LanguageCode),
+		"to", textsafe.SanitizeSingleLine(matched.LanguageCode),
+		"from_tag", textsafe.SanitizeSingleLine(ref.LanguageTag),
+		"to_tag", textsafe.SanitizeSingleLine(matched.LanguageTag),
 		"match_tier", tier.String(),
 	}
 }

@@ -20,9 +20,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/plexapi/v3"
 	"pgregory.net/rapid"
 )
 
