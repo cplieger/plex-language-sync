@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/langtag/v3"
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // This file holds the allocation contracts for match.go — the two entry points

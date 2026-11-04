@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/cachecontract"
-	"github.com/cplieger/slogx/capture"
 	"pgregory.net/rapid"
 )
 
@@ -161,7 +161,7 @@ func TestCacheSaveEnforces0600Permissions(t *testing.T) {
 func TestCacheSaveRejectsBadDir(t *testing.T) {
 	t.Parallel()
 	// Parent is a regular file, so MkdirAll fails with ENOTDIR even as root;
-	// Save (via atomicfile.WriteFile with WithMkdirMode, which auto-creates
+	// Save (via filesafe.WriteFile with WithMkdirMode, which auto-creates
 	// the dir) must error.
 	f := filepath.Join(t.TempDir(), "afile")
 	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
@@ -227,18 +227,18 @@ func TestCheckWritable_rejectsReadOnlyDir(t *testing.T) {
 
 // stubProbe replaces probeWritable with one returning res; callers must not
 // be parallel.
-func stubProbe(t *testing.T, res atomicfile.ProbeResult) {
+func stubProbe(t *testing.T, res filesafe.ProbeResult) {
 	t.Helper()
 	prev := probeWritable
-	probeWritable = func(context.Context, string, ...atomicfile.Option) (atomicfile.ProbeResult, error) {
+	probeWritable = func(context.Context, string, ...filesafe.Option) (filesafe.ProbeResult, error) {
 		return res, nil
 	}
 	t.Cleanup(func() { probeWritable = prev })
 }
 
 func TestCheckWritable_teardownFailurePassesWithWarn(t *testing.T) {
-	stubProbe(t, atomicfile.ProbeResult{
-		Dir: "/config", Name: ".probe", Stage: atomicfile.ProbeStageRemove,
+	stubProbe(t, filesafe.ProbeResult{
+		Dir: "/config", Name: ".probe", Stage: filesafe.ProbeStageRemove,
 		Err: fs.ErrPermission, Leaked: true,
 	})
 	var err error
@@ -252,19 +252,19 @@ func TestCheckWritable_teardownFailurePassesWithWarn(t *testing.T) {
 }
 
 func TestCheckWritable_modeNotStoredIsReachable(t *testing.T) {
-	stubProbe(t, atomicfile.ProbeResult{
-		Dir: "/config", Stage: atomicfile.ProbeStageCreate,
-		Err: fmt.Errorf("%w: asked 0600, stored 0660", atomicfile.ErrModeNotStored),
+	stubProbe(t, filesafe.ProbeResult{
+		Dir: "/config", Stage: filesafe.ProbeStageCreate,
+		Err: fmt.Errorf("%w: asked 0600, stored 0660", filesafe.ErrModeNotStored),
 	})
 	err := CheckWritable(t.Context(), "/config")
-	if !errors.Is(err, atomicfile.ErrModeNotStored) {
+	if !errors.Is(err, filesafe.ErrModeNotStored) {
 		t.Errorf("CheckWritable on a mode-widening directory = %v, want an error matching ErrModeNotStored", err)
 	}
 }
 
 // TestCacheSaveRejectsOverCapSection pins the write-side mirror of the
 // loader's maxCacheSize bound: a section whose encoded payload exceeds the
-// cap fails Save loudly (atomicfile.ErrFileTooLarge through the per-file
+// cap fails Save loudly (filesafe.ErrFileTooLarge through the per-file
 // joined error) and leaves the previously saved file intact, instead of
 // persisting a file the next boot's bounded read would refuse — silently
 // resetting learned profiles.
@@ -288,14 +288,14 @@ func TestCacheSaveRejectsOverCapSection(t *testing.T) {
 	if err == nil {
 		t.Fatal("Save() with an over-cap section = nil, want error")
 	}
-	if !errors.Is(err, atomicfile.ErrFileTooLarge) {
-		t.Errorf("Save() error = %v, want errors.Is(..., atomicfile.ErrFileTooLarge)", err)
+	if !errors.Is(err, filesafe.ErrFileTooLarge) {
+		t.Errorf("Save() error = %v, want errors.Is(..., filesafe.ErrFileTooLarge)", err)
 	}
 	if !strings.Contains(err.Error(), profilesFile) {
 		t.Errorf("Save() error = %q, want it to name %s", err.Error(), profilesFile)
 	}
 
-	// The previous profiles.json is untouched: atomicfile rejects over-cap
+	// The previous profiles.json is untouched: filesafe rejects over-cap
 	// content before the temp file ever replaces the target.
 	loaded := &Cache{}
 	if err := loaded.Load(dir); err != nil {

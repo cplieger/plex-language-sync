@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/scheduler/v4"
-	"github.com/cplieger/slogx/capture"
 )
 
 // ---------------------------------------------------------------------------
@@ -1722,7 +1722,7 @@ func TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning(t *testing.T) {
 // Not parallel: it swaps the process-global default logger.
 func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 	const hostile = "7\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 
 	t.Run("history key", func(t *testing.T) {
 		rec := capture.Default(t)

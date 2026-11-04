@@ -3,8 +3,8 @@ package cache
 import (
 	"log/slog"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // RecordIntent stores a user's observed track selection for a show,
@@ -26,9 +26,9 @@ func (c *Cache) RecordIntent(userID, showKey string, intent *streams.Intent) {
 	}
 	c.data.Intents[userID][showKey] = intent.Clone()
 	slog.Debug("intent recorded",
-		"user", runesafe.SanitizeSingleLine(userID),
-		"show_key", runesafe.SanitizeSingleLine(showKey),
-		"audio_lang", runesafe.SanitizeSingleLine(intent.Audio.LanguageCode))
+		"user", textsafe.SanitizeSingleLine(userID),
+		"show_key", textsafe.SanitizeSingleLine(showKey),
+		"audio_lang", textsafe.SanitizeSingleLine(intent.Audio.LanguageCode))
 }
 
 // IntentFor returns the recorded intent for a (user, show) pair, deep-

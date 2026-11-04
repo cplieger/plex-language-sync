@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
 )
 
 // none is the sentinel Desc returns for a nil stream pointer. It lands
@@ -35,7 +35,7 @@ func Desc(s *Stream) string {
 		return none
 	}
 	if t := s.TitleForMatch(); t != "" {
-		return runesafe.SanitizeSingleLine(t)
+		return textsafe.SanitizeSingleLine(t)
 	}
 	return fmt.Sprintf("stream-%d", s.ID)
 }

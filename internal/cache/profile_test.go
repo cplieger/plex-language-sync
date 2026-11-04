@@ -5,16 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
 	"pgregory.net/rapid"
 )
 
 // Not parallel: it swaps the process-global default logger.
 func TestCacheLogsSanitizeLanguageCodes(t *testing.T) {
 	const hostile = "jpn\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 
 	t.Run("profile", func(t *testing.T) {
 		rec := capture.Default(t)
@@ -40,7 +40,7 @@ func TestCacheLogsSanitizeLanguageCodes(t *testing.T) {
 // Not parallel: it swaps the process-global default logger.
 func TestCacheLogsSanitizePlexIdentifiers(t *testing.T) {
 	const hostile = "7\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 
 	t.Run("profile user", func(t *testing.T) {
 		rec := capture.Default(t)

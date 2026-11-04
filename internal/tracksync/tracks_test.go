@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ func TestSyncer_HonoursConfigIgnore(t *testing.T) {
 				},
 			}
 			policy := ignore.New(ignore.Config{Reader: plx, Libraries: tc.ignoreLibs, Labels: tc.ignoreLabels})
-			ref := &streams.Episode{LibraryTitle: runesafe.NewUntrusted(tc.episodeLibrary), GrandparentRatingKey: tc.episodeShowKey}
+			ref := &streams.Episode{LibraryTitle: textsafe.NewUntrusted(tc.episodeLibrary), GrandparentRatingKey: tc.episodeShowKey}
 			if got := policy.ShouldSkipEpisode(t.Context(), ref); got != tc.want {
 				t.Errorf("policy.ShouldSkipEpisode = %v, want %v", got, tc.want)
 			}
@@ -400,7 +400,7 @@ func TestProcessNewOrUpdatedEpisodeAllUsers_ReferenceSearchedOnce(t *testing.T) 
 		},
 	}
 	s := newSyncer(Config{LanguageProfiles: false}, plx, c, lookup)
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
+	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
 	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
 
 	var showEpisodesCalls int
@@ -751,7 +751,7 @@ func refWithSelectedAudio(lang, show, parent string, season, index int) *streams
 		RatingKey:            "1",
 		GrandparentRatingKey: show,
 		ParentRatingKey:      parent,
-		GrandparentTitle:     runesafe.NewUntrusted("Show"),
+		GrandparentTitle:     textsafe.NewUntrusted("Show"),
 		ParentIndex:          streams.FlexInt(season),
 		Index:                streams.FlexInt(index),
 		Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
@@ -1309,7 +1309,7 @@ func TestLogSubstitution_levelByKindAndDistance(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := captureLogs(t)
 
-			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: runesafe.NewUntrusted("Show")}
+			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
 			logSubstitution(ep, "alice", tt.kind,
 				&streams.Stream{LanguageCode: tt.refLang},
 				&streams.Stream{LanguageCode: tt.matchLang})
@@ -1330,11 +1330,11 @@ func TestLogSubstitution_sanitizesLanguageFields(t *testing.T) {
 	rec := capture.Default(t)
 	const hostile = "nob\nlevel=ERROR \u202ex"
 
-	logSubstitution(&streams.Episode{GrandparentTitle: runesafe.NewUntrusted("Show")}, "alice", kindSubtitle,
+	logSubstitution(&streams.Episode{GrandparentTitle: textsafe.NewUntrusted("Show")}, "alice", kindSubtitle,
 		&streams.Stream{LanguageCode: hostile, LanguageTag: hostile},
 		&streams.Stream{LanguageCode: hostile, LanguageTag: hostile})
 
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 	for _, key := range []string{"from", "to", "from_tag", "to_tag"} {
 		if !rec.HasAttr("track language", key, want) {
 			t.Errorf("%s was not logged as %q; a stream's language comes from the media file and reached the log raw: %v", key, want, rec.Records())
@@ -1369,7 +1369,7 @@ func TestApplyLanguageProfile_sanitizesLanguageFieldsInLog(t *testing.T) {
 	}
 
 	for key, raw := range map[string]string{"audio_lang": hostileAudio, "subtitle_lang": hostileSub} {
-		want := runesafe.SanitizeSingleLine(raw)
+		want := textsafe.SanitizeSingleLine(raw)
 		if !rec.HasAttr("language profile applied", key, want) {
 			t.Errorf("%s was not logged as %q; a learned language comes from the media file and reached the log raw: %v", key, want, rec.Records())
 		}
@@ -1382,7 +1382,7 @@ func TestApplyLanguageProfile_sanitizesLanguageFieldsInLog(t *testing.T) {
 // Not parallel: it swaps the process-global default logger.
 func TestSyncerLogs_sanitizePlexIdentifiers(t *testing.T) {
 	const hostile = "7\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 	noClient := func(string) PlexReadWriter { return nil }
 
 	t.Run("fan-out user id", func(t *testing.T) {

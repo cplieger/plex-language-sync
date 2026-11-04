@@ -3,7 +3,7 @@ package plex
 import (
 	"context"
 
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // SharedUserTokens fetches shared user tokens from the plex.tv

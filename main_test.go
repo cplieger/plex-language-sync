@@ -55,7 +55,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/notify"
@@ -64,7 +65,6 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/slogx/capture"
 )
 
 // ---------------------------------------------------------------------------
@@ -1445,7 +1445,7 @@ func TestLogCacheUnwritable_namesTheRemedyForTheCause(t *testing.T) {
 	}{
 		{
 			name: "mode_not_stored",
-			err:  fmt.Errorf("/config: create probe file: %w", atomicfile.ErrModeNotStored),
+			err:  fmt.Errorf("/config: create probe file: %w", filesafe.ErrModeNotStored),
 			want: `msg="cache directory cannot hold owner-only files;`,
 		},
 		{

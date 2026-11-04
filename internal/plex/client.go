@@ -1,4 +1,4 @@
-// Package plex adapts the shared github.com/cplieger/plexapi/v2 client
+// Package plex adapts the shared github.com/cplieger/plexapi/v3 client
 // for plex-language-sync. Transport hardening (redirects, CA pinning,
 // retry, bounded reads) is the library's; this package owns construction
 // shapes, decode types (internal/streams), and the app-facing method
@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/cplieger/atomicfile/v4"
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // ErrNotFound is the library's 404 sentinel, re-exported so callers can
@@ -84,7 +84,7 @@ func caOptions(caCertPath string) ([]plexapi.Option, error) {
 		return nil, nil
 	}
 	const maxCACertSize = 1 << 20 // 1 MB
-	pemBytes, err := atomicfile.ReadBounded(context.Background(), caCertPath, maxCACertSize)
+	pemBytes, err := filesafe.ReadBounded(context.Background(), caCertPath, maxCACertSize)
 	if err != nil {
 		return nil, fmt.Errorf("reading PLEX_CA_CERT_PATH=%q: %w", caCertPath, err)
 	}

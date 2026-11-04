@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/httpx/v5/certtest"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpclient/certtest"
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // newClientForServer builds a Client whose requests to the Plex server go

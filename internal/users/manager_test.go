@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
 )
 
 // Verify *Manager satisfies the lookup surface its consumers declare. Spelled
@@ -868,7 +868,7 @@ func TestRefreshTokens_PrunedUserIDsSanitizedInLog(t *testing.T) {
 	if !ok {
 		t.Fatalf("no user_ids on the pruned audit line: %v", rec.Records())
 	}
-	want := []string{runesafe.SanitizeSingleLine(hostile)}
+	want := []string{textsafe.SanitizeSingleLine(hostile)}
 	if got, _ := v.Any().([]string); !slices.Equal(got, want) {
 		t.Errorf("user_ids = %q, want %q", v.Any(), want)
 	}
