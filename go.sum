@@ -24,8 +24,8 @@ github.com/cplieger/go/xmlx v1.0.0-dev.2 h1:5KZgCyZfbB73q0rxXQj/AwByLLmBir3Hi30C
 github.com/cplieger/go/xmlx v1.0.0-dev.2/go.mod h1:trImI1H9TuogwyGZHYJt1f1fskANBuZSR3A+LPdEdVY=
 github.com/cplieger/langtag/v3 v3.2.0-dev.1 h1:gXHAaMDLaJQRxiIC9cQMEsEmN9Y6g+8eMUFvkkCoHXc=
 github.com/cplieger/langtag/v3 v3.2.0-dev.1/go.mod h1:l9xswWicp31qquRod3FKzweWF0gJ06XKj/rqsNGESAQ=
-github.com/cplieger/plexapi/v3 v3.0.0-dev.1 h1:LRkFtSZsSNCXt0HWWu0Q1ac33VnUSnMB1g+HYo/LmME=
-github.com/cplieger/plexapi/v3 v3.0.0-dev.1/go.mod h1:sl0JIq1twIJ5eYVI1cyVmoagAP3mmlBdWVsljj59ClI=
+github.com/cplieger/plexapi/v3 v3.0.0-dev.2 h1:ledkQGEM7+kOE1HOMzCKZRF/Mrg+lYHQwJkeYX0pghs=
+github.com/cplieger/plexapi/v3 v3.0.0-dev.2/go.mod h1:JSb5/tD/RlMMgQefWTSJHLKtTRh0qvPjoJL5HAJjcts=
 golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
 golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
 golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
