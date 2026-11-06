@@ -28,6 +28,7 @@ type Contract interface {
 	RecordIntent(userID, key string, intent *streams.Intent)
 	IntentFor(userID, key string) (streams.Intent, bool)
 	LatestIntentFor(exceptUser string, match func(user, key string, in streams.Intent) bool) (in streams.Intent, key, fromUser string, ok bool)
+	NewestObservedAt(userID string, match func(key string) bool) int64
 	AppliedFor(userID, ratingKey string) (streams.Applied, bool)
 	RecordApplied(userID, ratingKey string, a streams.Applied)
 	ForgetApplied(userID, ratingKey string)
@@ -326,6 +327,7 @@ func latestIntentContract(t *testing.T, c Contract) {
 
 	latestEdgeContract(t, c)
 	latestMatcherContract(t, c)
+	newestObservedContract(t, c)
 }
 
 // latestEdgeContract covers an empty result and the copy on return.
@@ -400,6 +402,24 @@ func latestMatcherContract(t *testing.T, c Contract) {
 			}
 		case <-ctx.Done():
 			t.Fatal("LatestIntentFor did not return: the matcher must run with no store lock held")
+		}
+	})
+}
+
+func newestObservedContract(t *testing.T, c Contract) {
+	t.Helper()
+
+	t.Run("newest_observed_among_accepted_keys", func(t *testing.T) {
+		latestCase(c, "n1", "newest-1/a", 300, "3011")
+		latestCase(c, "n1", "newest-1/b", 700, "3012")
+		latestCase(c, "n1", "newest-2/a", 900, "3013")
+		latestCase(c, "n2", "newest-1/c", 950, "3014")
+		accept := func(key string) bool { return strings.HasPrefix(key, "newest-1/") }
+		if got := c.NewestObservedAt("n1", accept); got != 700 {
+			t.Errorf("NewestObservedAt(n1) = %d, want 700 (another key prefix and another user do not count)", got)
+		}
+		if got := c.NewestObservedAt("nobody", accept); got != 0 {
+			t.Errorf("NewestObservedAt(nobody) = %d, want 0", got)
 		}
 	})
 }

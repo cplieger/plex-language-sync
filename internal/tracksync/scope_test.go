@@ -227,3 +227,13 @@ func TestCoversKey(t *testing.T) {
 		t.Errorf("coveringKeys season = %+v, want %+v", season, want)
 	}
 }
+
+func TestKeysOfShow(t *testing.T) {
+	t.Parallel()
+	of := keysOfShow("1001")
+	for key, want := range map[string]bool{"1001": true, "1001/s2": true, "1001/s0": true, "10011": false, "10011/s2": false, "100": false, "": false} {
+		if got := of(key); got != want {
+			t.Errorf("keysOfShow(1001)(%q) = %v, want %v", key, got, want)
+		}
+	}
+}
