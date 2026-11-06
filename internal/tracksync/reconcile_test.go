@@ -414,18 +414,21 @@ func TestReconcileShowLevelUsesNewestRecord(t *testing.T) {
 func TestReconcileListFollowsKey(t *testing.T) {
 	t.Parallel()
 	s2e1, s2e2 := triAudio(2, 1), triAudio(2, 2)
+	anchored := streams.Anchor{RatingKey: s2e1.RatingKey, Season: 2, Index: 1}
 	tests := []struct {
 		name, level, key         string
+		anchor                   streams.Anchor
 		wantShowList, wantSeason int
 	}{
-		{"a season record at show level reads its season", LevelShow, "1001/s2", 0, 1},
-		{"a show record at season level reads the show", LevelSeason, obsShow, 1, 0},
+		{"a season record at show level reads its season", LevelShow, "1001/s2", anchored, 0, 1},
+		{"a show record at season level reads the show", LevelSeason, obsShow, anchored, 1, 0},
+		{"an unanchored show record at season level reads its season", LevelSeason, obsShow, streams.Anchor{}, 0, 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			l := newObserveLib(t, Config{UpdateLevel: tc.level, UpdateStrategy: StrategyAll}, s2e1, s2e2)
-			recordFor(l.cache, tc.key, "jpn", streams.Anchor{}, 1000)
+			recordFor(l.cache, tc.key, "jpn", tc.anchor, 1000)
 
 			l.reconcile(t, s2e1)
 

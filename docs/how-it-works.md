@@ -32,7 +32,7 @@ When Plex adds an episode, plex-language-sync sets its tracks for each user in t
 2. The most recent choice another user made whose range holds the episode.
 3. The language habit learned for that user, when no recorded choice covers the episode.
 
-It skips an episode for a user who played it after the app last set its tracks there. A choice the user made after that play is still applied.
+It skips an episode for a user who played it after the app last set its tracks there, or who has played it at all when the app has never set its tracks there and the tracks would come from another user or the habit. A choice the user made after that play is still applied.
 
 `TRIGGER_ON_SCAN=false` turns this off, both when Plex reports a new episode and in the daily deep scan. `TRIGGER_ON_PLAY=false` stops it reacting to playback.
 

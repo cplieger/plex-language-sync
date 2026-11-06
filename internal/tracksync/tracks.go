@@ -133,7 +133,7 @@ func (s *Syncer) Observe(ctx context.Context, userID string, played *streams.Epi
 		"trigger", trigger, "verdict", verdict.String())
 
 	// ObservedAt is the plan's basis version, so a second choice within one
-	// second must still differ from the first, or rule 1 skips its writes.
+	// second must still differ from the first, or appliedOnce skips its writes.
 	now := s.apply.now().Unix()
 	if hasIntent {
 		now = max(now, in.ObservedAt+1)
@@ -148,7 +148,7 @@ func (s *Syncer) Observe(ctx context.Context, userID string, played *streams.Epi
 			"user_id", textsafe.SanitizeSingleLine(userID), "user", username)
 		return nil
 	}
-	targets, err := s.targets(ctx, client, userID, key, anchor, played)
+	targets, err := s.targets(ctx, client, userID, key, key, anchor, played)
 	if err != nil {
 		return s.listFailed(ctx, played, username, err)
 	}
@@ -180,23 +180,24 @@ func (s *Syncer) intentFor(userID string, ep *streams.Episode) (ScopeKey, stream
 }
 
 // targets lists, through the user's client, the episodes the user's record
-// under key with anchor writes: Scope of the key, less the episodes a newer
-// record of the user governs. ep is an episode of the key's season, whose
+// under key with anchor writes: Scope of cover, less the episodes another
+// record of the user governs. cover is key, or the season a legacy show
+// record covers (see Reconcile). ep is an episode of cover's season, whose
 // season list a season key reads.
 func (s *Syncer) targets(ctx context.Context, client PlexReadWriter, userID string,
-	key ScopeKey, anchor streams.Anchor, ep *streams.Episode,
+	key, cover ScopeKey, anchor streams.Anchor, ep *streams.Episode,
 ) ([]streams.Episode, error) {
 	var list []streams.Episode
 	var err error
-	if key.Season == showSeason {
-		list, err = client.ShowEpisodes(ctx, plex.RatingKey(key.Show))
+	if cover.Season == showSeason {
+		list, err = client.ShowEpisodes(ctx, plex.RatingKey(cover.Show))
 	} else {
 		list, err = client.SeasonEpisodes(ctx, plex.RatingKey(ep.ParentRatingKey))
 	}
 	if err != nil {
 		return nil, err
 	}
-	scoped := Scope(key, s.cfg.UpdateStrategy, anchor, list)
+	scoped := Scope(cover, s.cfg.UpdateStrategy, anchor, list)
 	out := scoped[:0]
 	for i := range scoped {
 		if governing, _, ok := s.intentFor(userID, &scoped[i]); ok && governing == key {
@@ -272,11 +273,16 @@ func (s *Syncer) Reconcile(ctx context.Context, userID string, ep *streams.Episo
 		return nil
 	}
 	ref := in.RefStreams()
-	anchor := in.Anchor
+	anchor, cover := in.Anchor, key
 	if anchor.IsZero() {
 		anchor = streams.AnchorOf(ep, ref)
+		// Older versions kept no anchor and stored every choice under the
+		// show key, applying it at UPDATE_LEVEL=season to one season only.
+		if key.Season == showSeason {
+			cover = scopeKeyFor(s.cfg.UpdateLevel, ep)
+		}
 	}
-	targets, err := s.targets(ctx, client, userID, key, anchor, ep)
+	targets, err := s.targets(ctx, client, userID, key, cover, anchor, ep)
 	if err != nil {
 		return s.listFailed(ctx, ep, username, err)
 	}

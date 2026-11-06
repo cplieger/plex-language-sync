@@ -94,3 +94,20 @@ func TestLevelSwitchShowChoiceCoversEverySeason(t *testing.T) {
 		t.Errorf("season choice after an unchanged play = %+v, want it unchanged", got)
 	}
 }
+
+// Older versions stored every choice under the show key, and at
+// UPDATE_LEVEL=season applied it to the replayed episode's season only. Such a
+// record has no anchor, and its replay keeps that season.
+func TestLegacyShowRecordAtSeasonLevelKeepsItsSeason(t *testing.T) {
+	t.Parallel()
+	s1e1, s1e2, s2e1, s2e2 := seedEp(1, 1), seedEp(1, 2), seedEp(2, 1), seedEp(2, 2)
+	cfg := Config{UpdateLevel: LevelSeason, UpdateStrategy: StrategyAll, SeedNewEpisodes: true}
+	l := newSeedLib(t, cfg, []string{"alice"}, s1e1, s1e2, s2e1, s2e2)
+	fra := obsAud(0, "fra", "")
+	l.cache.RecordIntent("alice", obsShow, streams.NewIntent(streams.Pair{Audio: &fra}, streams.Anchor{}, 500))
+
+	l.reconcile(t, "alice", &s2e1)
+	if got, want := l.writes("alice", 0), []fakeapi.Write{audioWrite(&s2e1, "fra"), audioWrite(&s2e2, "fra")}; !slices.Equal(got, want) {
+		t.Errorf("writes = %+v, want season 2 only %+v", got, want)
+	}
+}

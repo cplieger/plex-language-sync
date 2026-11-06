@@ -32,7 +32,7 @@ type plan struct {
 	ref        streams.Pair // the choice's own streams for the substitution log; zero for a profile seed
 	targets    []streams.Episode
 	basis      streams.Basis
-	observedAt int64 // the intent's ObservedAt; 0 for a seed
+	observedAt int64 // the intent's ObservedAt; 0 for a household or profile seed
 	userList   bool  // targets came from the user's own list, so their LastViewedAt is the user's
 }
 

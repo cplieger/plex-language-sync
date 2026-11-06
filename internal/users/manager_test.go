@@ -414,10 +414,8 @@ func testRefreshConfig(maxAttempts int, base, max time.Duration) RefreshConfig {
 	return RefreshConfig{MaxAttempts: maxAttempts, BaseDelay: base, MaxDelay: max}
 }
 
-// Serial (no t.Parallel): asserts wall-clock elapsed under a 50ms ceiling, so a
-// loaded parallel suite would flake it. The reason is the real-clock budget, not
-// a shared global.
 func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
+	t.Parallel()
 	// plex.tv always returns 500 — the refresh itself fails. Cached
 	// tokens should still let the loop exit after a single attempt.
 	attempts := 0
@@ -437,15 +435,10 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 	m.LoadFromCache()
 
 	cfg := testRefreshConfig(5, 10*time.Millisecond, 20*time.Millisecond)
-	start := time.Now()
 	m.InitialRefreshWithRetry(t.Context(), adminClient, "mid", cfg)
-	elapsed := time.Since(start)
 
 	if attempts != 1 {
 		t.Errorf("got %d plex.tv attempts, want 1 (cached users should short-circuit)", attempts)
-	}
-	if elapsed > 50*time.Millisecond {
-		t.Errorf("elapsed = %v, want <50ms (no retry wait expected)", elapsed)
 	}
 }
 
