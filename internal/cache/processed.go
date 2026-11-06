@@ -35,7 +35,7 @@ func (c *Cache) recordProcessedLocked(key string) {
 		c.pruneOldEntriesLocked()
 		// The 24h prune above is decoupled from the 5-minute dedup window: a
 		// burst of >maxProcessedEntries distinct keys within 24h (e.g. a large
-		// library deep-analysis pass writing one scheduler:/streams: key per
+		// library deep-analysis pass writing one scheduler: key per
 		// episode) leaves the map over the cap with nothing to remove. Any entry
 		// older than recentlyProcessedWindow is already dead for dedup
 		// (WasRecentlyProcessed/CheckAndMark treat it as not-recent), so dropping

@@ -1,22 +1,18 @@
-// Package cache is the on-disk persistence layer for processed-episode
-// deduplication, per-user language profiles, and shared-user tokens.
+// Package cache persists dedup keys, per-user language profiles and intents,
+// the record of what the app applied, and shared-user tokens.
 //
-// On-disk layout: state is split across three files in the cache dir by
-// retention class, so one corrupt file never costs another class's state:
+// State is split across three files by retention class, so one corrupt file
+// never costs another class's state:
 //
-//	profiles.json  language_profiles  irreplaceable learned state
-//	tokens.json    user_tokens        re-fetchable encrypted secrets
-//	state.json     processed_episodes disposable operational state
+//	profiles.json  language_profiles, intents  irreplaceable learned state
+//	tokens.json    user_tokens                 re-fetchable encrypted secrets
+//	state.json     processed_episodes, applied disposable operational state
 //
-// Field names, types, and JSON tags within each file are an inviolate
-// read-forward / write-back contract across deploys — any change is a
-// migration, not a refactor. A pre-split /config/cache.json (the legacy
-// union schema, see cacheData) is migrated automatically on first load: its
-// sections seed anything a split file does not yet cover, the split files
-// are then written eagerly, and the legacy file is removed once all three
-// split files exist on disk. Per-section precedence is
-// split-file > legacy > fresh, so a partially failed migration can never
-// lose a section that either source still holds.
+// Field names, types and JSON tags are a contract across deploys: fields are
+// additive, and renaming or retyping one is a migration. A legacy cache.json
+// (the union schema, see cacheData) is migrated on first load with per-section
+// precedence split-file > legacy > fresh, so a partly failed migration never
+// loses a section either source still holds.
 package cache
 
 import (
@@ -56,10 +52,10 @@ const (
 type cacheData struct {
 	// ProcessedEpisodes tracks recently processed episode keys to avoid
 	// re-processing the same episode on rapid successive events.
-	// Keys carry a subsystem prefix from keys.go:
-	// "streams:{userID}:{ratingKey}:{audioID}:{subID}" (play events),
-	// "timeline:{itemID}" (library scans), and "scheduler:{ratingKey}"
-	// (deep-analysis runs). Persisted in state.json.
+	// Keys carry a subsystem prefix from keys.go: "timeline:{itemID}"
+	// (library scans) and "scheduler:{ratingKey}" (deep-analysis runs). A
+	// file from an older build also holds "streams:" keys, which nothing
+	// reads and the 24h prune drops. Persisted in state.json.
 	ProcessedEpisodes map[string]int64 `json:"processed_episodes"`
 	// LanguageProfiles maps userID → audioLang → subtitleLang.
 	// Empty subtitle string means "no subtitles" for that audio language.
@@ -70,6 +66,10 @@ type cacheData struct {
 	// profiles.json; absent from the legacy union schema (pre-intent
 	// versions), so legacy migration leaves it empty.
 	Intents map[string]map[string]streams.Intent `json:"intents,omitempty"`
+	// Applied maps userID → episode ratingKey → what the app last left on
+	// that episode for that user. Persisted in state.json; absent from the
+	// legacy union schema, so legacy migration leaves it empty.
+	Applied map[string]map[string]streams.Applied `json:"applied,omitempty"`
 	// UserTokens maps userID → accessToken for shared users. Persisted in
 	// tokens.json, encrypted at the disk boundary when a key is set.
 	UserTokens map[string]string `json:"user_tokens"`
@@ -88,7 +88,8 @@ type tokensData struct {
 
 // stateData is the state.json schema (disposable operational state).
 type stateData struct {
-	ProcessedEpisodes map[string]int64 `json:"processed_episodes"`
+	ProcessedEpisodes map[string]int64                      `json:"processed_episodes"`
+	Applied           map[string]map[string]streams.Applied `json:"applied,omitempty"`
 }
 
 // Cache is the concurrent-safe persistent cache. The zero value is usable;
@@ -104,13 +105,17 @@ type Cache struct {
 // preferred construction point for application code because it documents
 // intent.
 func New() *Cache {
-	return &Cache{
-		data: cacheData{
-			ProcessedEpisodes: make(map[string]int64),
-			LanguageProfiles:  make(map[string]map[string]string),
-			Intents:           make(map[string]map[string]streams.Intent),
-			UserTokens:        make(map[string]string),
-		},
+	return &Cache{data: freshData()}
+}
+
+// freshData returns an empty cacheData with every map initialized.
+func freshData() cacheData {
+	return cacheData{
+		ProcessedEpisodes: make(map[string]int64),
+		LanguageProfiles:  make(map[string]map[string]string),
+		Intents:           make(map[string]map[string]streams.Intent),
+		Applied:           make(map[string]map[string]streams.Applied),
+		UserTokens:        make(map[string]string),
 	}
 }
 
@@ -173,12 +178,7 @@ func (c *Cache) Load(dir string) error {
 func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.data = cacheData{
-		ProcessedEpisodes: make(map[string]int64),
-		LanguageProfiles:  make(map[string]map[string]string),
-		Intents:           make(map[string]map[string]streams.Intent),
-		UserTokens:        make(map[string]string),
-	}
+	c.data = freshData()
 
 	var errs []error
 
@@ -214,6 +214,7 @@ func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 		"dir", dir,
 		"processed_episodes", len(c.data.ProcessedEpisodes),
 		"language_profiles", len(c.data.LanguageProfiles),
+		"applied", appliedCount(c.data.Applied),
 		"user_tokens", len(c.data.UserTokens))
 	return legacyOK && splitPresent < 3, errors.Join(errs...)
 }
@@ -301,7 +302,7 @@ func (c *Cache) overlayStateLocked(dir string, errs *[]error) int {
 		return 0
 	}
 	if err != nil {
-		slog.Warn("cache: state file unreadable or corrupt; dedup keys and scheduler marker reset",
+		slog.Warn("cache: state file unreadable or corrupt; dedup keys, applied records and scheduler marker reset",
 			"file", stateFile, "error", err)
 		*errs = append(*errs, err)
 		return 1
@@ -309,6 +310,10 @@ func (c *Cache) overlayStateLocked(dir string, errs *[]error) int {
 	c.data.ProcessedEpisodes = sd.ProcessedEpisodes
 	if c.data.ProcessedEpisodes == nil {
 		c.data.ProcessedEpisodes = make(map[string]int64)
+	}
+	c.data.Applied = sd.Applied
+	if c.data.Applied == nil {
+		c.data.Applied = make(map[string]map[string]streams.Applied)
 	}
 	return 1
 }
@@ -463,6 +468,7 @@ func (c *Cache) encodeAllForSave() (profiles, tokens, state []byte, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pruneOldEntriesLocked()
+	evictOldestApplied(c.data.Applied, maxAppliedEntries)
 
 	// Encrypt user tokens for the on-disk copy without mutating in-memory
 	// state. A nil map stays nil so tokens.json keeps the frozen
@@ -491,6 +497,7 @@ func (c *Cache) encodeAllForSave() (profiles, tokens, state []byte, err error) {
 	}
 	if state, err = json.MarshalIndent(&stateData{
 		ProcessedEpisodes: c.data.ProcessedEpisodes,
+		Applied:           c.data.Applied,
 	}, "", "  "); err != nil {
 		return nil, nil, nil, fmt.Errorf("marshal %s: %w", stateFile, err)
 	}

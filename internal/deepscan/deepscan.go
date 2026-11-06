@@ -99,14 +99,14 @@ func (s *Scheduler) workerCount() int {
 type Deps struct {
 	// Plex reads history and library metadata for the sweep.
 	Plex plexReader
-	// Cache holds the dedup keys and the recorded intents the pass re-applies.
+	// Cache holds the dedup keys that keep an added episode from being seeded twice.
 	Cache runLedger
 	// Stamp is the persisted last-run record: it gates the startup pass and
 	// anchors the replay look-back window.
 	Stamp *scheduler.Stamp
-	// UserClient returns the per-user write client for a username.
+	// UserClient returns the per-user episode reader for a userID.
 	UserClient userClientFunc
-	// Sync applies the recorded intent to an episode.
+	// Sync replays recorded choices and seeds added episodes.
 	Sync syncer
 	// SaveCache flushes the cache to disk. May be nil in tests that do not
 	// exercise the disk-flush path.
@@ -250,16 +250,10 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 		"marker_advanced", complete)
 }
 
-// processRecentHistory reconciles the last window of play history:
-// for each replayed item the sync layer re-applies the user's RECORDED
-// intent (or skips — see ReconcileWithIntent); the replay never derives
-// a user's choice from the episode's current selection state.
-//
-// Fans out per-item work across a bounded worker pool
-// (deepAnalysisConcurrency workers), sharing the circuit-breaker
-// threshold (maxConsecutiveErrors) via an atomic counter. Successful
-// items reset the counter; once the threshold is reached, every worker
-// returns promptly without processing additional items.
+// processRecentHistory hands each item of the last window of play history
+// to the Syncer's Reconcile, across deepAnalysisConcurrency workers. The
+// workers share the maxConsecutiveErrors breaker through an atomic counter
+// that a success resets; once it trips, every worker stops processing.
 func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) bool {
 	history, err := s.plex.History(ctx, sinceUnix)
 	if err != nil {
@@ -352,12 +346,10 @@ func (s *Scheduler) feedHistory(ctx context.Context, work chan<- plex.HistoryIte
 	return true
 }
 
-// processHistoryItem runs a single history-replay reconciliation: fetch
-// the per-user episode (to resolve its show and pass the ignore gate)
-// and delegate to the Syncer's ReconcileWithIntent, which re-applies the
-// user's recorded intent — or skips when none exists or the play is
-// newer than the observation. Success resets the shared error counter;
-// a fetch failure increments it.
+// processHistoryItem replays one history item: it fetches the episode
+// through the user's client, to resolve its show and season, and hands it
+// to the Syncer's Reconcile. Success resets the shared error counter; a
+// fetch failure increments it.
 func (s *Scheduler) processHistoryItem(
 	ctx context.Context,
 	item plex.HistoryItem,
@@ -385,13 +377,22 @@ func (s *Scheduler) processHistoryItem(
 		return
 	}
 	consecutiveErrors.Store(0)
-	s.sync.ReconcileWithIntent(ctx, userID, ep, int64(item.ViewedAt), "scheduler")
+	// Reconcile fails only when ctx ends, which the pass already reports as
+	// incomplete.
+	if err := s.sync.Reconcile(ctx, userID, ep, "scheduler"); err != nil {
+		slog.Debug("scheduler: history replay stopped", "user", userID, "error", err)
+	}
 }
 
 // processRecentlyAdded applies language settings to recently added
-// episodes for all users. Fans episodes out across a bounded worker
-// pool (see processRecentHistory for the rationale).
+// episodes for all users. Fans episodes out across the same bounded
+// worker pool as processRecentHistory. With seeding off it
+// fetches nothing and reports the sweep complete.
 func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) bool {
+	if !s.sync.SeedsNewEpisodes() {
+		slog.Debug("scheduler: seeding new episodes is off, skipping recently added episodes")
+		return true
+	}
 	sections, err := s.plex.ShowSections(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -483,14 +484,8 @@ func feedEpisodes(ctx context.Context, work chan<- streams.Episode, episodes []s
 	return true
 }
 
-// processRecentlyAddedEpisode handles a single recently-added episode
-// for all users. Fetches the episode's full metadata once via the
-// admin reader, then delegates to ProcessNewOrUpdatedEpisodeAllUsers,
-// which runs a single reference search shared across every user
-// followed by a per-user write path. Plex returns identical metadata
-// regardless of token (verified 2026-04-26 against live API + Tautulli
-// playback history), so the read side is token-independent and writes
-// use the per-user client.
+// processRecentlyAddedEpisode seeds one recently added episode for every
+// user, from the admin reader's copy of it.
 func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams.Episode) {
 	full, fetchErr := s.plex.Episode(ctx, plex.RatingKey(ep.RatingKey))
 	if fetchErr != nil {
@@ -504,14 +499,8 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 		return
 	}
 
-	// Mark the dedup key only after a successful fetch + ignore-check.
-	// A transient Episode() failure above therefore leaves the key
-	// unmarked, so the next scheduler pass retries immediately instead of
-	// suppressing the episode for the ~5-minute dedup window. CheckAndMark
-	// stays the atomic guard that lets exactly one worker reach
-	// ProcessNewOrUpdatedEpisodeAllUsers, so moving it here costs at most a
-	// redundant idempotent fetch if the same RatingKey is enqueued twice
-	// within the recently-added sweep — never a double write.
+	// Marked only after the fetch and the ignore check, so a failed fetch is
+	// retried on the next pass; CheckAndMark lets one worker through.
 	cacheKey := cache.KeyPrefixScheduler + ep.RatingKey
 	if !s.cache.CheckAndMark(cacheKey) {
 		return
@@ -520,5 +509,5 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 	slog.Info("scheduler: processing recently added episode",
 		"episode", ep.ShortName())
 
-	s.sync.ProcessNewOrUpdatedEpisodeAllUsers(ctx, full, "scheduler")
+	s.sync.SeedEpisode(ctx, full, "scheduler")
 }

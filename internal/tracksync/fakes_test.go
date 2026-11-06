@@ -1,6 +1,12 @@
 package tracksync
 
-import "github.com/cplieger/plex-language-sync/internal/users"
+import (
+	"context"
+
+	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/users"
+	"github.com/cplieger/plexapi/v3"
+)
 
 // fakeUsers is the userLookup fake. It lives in this package's test files
 // rather than in internal/testsupport because this is its only consumer, and a
@@ -32,3 +38,41 @@ func (u *fakeUsers) Name(userID string) string {
 }
 
 var _ userLookup = (*fakeUsers)(nil)
+
+// cancellingClient cancels its context on the first write of kind on
+// ("audio" or "subtitle"). With fail set, that write then fails with the
+// context's error, as a request the cancellation ended does; otherwise the
+// fake accepts it.
+type cancellingClient struct {
+	*fakeapi.Plex
+	cancel context.CancelFunc
+	on     string
+	fail   bool
+}
+
+func (c *cancellingClient) SetAudioStream(ctx context.Context, sel plexapi.StreamSelection) error {
+	if err := c.cancelOn(ctx, "audio"); err != nil {
+		return err
+	}
+	return c.Plex.SetAudioStream(ctx, sel)
+}
+
+func (c *cancellingClient) SetSubtitleStream(ctx context.Context, sel plexapi.StreamSelection) error {
+	if err := c.cancelOn(ctx, "subtitle"); err != nil {
+		return err
+	}
+	return c.Plex.SetSubtitleStream(ctx, sel)
+}
+
+func (c *cancellingClient) cancelOn(ctx context.Context, kind string) error {
+	if kind != c.on {
+		return nil
+	}
+	c.cancel()
+	if c.fail {
+		return ctx.Err()
+	}
+	return nil
+}
+
+var _ PlexReadWriter = (*cancellingClient)(nil)

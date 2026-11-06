@@ -4,24 +4,8 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/go/textsafe"
-	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
-
-// profileKey canonicalizes a language code for use as a profile-map key, so
-// that the several published spellings of one language stop fragmenting into
-// separate entries: nor, nob, no and nb all key on "no". Applied on both the
-// read and the write path, which is what lets an existing profiles.json keep
-// resolving without a migration step.
-//
-// An unparseable code is returned unchanged rather than dropped, so a legacy
-// entry written under a code this build cannot parse stays reachable.
-func profileKey(lang string) string {
-	if t, ok := langtag.Parse(lang); ok {
-		return t.Language()
-	}
-	return lang
-}
 
 // LearnLanguageProfile records a user's audio→subtitle language preference.
 // An empty choice.Audio is treated as "unknown" and ignored — this prevents
@@ -32,7 +16,7 @@ func (c *Cache) LearnLanguageProfile(userID string, choice streams.LanguageChoic
 	if audioLang == "" {
 		return
 	}
-	audioLang = profileKey(audioLang)
+	audioLang = streams.ProfileKey(audioLang)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.data.LanguageProfiles == nil {
@@ -48,7 +32,7 @@ func (c *Cache) LearnLanguageProfile(userID string, choice streams.LanguageChoic
 	// the one that arrives next. Sweeping the user's own entries is cheap: the
 	// map holds one entry per language the user has watched.
 	for key := range c.data.LanguageProfiles[userID] {
-		if key != audioLang && profileKey(key) == audioLang {
+		if key != audioLang && streams.ProfileKey(key) == audioLang {
 			delete(c.data.LanguageProfiles[userID], key)
 		}
 	}
@@ -77,7 +61,7 @@ func (c *Cache) SubtitleLangForAudio(userID, audioLang string) (string, bool) {
 	// The canonical key is authoritative, because that is what the write path
 	// records. Checking the raw spelling first would let a legacy entry shadow
 	// every value written after the upgrade.
-	if lang, found := userProfiles[profileKey(audioLang)]; found {
+	if lang, found := userProfiles[streams.ProfileKey(audioLang)]; found {
 		return lang, true
 	}
 	// Then the spelling as given, which is how an entry written by an older

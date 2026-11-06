@@ -40,10 +40,8 @@ func Desc(s *Stream) string {
 	return fmt.Sprintf("stream-%d", s.ID)
 }
 
-// ID returns s.ID or 0 when s is nil. Used to build stable dedup keys
-// from a (possibly absent) current audio/subtitle selection. The return
-// stays int — plexapi widened Stream.ID to FlexInt, and narrowing here
-// is what keeps the persisted dedup key byte-identical.
+// ID returns s.ID, or 0 when s is nil: the id an Applied record stores for
+// an absent selection.
 func ID(s *Stream) int {
 	if s == nil {
 		return 0

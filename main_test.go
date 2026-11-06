@@ -1,37 +1,8 @@
-// main_test.go holds tests for the composition-root concerns that
-// remain in the main package after the cycle-1 extraction:
-//
-//   - Configuration loading (loadConfig + env helpers).
-//   - Validation helpers (splitTrim, requireEnv with _FILE secret
-//     handling via envx.Secret) and the scheduler
-//     interval parser (loadSchedulerInterval).
-//   - notifyAdapter trigger-gate behaviour (the dispatch guards that
-//     live alongside the WS listener).
-//
-// Composition-root wiring is verified indirectly: run() is the wiring
-// layer, and every collaborator it assembles (users.Manager, cache,
-// scheduler, syncer, notify listener) has its own test suite under
-// internal/*. There is no dedicated TestRun because every branch of
-// run() is either startup plumbing (plex connectivity, env loading
-// already covered here) or a fan-out into an already-tested
-// subsystem.
-//
-// Business-logic tests that used to live here moved out:
-//
-//   - Track-sync / language-profile / stream-apply / episode-ref
-//     tests → internal/tracksync/tracks_test.go.
-//   - Scheduler worker-pool / dedup / circuit-breaker tests →
-//     internal/deepscan/deepscan_test.go.
-//   - User-manager tests → internal/users/manager_test.go (since
-//     cycle-1 step 6).
-//   - WebSocket listener tests → internal/notify/*_test.go (since
-//     cycle-1 step 5).
-//   - Plex HTTP client tests → internal/plex/client_test.go (since
-//     cycle-1 step 3).
-//   - Stream-selection helpers → internal/streams/*_test.go (since
-//     cycle-1 step 2).
-//   - Cache persistence tests → internal/cache/cache_test.go (since
-//     cycle-1 step 4).
+// The main package's tests cover what only the composition root owns:
+// configuration loading and its env helpers, the scheduler interval
+// parser, and the notifyAdapter's trigger gates and play dispatch. Every
+// collaborator run() wires has its own suite under internal/, so there is
+// no TestRun.
 
 package main
 
@@ -48,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,6 +31,7 @@ import (
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
@@ -564,15 +537,21 @@ func TestLoadConfigTrimsFileSecrets(t *testing.T) {
 // ---------------------------------------------------------------------------
 // notifyAdapter trigger gates
 //
-// The adapter's OnPlay / OnTimeline paths short-circuit when the
-// corresponding trigger flag is disabled, and pass through when
-// enabled. Deeper dispatch behaviour is exercised by the integration
-// tests in internal/notify; this suite pins the trigger-gate
-// short-circuit so the composition root retains the same dispatch
-// surface the pre-extraction handleNotification enforced.
+// OnPlay short-circuits when TRIGGER_ON_PLAY is off, and OnTimeline when
+// the syncer's seeding switch is. The play tests below drive a whole play
+// through a fake Plex server, since the adapter holds no dedup of its own.
 // ---------------------------------------------------------------------------
 
-func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) *notifyAdapter {
+// newTimelineSyncer is a syncer over client with seeding set to seed and no
+// per-user clients.
+func newTimelineSyncer(client *plex.Client, c *cache.Cache, mgr *users.Manager, seed bool) *tracksync.Syncer {
+	return tracksync.New(tracksync.Config{SeedNewEpisodes: seed}, tracksync.Deps{
+		Cache: c, Users: mgr,
+		UserClient: func(string) tracksync.PlexReadWriter { return nil },
+	})
+}
+
+func newTestAdapter(t *testing.T, triggerOnPlay, seed bool) *notifyAdapter {
 	t.Helper()
 	parsed, _ := url.Parse("http://example.test")
 	c := cache.New()
@@ -580,8 +559,8 @@ func newTestAdapter(t *testing.T, triggerOnPlay, triggerOnScan bool) *notifyAdap
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	return &notifyAdapter{
-		syncer: nil, // unused on the gated-off paths
-		cfg:    &config{triggerOnPlay: triggerOnPlay, triggerOnScan: triggerOnScan},
+		syncer: newTimelineSyncer(client, c, mgr, seed),
+		cfg:    &config{triggerOnPlay: triggerOnPlay},
 		users:  mgr,
 		client: client,
 		cache:  c,
@@ -599,12 +578,168 @@ func TestResolvePlayEventUser_noClientIdentifier_failsClosed(t *testing.T) {
 	}
 }
 
-// NOTE: deep-dispatch tests for notifyAdapter.handlePlayEvent and
-// handleTimeline (fetching episodes, dedup, ignored libraries, ignored
-// shows, session resolution) live in internal/tracksync and internal/notify
-// now — the per-feature logic moved out of the main package in
-// cycle-1 steps 5 and 7. What remains here is the trigger-gate
-// behaviour, which is a composition-root concern.
+// playServer is a Plex server for one admin user "1" playing on client
+// "mac-A": a show 1001 whose episodes hold one Japanese and one English
+// audio stream each, the user's selection per part changed by PUTs.
+type playServer struct {
+	selected map[int]int // part id -> selected audio stream id
+	mu       sync.Mutex
+	lists    int // allLeaves reads
+	puts     int
+}
+
+// playEpisodes are the show's episodes: rating key, part, Japanese audio
+// id and English audio id.
+var playEpisodes = []struct {
+	rk         string
+	part       int
+	jpn, eng   int
+	initialEng bool
+}{
+	{rk: "2001", part: 5001, jpn: 9001, eng: 9002},
+	{rk: "2002", part: 5002, jpn: 9011, eng: 9012, initialEng: true},
+}
+
+func newPlayServer(t *testing.T) (*playServer, *plex.Client) {
+	t.Helper()
+	ps := &playServer{selected: map[int]int{}}
+	for _, e := range playEpisodes {
+		ps.selected[e.part] = e.jpn
+		if e.initialEng {
+			ps.selected[e.part] = e.eng
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(ps.serve))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+	return ps, plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
+}
+
+func (ps *playServer) serve(w http.ResponseWriter, r *http.Request) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.URL.Path == "/status/sessions":
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[` +
+			`{"User":{"id":"1","title":"admin"},"Player":{"machineIdentifier":"mac-A"}}]}}`))
+	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/library/parts/"):
+		ps.puts++
+		part, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/library/parts/"))
+		if id, err := strconv.Atoi(r.URL.Query().Get("audioStreamID")); err == nil {
+			ps.selected[part] = id
+		}
+	case r.URL.Path == "/library/metadata/1001/allLeaves":
+		ps.lists++
+		ps.writeEpisodes(w, "")
+	case strings.HasPrefix(r.URL.Path, "/library/metadata/"):
+		ps.writeEpisodes(w, strings.TrimPrefix(r.URL.Path, "/library/metadata/"))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// writeEpisodes answers with the episode rk, or every episode when rk is empty.
+func (ps *playServer) writeEpisodes(w http.ResponseWriter, rk string) {
+	var items []string
+	for i, e := range playEpisodes {
+		if rk != "" && rk != e.rk {
+			continue
+		}
+		stream := func(id int, lang string) string {
+			sel := ""
+			if ps.selected[e.part] == id {
+				sel = `,"selected":true`
+			}
+			return fmt.Sprintf(`{"id":%d,"streamType":2,"languageCode":%q%s}`, id, lang, sel)
+		}
+		items = append(items, fmt.Sprintf(`{"ratingKey":%q,"parentRatingKey":"3001","grandparentRatingKey":"1001",`+
+			`"grandparentTitle":"Example Show","type":"episode","parentIndex":1,"index":%d,`+
+			`"Media":[{"Part":[{"id":%d,"Stream":[%s,%s]}]}]}`,
+			e.rk, i+1, e.part, stream(e.jpn, "jpn"), stream(e.eng, "eng")))
+	}
+	_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[` + strings.Join(items, ",") + `]}}`))
+}
+
+// selectOn is the user picking audio id on part in a player.
+func (ps *playServer) selectOn(part, id int) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.selected[part] = id
+}
+
+func (ps *playServer) counts() (lists, puts int) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.lists, ps.puts
+}
+
+func (ps *playServer) audioOn(part int) int {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.selected[part]
+}
+
+func newPlayAdapter(t *testing.T, client *plex.Client) (*notifyAdapter, *cache.Cache) {
+	t.Helper()
+	c := cache.New()
+	mgr := users.NewManager(c)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
+	syncer := tracksync.New(
+		tracksync.Config{UpdateLevel: tracksync.LevelShow, UpdateStrategy: tracksync.StrategyAll},
+		tracksync.Deps{
+			Cache: c, Users: mgr,
+			UserClient: func(string) tracksync.PlexReadWriter { return client },
+		},
+	)
+	return &notifyAdapter{
+		syncer: syncer,
+		cfg:    &config{triggerOnPlay: true},
+		users:  mgr,
+		client: client,
+		cache:  c,
+	}, c
+}
+
+var playOfFirst = notify.PlayEvent{State: "playing", RatingKey: "2001", ClientIdentifier: "mac-A"}
+
+func TestPlayEventReannouncementWritesOnce(t *testing.T) {
+	ps, client := newPlayServer(t)
+	adapter, _ := newPlayAdapter(t, client)
+
+	for range 3 {
+		adapter.OnPlay(t.Context(), playOfFirst)
+	}
+
+	lists, puts := ps.counts()
+	if lists != 1 || puts != 1 {
+		t.Errorf("three announcements of one play listed the show %d times and wrote %d streams, want 1 and 1 (the Japanese audio on the second episode)", lists, puts)
+	}
+	if got := ps.audioOn(5002); got != 9011 {
+		t.Errorf("second episode audio = %d, want 9011 (Japanese)", got)
+	}
+}
+
+func TestPlayEventSwitchBackPropagates(t *testing.T) {
+	ps, client := newPlayServer(t)
+	adapter, c := newPlayAdapter(t, client)
+
+	adapter.OnPlay(t.Context(), playOfFirst)
+	ps.selectOn(5001, 9002)
+	adapter.OnPlay(t.Context(), playOfFirst)
+	if got := ps.audioOn(5002); got != 9012 {
+		t.Fatalf("second episode audio after the switch to English = %d, want 9012", got)
+	}
+	ps.selectOn(5001, 9001)
+	adapter.OnPlay(t.Context(), playOfFirst)
+
+	if got := ps.audioOn(5002); got != 9011 {
+		t.Errorf("second episode audio after switching back = %d, want 9011 (Japanese)", got)
+	}
+	if in, ok := c.IntentFor("1", "1001"); !ok || in.Audio.LanguageCode != "jpn" {
+		t.Errorf("recorded choice = %+v (found %v), want Japanese", in.Audio, ok)
+	}
+}
 
 func TestWaitForBackgroundLoops_bothLoopsDone_returnsBeforeBudget(t *testing.T) {
 	t.Parallel()
@@ -698,14 +833,16 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base, _ := url.Parse(srv.URL)
 
-	build := func(play, scan bool) *notifyAdapter {
+	build := func(play, seed bool) *notifyAdapter {
 		c := cache.New()
 		mgr := users.NewManager(c)
 		mgr.Init(&plex.User{ID: "1", Name: "admin"})
+		client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 		return &notifyAdapter{
-			cfg:    &config{triggerOnPlay: play, triggerOnScan: scan},
+			syncer: newTimelineSyncer(client, c, mgr, seed),
+			cfg:    &config{triggerOnPlay: play},
 			users:  mgr,
-			client: plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
+			client: client,
 			cache:  c,
 		}
 	}
@@ -751,10 +888,12 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 	c := cache.New()
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
+	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	adapter := &notifyAdapter{
-		cfg:    &config{triggerOnScan: true},
+		syncer: newTimelineSyncer(client, c, mgr, true),
+		cfg:    &config{},
 		users:  mgr,
-		client: plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()}),
+		client: client,
 		cache:  c,
 	}
 
@@ -821,10 +960,10 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) tracksync.PlexReadWriter { return nil }})
+	syncer := newTimelineSyncer(client, c, mgr, true)
 	adapter := &notifyAdapter{
 		syncer: syncer,
-		cfg:    &config{triggerOnScan: true},
+		cfg:    &config{},
 		users:  mgr,
 		client: client,
 		cache:  c,
@@ -860,10 +999,10 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) tracksync.PlexReadWriter { return nil }})
+	syncer := newTimelineSyncer(client, c, mgr, true)
 	adapter := &notifyAdapter{
 		syncer: syncer,
-		cfg:    &config{triggerOnScan: true},
+		cfg:    &config{},
 		users:  mgr,
 		client: client,
 		cache:  c,
@@ -896,10 +1035,10 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := tracksync.New(tracksync.Config{}, tracksync.Deps{Plex: client, Cache: c, Users: mgr, UserClient: func(string) tracksync.PlexReadWriter { return nil }})
+	syncer := newTimelineSyncer(client, c, mgr, true)
 	adapter := &notifyAdapter{
 		syncer: syncer,
-		cfg:    &config{triggerOnScan: true},
+		cfg:    &config{},
 		users:  mgr,
 		client: client,
 		cache:  c,
@@ -914,7 +1053,134 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 
 	adapter.OnTimeline(t.Context(), entries)
 	if hits.Load() != first {
-		t.Errorf("re-fired timeline event for an already-processed ItemID hit Plex again (%d -> %d); the WasRecentlyProcessed dedup guard in handleTimeline regressed (a repeat event would re-run ProcessNewOrUpdatedEpisodeAllUsers)", first, hits.Load())
+		t.Errorf("re-fired timeline event for an already-processed ItemID hit Plex again (%d -> %d); the WasRecentlyProcessed dedup guard in handleTimeline regressed (a repeat event would seed the episode again)", first, hits.Load())
+	}
+}
+
+func TestTimelineSeedingOffFetchesNothing(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[{"ratingKey":"1","type":"episode"}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+
+	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
+	entries := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
+	run := func(seed bool) int64 {
+		c := cache.New()
+		mgr := users.NewManager(c)
+		mgr.Init(&plex.User{ID: "1", Name: "admin"})
+		adapter := &notifyAdapter{syncer: newTimelineSyncer(client, c, mgr, seed), cfg: &config{}, users: mgr, client: client, cache: c}
+		before := hits.Load()
+		adapter.OnTimeline(t.Context(), entries)
+		return hits.Load() - before
+	}
+
+	if n := run(false); n != 0 {
+		t.Errorf("Plex requests with seeding off = %d, want 0", n)
+	}
+	if n := run(true); n == 0 {
+		t.Error("Plex requests with seeding on = 0, want the episode fetch")
+	}
+}
+
+func TestSyncerConfigFromTriggerOnScan(t *testing.T) {
+	t.Setenv("PLEX_URL", "http://plex:32400")
+	t.Setenv("PLEX_TOKEN", "test-token")
+	for _, tc := range []struct {
+		env  string
+		want bool
+	}{{"", true}, {"true", true}, {"false", false}} {
+		t.Setenv("TRIGGER_ON_SCAN", tc.env)
+		cfg := loadConfig()
+		s := tracksync.New(syncerConfig(&cfg, ignore.New(ignore.Config{})), tracksync.Deps{})
+		if got := s.SeedsNewEpisodes(); got != tc.want {
+			t.Errorf("TRIGGER_ON_SCAN=%q: SeedsNewEpisodes() = %t, want %t", tc.env, got, tc.want)
+		}
+	}
+}
+
+// viewServer serves episode 2001 of show 1001 (part 5001, Japanese audio 9001,
+// English 9002 selected) with a selection and a last view kept per token,
+// as Plex keeps them per user.
+type viewServer struct {
+	selected map[string]int   // token -> selected audio id
+	viewed   map[string]int64 // token -> lastViewedAt
+	puts     map[string]int   // token -> part PUTs
+	mu       sync.Mutex
+}
+
+func (vs *viewServer) serve(w http.ResponseWriter, r *http.Request) {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	token := r.Header.Get("X-Plex-Token")
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.Method == http.MethodPut && r.URL.Path == "/library/parts/5001":
+		vs.puts[token]++
+		if id, err := strconv.Atoi(r.URL.Query().Get("audioStreamID")); err == nil {
+			vs.selected[token] = id
+		}
+	case r.URL.Path == "/library/metadata/2001":
+		sel := func(id int) string {
+			if cur, ok := vs.selected[token]; (ok && cur == id) || (!ok && id == 9002) {
+				return `,"selected":true`
+			}
+			return ""
+		}
+		viewed := ""
+		if at := vs.viewed[token]; at != 0 {
+			viewed = fmt.Sprintf(`,"lastViewedAt":%d`, at)
+		}
+		fmt.Fprintf(w, `{"MediaContainer":{"Metadata":[{"ratingKey":"2001","parentRatingKey":"3001",`+
+			`"grandparentRatingKey":"1001","grandparentTitle":"Example Show","type":"episode","parentIndex":1,"index":1%s,`+
+			`"Media":[{"Part":[{"id":5001,"Stream":[{"id":9001,"streamType":2,"languageCode":"jpn"%s},`+
+			`{"id":9002,"streamType":2,"languageCode":"eng"%s}]}]}]}]}}`, viewed, sel(9001), sel(9002))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// A rescanned episode is left alone for a user who played it since their
+// choice, which only that user's own read of it shows.
+func TestTimelineUpdatedSkipsViewedNoRecord(t *testing.T) {
+	vs := &viewServer{selected: map[string]int{}, viewed: map[string]int64{"token-bob": 1500}, puts: map[string]int{}}
+	srv := httptest.NewServer(http.HandlerFunc(vs.serve))
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse(srv.URL)
+	client := plexclient.NewFromHTTP(base, "token-admin", plexclient.Options{HTTP: srv.Client()})
+
+	c := cache.New()
+	c.SetUserTokens(map[string]string{"2": "token-bob"})
+	mgr := users.NewManager(c)
+	mgr.Init(&plex.User{ID: "1", Name: "admin"})
+	mgr.LoadFromCache()
+	japanese := &streams.Stream{}
+	japanese.LanguageCode = "jpn"
+	for _, uid := range []string{"1", "2"} {
+		c.RecordIntent(uid, "1001", streams.NewIntent(streams.Pair{Audio: japanese}, streams.Anchor{}, 1000))
+	}
+	syncer := tracksync.New(tracksync.Config{UpdateLevel: tracksync.LevelShow, UpdateStrategy: tracksync.StrategyAll, SeedNewEpisodes: true},
+		tracksync.Deps{Cache: c, Users: mgr, UserClient: func(id string) tracksync.PlexReadWriter {
+			if uc := mgr.ClientForUser(id, client); uc != nil {
+				return uc
+			}
+			return nil
+		}})
+	adapter := &notifyAdapter{syncer: syncer, cfg: &config{}, users: mgr, client: client, cache: c}
+
+	adapter.OnTimeline(t.Context(), []notify.TimelineEntry{{ItemID: "2001", Type: 4, MetadataState: "updated"}})
+
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if got := vs.puts["token-bob"]; got != 0 {
+		t.Errorf("writes for the user who played the episode after the choice = %d, want 0", got)
+	}
+	if got := vs.selected["token-admin"]; got != 9001 {
+		t.Errorf("admin audio = %d, want 9001 (Japanese): the admin never played it", got)
 	}
 }
 

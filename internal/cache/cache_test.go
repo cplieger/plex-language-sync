@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -107,6 +108,40 @@ func TestCacheLoadIgnoresRetiredMarkerKey(t *testing.T) {
 	}
 	if len(c.data.ProcessedEpisodes) != 1 {
 		t.Errorf("ProcessedEpisodes = %v, want the seeded entry loaded beside the retired key", c.data.ProcessedEpisodes)
+	}
+}
+
+// TestLoadStateWithoutApplied pins that a state.json written before the
+// applied section loads every dedup key and starts with no applied records.
+func TestLoadStateWithoutApplied(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("testdata", "v2-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, stateFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New()
+	if err := c.Load(dir); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := map[string]int64{
+		"scheduler:1001":               1700000300,
+		"streams:alice:1002:9001:9002": 1700000200,
+		"streams:bob:1003:9011:0":      1700000250,
+		"timeline:2001":                1700000100,
+	}
+	if !maps.Equal(c.data.ProcessedEpisodes, want) {
+		t.Errorf("ProcessedEpisodes = %v, want %v", c.data.ProcessedEpisodes, want)
+	}
+	if c.data.Applied == nil || len(c.data.Applied) != 0 {
+		t.Errorf("Applied = %v, want an empty non-nil map", c.data.Applied)
+	}
+	if _, ok := c.AppliedFor("alice", "1002"); ok {
+		t.Error("AppliedFor on a file with no applied section = ok=true, want false")
 	}
 }
 
@@ -600,7 +635,7 @@ func TestCacheLoadMigratesLegacyIntents(t *testing.T) {
 			"1": {"42": *streams.NewIntent(streams.Pair{
 				Audio:    &streams.Stream{LanguageCode: "jpn"},
 				Subtitle: &streams.Stream{LanguageCode: "eng"},
-			}, 1700000000)},
+			}, streams.Anchor{}, 1700000000)},
 		},
 	})
 
@@ -998,7 +1033,7 @@ func TestCacheIntentsPersistInProfilesFile(t *testing.T) {
 	orig.RecordIntent("1", "42", streams.NewIntent(streams.Pair{
 		Audio:    &streams.Stream{LanguageCode: "jpn", Codec: "eac3"},
 		Subtitle: nil, // "no subtitles" must survive the round-trip
-	}, 1700000000))
+	}, streams.Anchor{RatingKey: "1001", Season: 1, Index: 2, AudioID: 9001}, 1700000000))
 	orig.SetUserTokens(map[string]string{"2": "t2"})
 	if err := orig.Save(dir); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -1026,6 +1061,9 @@ func TestCacheIntentsPersistInProfilesFile(t *testing.T) {
 	}
 	if intent.Subtitle != nil {
 		t.Errorf("intent subtitle after round-trip = %+v, want nil (no-subtitles marker)", intent.Subtitle)
+	}
+	if want := (streams.Anchor{RatingKey: "1001", Season: 1, Index: 2, AudioID: 9001}); intent.Anchor != want {
+		t.Errorf("intent anchor after round-trip = %+v, want %+v", intent.Anchor, want)
 	}
 	if intent.ObservedAt != 1700000000 {
 		t.Errorf("ObservedAt after round-trip = %d, want 1700000000", intent.ObservedAt)

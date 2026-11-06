@@ -6,5 +6,4 @@ package cache
 const (
 	KeyPrefixTimeline  = "timeline:"
 	KeyPrefixScheduler = "scheduler:"
-	KeyPrefixStreams   = "streams:"
 )

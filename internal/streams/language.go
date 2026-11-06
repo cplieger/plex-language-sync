@@ -12,6 +12,17 @@ import (
 // zh-TW differs by script only as an artifact, and a tighter floor refuses it.
 const audioFloor = langtag.TierOtherScript
 
+// ProfileKey is the canonical profile-map key for a language code, so the
+// published spellings of one language share one entry: nor, nob, no and nb
+// all key on "no". An unparseable code is returned unchanged, so an entry
+// written under a code this build cannot parse stays reachable.
+func ProfileKey(lang string) string {
+	if t, ok := langtag.Parse(lang); ok {
+		return t.Language()
+	}
+	return lang
+}
+
 // languageMatch is how a reference's language relates to a candidate's when
 // the reference has no language langtag can read.
 type languageMatch uint8

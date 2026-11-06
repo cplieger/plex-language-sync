@@ -1,0 +1,112 @@
+{
+  "language_profiles": {
+    "alice": {
+      "ja": "en",
+      "en": ""
+    },
+    "bob": {
+      "ja": "en"
+    },
+    "carol": {
+      "fr": "fr"
+    }
+  },
+  "intents": {
+    "alice": {
+      "1001": {
+        "subtitle": {
+          "languageCode": "eng",
+          "languageTag": "en",
+          "title": "Full",
+          "displayTitle": "English (ASS)",
+          "extendedDisplayTitle": "Full (English ASS)",
+          "codec": "ass"
+        },
+        "audio": {
+          "languageCode": "jpn",
+          "languageTag": "ja",
+          "displayTitle": "Japanese (EAC3 5.1)",
+          "extendedDisplayTitle": "Japanese (EAC3 5.1)",
+          "codec": "eac3",
+          "audioChannelLayout": "5.1(side)",
+          "channels": 6
+        },
+        "observed_at": 1700000100
+      },
+      "1002": {
+        "subtitle": null,
+        "audio": {
+          "languageCode": "eng",
+          "languageTag": "en",
+          "displayTitle": "English (AAC Stereo)",
+          "codec": "aac",
+          "audioChannelLayout": "stereo",
+          "channels": 2
+        },
+        "observed_at": 1700000200
+      }
+    },
+    "bob": {
+      "1001": {
+        "subtitle": {
+          "languageCode": "eng",
+          "languageTag": "en",
+          "displayTitle": "English (SRT Forced)",
+          "codec": "srt",
+          "forced": true
+        },
+        "audio": {
+          "languageCode": "jpn",
+          "displayTitle": "Japanese (AAC Stereo)",
+          "codec": "aac",
+          "channels": 2
+        },
+        "observed_at": 1700000300
+      },
+      "1003": {
+        "subtitle": {
+          "languageCode": "eng",
+          "languageTag": "en",
+          "displayTitle": "English SDH (SRT)",
+          "codec": "srt",
+          "hearingImpaired": true
+        },
+        "audio": {
+          "languageCode": "jpn",
+          "languageTag": "ja",
+          "codec": "flac",
+          "channels": 2
+        },
+        "observed_at": 1700000400
+      }
+    },
+    "carol": {
+      "1004": {
+        "subtitle": {
+          "languageCode": "fra",
+          "languageTag": "fr-CA",
+          "codec": "pgs"
+        },
+        "audio": {
+          "languageCode": "fra",
+          "languageTag": "fr",
+          "title": "Audio Description",
+          "codec": "ac3",
+          "channels": 6,
+          "visualImpaired": true
+        },
+        "observed_at": 1700000500
+      },
+      "1005": {
+        "subtitle": null,
+        "audio": {
+          "languageCode": "spa",
+          "languageTag": "es-419",
+          "codec": "aac",
+          "channels": 2
+        },
+        "observed_at": 1700000600
+      }
+    }
+  }
+}

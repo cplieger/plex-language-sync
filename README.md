@@ -62,7 +62,7 @@ services:
    `PLEX_URL` is the address you open Plex at from another device on your network, with `http://` and the port, not `localhost`.
 4. Run `docker compose up -d`.
 
-Run `docker logs plex-language-sync`. You should see `connected to plex server`. When you play an episode, the log shows `play event detected`. If you see `cannot establish initial plex connection`, Plex rejected the token or the address reaches a different server.
+Run `docker logs plex-language-sync`. You should see `connected to plex server`. The first time you play an episode of a show, the log shows `play event detected`. If you see `cannot establish initial plex connection`, Plex rejected the token or the address reaches a different server.
 
 On Unraid, open the **Apps** tab, search for plex-language-sync and click **Install**. Enter your Plex URL and token. Under Settings, Docker, in the advanced view, set the Docker stop time-out to 20 seconds or more.
 
@@ -90,7 +90,7 @@ Labels and library names match exactly, with case counted. Audio never switches 
 
 | Mount | Description |
 | --- | --- |
-| `/config` | Learned languages, the choice each user made per show, the shared users' encrypted tokens and the deep-scan schedule. Keep it across updates. |
+| `/config` | Learned languages, each user's choices, the tracks the app set, the shared users' encrypted tokens and the deep-scan schedule. Keep it across updates. |
 
 plex-language-sync opens no port.
 

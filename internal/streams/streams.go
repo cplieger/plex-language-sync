@@ -36,6 +36,10 @@ type Episode struct {
 	Media                []Media            `json:"Media"`
 	Index                FlexInt            `json:"index"`
 	ParentIndex          FlexInt            `json:"parentIndex"`
+	// LastViewedAt is the reading token's own last counted view (unix
+	// seconds), 0 when that user never finished the episode. It only
+	// withholds a write and never decides a choice.
+	LastViewedAt FlexInt `json:"lastViewedAt"`
 }
 
 // SeasonNum returns the parsed season index, or 0 when ParentIndex is
@@ -75,7 +79,7 @@ type Part struct {
 // Stream is a single audio / subtitle / video stream on a Part.
 //
 // plexapi.Stream is EMBEDDED, not held as a named field, to promote its
-// surface: the 14 wire fields and the IsAudio / IsSubtitle predicates.
+// surface: its wire fields and the IsAudio / IsSubtitle predicates.
 // The outer type carries only what Go forbids declaring on a foreign
 // type: Lang, languageRaw, hasNoLanguage, and TitleForMatch
 // (describe.go).

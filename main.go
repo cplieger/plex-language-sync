@@ -6,12 +6,11 @@
 //     syncer, and scheduler, wire them together, start the WebSocket
 //     listener, and orchestrate a bounded shutdown join.
 //   - notifyAdapter: the thin glue between internal/notify's WebSocket
-//     listener and internal/tracksync. It gates on cfg.triggerOnPlay /
-//     cfg.triggerOnScan and forwards relevant events to the syncer.
+//     listener and internal/tracksync. It gates play events on
+//     cfg.triggerOnPlay and forwards relevant events to the syncer.
 //
 // Env-var contract, DEEP_SCAN_INTERVAL parsing, and _FILE-suffix secret
-// handling live in config.go. Business logic lives under internal/{streams,
-// plex, cache, notify, users, sync, scheduler}.
+// handling live in config.go. Business logic lives under internal/.
 package main
 
 import (
@@ -203,15 +202,8 @@ func run() int {
 		Labels:    cfg.ignoreLabels,
 	})
 	syncer := tracksync.New(
-		tracksync.Config{
-			UpdateLevel:      cfg.updateLevel,
-			UpdateStrategy:   cfg.updateStrategy,
-			Ignore:           ignorePolicy,
-			SubtitleFloor:    cfg.subtitleTier,
-			LanguageProfiles: cfg.languageProfiles,
-		},
+		syncerConfig(&cfg, ignorePolicy),
 		tracksync.Deps{
-			Plex:       client,
 			Cache:      c,
 			Users:      um,
 			UserClient: syncUserClient,
@@ -233,9 +225,8 @@ func run() int {
 		},
 	)
 
-	// runtime-concurrency-p2: join on RefreshLoop + deepscan.Run at
-	// shutdown so any in-flight work completes before the deferred cache
-	// save writes its final snapshot.
+	// Join on RefreshLoop + deepscan.Run at shutdown so any in-flight work
+	// completes before the deferred cache save writes its final snapshot.
 	var wg sync.WaitGroup
 	refreshDone := make(chan struct{})
 	schedDone := make(chan struct{})
@@ -266,6 +257,19 @@ func run() int {
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
 	return 0
+}
+
+// syncerConfig is the part of cfg the syncer reads. TRIGGER_ON_SCAN becomes
+// SeedNewEpisodes, the one switch for every path that seeds new episodes.
+func syncerConfig(cfg *config, policy *ignore.Policy) tracksync.Config {
+	return tracksync.Config{
+		UpdateLevel:      cfg.updateLevel,
+		UpdateStrategy:   cfg.updateStrategy,
+		Ignore:           policy,
+		SubtitleFloor:    cfg.subtitleTier,
+		LanguageProfiles: cfg.languageProfiles,
+		SeedNewEpisodes:  cfg.triggerOnScan,
+	}
 }
 
 // checkCacheDir runs the startup writability check on the cache directory and
@@ -452,23 +456,16 @@ func isFatalStartupError(err error) bool {
 // ---------------------------------------------------------------------------
 // WebSocket listener (adapter)
 // ---------------------------------------------------------------------------
-//
-// notifyAdapter is the composition-root glue between the WebSocket
-// listener (internal/notify) and the sync subsystem (internal/tracksync).
-// It gates play events on cfg.triggerOnPlay and timeline events on
-// cfg.triggerOnScan, then forwards relevant events to the sync
-// subsystem. The per-event handlers live here (not in internal/tracksync)
-// because the event shape is notify-package-typed and the
-// ignore/dedup rules are a blend of cache state and config — both of
-// which are main-package concerns.
-//
-// Methods take a POINTER receiver: every field is a handle onto shared
-// mutable state (the cache, the users manager, the stall counter), so a
-// value receiver would copy the struct on every event for no reason.
+
 type episodeSkipper interface {
 	ShouldSkipEpisode(ctx context.Context, ref *streams.Episode) bool
 }
 
+// notifyAdapter joins the notify listener to the syncer. It gates play
+// events on cfg.triggerOnPlay; the syncer owns the seeding switch that
+// timeline events follow. The handlers live here, not in tracksync, because
+// the events are notify types and the ignore and dedup rules mix cache state
+// with config.
 type notifyAdapter struct {
 	syncer *tracksync.Syncer
 	cfg    *config
@@ -490,9 +487,6 @@ func (n *notifyAdapter) OnPlay(ctx context.Context, ev notify.PlayEvent) {
 }
 
 func (n *notifyAdapter) OnTimeline(ctx context.Context, entries []notify.TimelineEntry) {
-	if !n.cfg.triggerOnScan {
-		return
-	}
 	n.handleTimeline(ctx, entries)
 }
 
@@ -525,23 +519,11 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 		return
 	}
 
-	cur := streams.Selected(episode)
-	streamKey := notify.BuildStreamCacheKey(notify.StreamSelectionKey{
-		UserID:     userID,
-		RatingKey:  ev.RatingKey,
-		AudioID:    streams.ID(cur.Audio),
-		SubtitleID: streams.ID(cur.Subtitle),
-	})
-	if !n.cache.CheckAndMark(streamKey) {
-		return
+	// Observe's only error is the context's; Plex re-announces the play.
+	if err := n.syncer.Observe(ctx, userID, episode, "play"); err != nil {
+		slog.Debug("play event: stopped before the choice was applied",
+			"key", textsafe.SanitizeSingleLine(ev.RatingKey), "user", username, "error", err)
 	}
-
-	slog.Info("play event detected",
-		"episode", episode.ShortName(),
-		"user", username,
-		"state", textsafe.SanitizeSingleLine(ev.State))
-
-	n.syncer.ObserveAndPropagate(ctx, userClient, userID, episode, "play")
 }
 
 // resolvePlayEventUser resolves the user from a play event's client
@@ -789,6 +771,9 @@ func (c *resolveStallCounter) success() (recovered bool, after int) {
 }
 
 func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.TimelineEntry) {
+	if !n.syncer.SeedsNewEpisodes() {
+		return
+	}
 	for i := range entries {
 		entry := &entries[i]
 		if !notify.IsRelevantTimelineEntry(entry) {
@@ -827,7 +812,6 @@ func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.Tim
 
 		n.cache.MarkProcessed(cacheKey)
 
-		// For new/updated episodes, process for ALL users.
-		n.syncer.ProcessNewOrUpdatedEpisodeAllUsers(ctx, episode, action)
+		n.syncer.SeedEpisode(ctx, episode, action)
 	}
 }

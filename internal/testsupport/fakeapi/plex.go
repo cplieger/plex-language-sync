@@ -2,6 +2,7 @@ package fakeapi
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -26,6 +27,7 @@ type Plex struct {
 	HistoryItems        []plex.HistoryItem
 	Sections            []plex.Section
 	callNames           []string
+	writes              []Write
 	Calls               atomic.Int64
 	mu                  sync.Mutex
 }
@@ -37,6 +39,22 @@ func (f *Plex) CallNames() []string {
 	out := make([]string, len(f.callNames))
 	copy(out, f.callNames)
 	return out
+}
+
+// Write is one stream-selection write the fake accepted. StreamID is 0 for a
+// subtitle disable.
+type Write struct {
+	Kind     string // "audio", "subtitle" or "subtitle-off"
+	PartID   int
+	StreamID int
+}
+
+// Writes returns a copy of the accepted writes in the order they arrived; a
+// write answered with a configured error is not one.
+func (f *Plex) Writes() []Write {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.writes)
 }
 
 // Episode returns the episode identified by key, or plex.ErrNotFound if
@@ -108,21 +126,31 @@ func (f *Plex) ShowSections(_ context.Context) ([]plex.Section, error) {
 }
 
 // SetAudioStream records the call and returns SetAudioErr.
-func (f *Plex) SetAudioStream(_ context.Context, _ plexapi.StreamSelection) error {
+func (f *Plex) SetAudioStream(_ context.Context, sel plexapi.StreamSelection) error {
 	f.record("SetAudio")
-	return f.SetAudioErr
+	return f.accept(f.SetAudioErr, Write{Kind: "audio", PartID: sel.PartID, StreamID: sel.StreamID})
 }
 
 // SetSubtitleStream records the call and returns SetSubtitleErr.
-func (f *Plex) SetSubtitleStream(_ context.Context, _ plexapi.StreamSelection) error {
+func (f *Plex) SetSubtitleStream(_ context.Context, sel plexapi.StreamSelection) error {
 	f.record("SetSubtitle")
-	return f.SetSubtitleErr
+	return f.accept(f.SetSubtitleErr, Write{Kind: "subtitle", PartID: sel.PartID, StreamID: sel.StreamID})
 }
 
 // DisableSubtitles records the call and returns DisableErr.
-func (f *Plex) DisableSubtitles(_ context.Context, _ int) error {
+func (f *Plex) DisableSubtitles(_ context.Context, partID int) error {
 	f.record("DisableSubtitle")
-	return f.DisableErr
+	return f.accept(f.DisableErr, Write{Kind: "subtitle-off", PartID: partID})
+}
+
+func (f *Plex) accept(err error, w Write) error {
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.writes = append(f.writes, w)
+	f.mu.Unlock()
+	return nil
 }
 
 func (f *Plex) record(name string) {

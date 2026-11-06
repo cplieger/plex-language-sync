@@ -52,13 +52,13 @@ A plain `http://` address to another machine works, but the app logs a warning a
 
 | File | Holds |
 | --- | --- |
-| `profiles.json` | The language habits learned per user, and the choice each user made for each show. This is the state you would lose. |
+| `profiles.json` | The language habits learned per user, and each user's choice per show or season. This is the state you would lose. |
 | `tokens.json` | The shared users' Plex tokens, encrypted, so a restart works while plex.tv is unreachable |
-| `state.json` | Which changes were already made recently, so one event is not handled twice |
+| `state.json` | Recently handled events, so one event is not handled twice, and the tracks the app last set for each user. If it is lost, the app rebuilds it as it sets tracks again, and the next pass may set your choice again on an episode you changed on its page. |
 | `.plex-language-sync-last-run` | When the last deep scan finished, so a restart keeps the daily schedule |
 
 Each file is written to a temporary file first and then renamed, so a crash never leaves half a file. A damaged file resets only its own contents, and the others load normally. A single `cache.json` from an older layout is split into these files on the first start.
 
 ## Stopping the container
 
-On stop, plex-language-sync gives its background work up to 10 seconds to finish, then saves the files above and exits. Docker's default stop timeout is also 10 seconds, which leaves no time for the save, so the shipped `compose.yaml` sets `stop_grace_period: 20s`. On Unraid, set the Docker stop time-out to 20 seconds or more. If a save is cut short, the learned habits and per-show choices come back as you watch.
+On stop, plex-language-sync gives its background work up to 10 seconds to finish, then saves the files above and exits. Docker's default stop timeout is also 10 seconds, which leaves no time for the save, so the shipped `compose.yaml` sets `stop_grace_period: 20s`. On Unraid, set the Docker stop time-out to 20 seconds or more. If a save is cut short, the learned habits and recorded choices come back as you watch.

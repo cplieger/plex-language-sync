@@ -87,6 +87,23 @@ func TestHandlePlayEvent_sanitizesNotificationValuesInLogs(t *testing.T) {
 	}
 }
 
+func TestPlayEventDetectedOnlyOnChoice(t *testing.T) {
+	rec := capture.Default(t)
+	_, client := newPlayServer(t)
+	adapter, _ := newPlayAdapter(t, client)
+
+	adapter.OnPlay(t.Context(), playOfFirst)
+	if got := rec.CountLevel(slog.LevelInfo, "play event detected"); got != 1 {
+		t.Fatalf("first play logged %q %d times at Info, want 1", "play event detected", got)
+	}
+	adapter.OnPlay(t.Context(), playOfFirst)
+	adapter.OnPlay(t.Context(), playOfFirst)
+
+	if got := rec.CountLevel(slog.LevelInfo, "play event detected"); got != 1 {
+		t.Errorf("a play and two re-announcements logged %q %d times at Info, want 1", "play event detected", got)
+	}
+}
+
 func TestSkipUnattributedPlayEvent_sanitizesNotificationValuesInLogs(t *testing.T) {
 	rec := capture.Default(t)
 	adapter := &notifyAdapter{cfg: &config{}, resolveStalls: &resolveStallCounter{}}
