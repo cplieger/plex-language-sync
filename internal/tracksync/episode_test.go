@@ -2,27 +2,18 @@ package tracksync
 
 import (
 	"context"
-	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
 	"github.com/cplieger/plex-language-sync/internal/users"
 	"github.com/cplieger/plexapi/v3"
 )
-
-// mkSelectedAudioEpisode builds an episode whose single part carries one
-// selected audio stream, so streams.Selected returns a non-nil audio.
-func mkSelectedAudioEpisode(key string) *streams.Episode {
-	return &streams.Episode{
-		RatingKey: key,
-		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "eng"},
-		}}}}},
-	}
-}
 
 func countCalls(calls []string, name string) int {
 	n := 0
@@ -34,419 +25,736 @@ func countCalls(calls []string, name string) int {
 	return n
 }
 
-// TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive pins the
-// per-user loop's live-context guard: with a non-cancelled context the loop
-// body must run for every user, so a guard that bailed out early would leave
-// zero per-user reloads.
-//
-// given a found reference and two known lookup on a live context
-// when ProcessNewOrUpdatedEpisodeAllUsers runs
-// then the target episode is reloaded once per user (updateEpisodeStreams).
-func TestProcessNewOrUpdatedEpisodeAllUsers_ProcessesEveryUserWhenLive(t *testing.T) {
-	t.Parallel()
-	plx := &fakeapi.Plex{
-		ShowEpisodesByShow: map[string][]streams.Episode{
-			"42": {{RatingKey: "2"}},
-		},
-		EpisodeByKey: map[string]*streams.Episode{
-			"2":   mkSelectedAudioEpisode("2"),
-			"100": mkSelectedAudioEpisode("100"),
-		},
-	}
-	lookup := &fakeUsers{
-		AllResult: []users.Account{
-			{ID: "1"},
-			{ID: "2"},
-		},
-	}
-	s := newSyncer(Config{LanguageProfiles: false}, plx, fakeapi.NewCache(), lookup)
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
+// seedEp is S<season>E<index> of show 1001 (obsEp's keys) with Japanese audio
+// marked default, English and French audio, and English and French
+// subtitles; English audio and no subtitle are selected.
+func seedEp(season, index int) streams.Episode {
+	base := 9000 + season*100 + index*10
+	jpn := obsAud(base+1, "jpn", "")
+	jpn.Default = true
+	return obsEp(season, index, []streams.Stream{
+		jpn, obsAud(base+2, "eng", ""), obsAud(base+3, "fra", ""),
+		obsSub(base+4, "eng"), obsSub(base+5, "fra"),
+	}, base+2)
+}
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
+// streamOf is the id of ep's stream of kind ("audio" or "subtitle") in lang.
+func streamOf(ep *streams.Episode, kind, lang string) int {
+	list := streams.Audio(ep)
+	if kind == kindSubtitle {
+		list = streams.Subtitle(ep)
+	}
+	for _, st := range list {
+		if st.LanguageCode == lang {
+			return int(st.ID)
+		}
+	}
+	return 0
+}
 
-	got := countCalls(plx.CallNames(), "Episode:100")
-	if got != 2 {
-		t.Errorf("target episode reloaded %d times for 2 lookup; want 2 (loop must run per user on a live context)", got)
+// cloneEp copies ep down to its streams, so two readers never share a
+// selection.
+func cloneEp(ep streams.Episode) streams.Episode {
+	media := make([]streams.Media, len(ep.Media))
+	for i, m := range ep.Media {
+		parts := make([]streams.Part, len(m.Part))
+		for j, p := range m.Part {
+			p.Stream = slices.Clone(p.Stream)
+			parts[j] = p
+		}
+		m.Part = parts
+		media[i] = m
+	}
+	ep.Media = media
+	return ep
+}
+
+// liveClient is one user's client: an accepted write changes what that
+// user's later reads and lists of the part return, as Plex does.
+type liveClient struct{ *fakeapi.Plex }
+
+func (c liveClient) SetAudioStream(ctx context.Context, sel plexapi.StreamSelection) error {
+	if err := c.Plex.SetAudioStream(ctx, sel); err != nil {
+		return err
+	}
+	c.selectOn(sel.PartID, (*streams.Stream).IsAudio, sel.StreamID)
+	return nil
+}
+
+func (c liveClient) SetSubtitleStream(ctx context.Context, sel plexapi.StreamSelection) error {
+	if err := c.Plex.SetSubtitleStream(ctx, sel); err != nil {
+		return err
+	}
+	c.selectOn(sel.PartID, (*streams.Stream).IsSubtitle, sel.StreamID)
+	return nil
+}
+
+func (c liveClient) DisableSubtitles(ctx context.Context, partID int) error {
+	if err := c.Plex.DisableSubtitles(ctx, partID); err != nil {
+		return err
+	}
+	c.selectOn(partID, (*streams.Stream).IsSubtitle, 0)
+	return nil
+}
+
+func (c liveClient) selectOn(part int, kind func(*streams.Stream) bool, id int) {
+	for _, ep := range c.EpisodeByKey {
+		for i := range ep.Media {
+			for j := range ep.Media[i].Part {
+				p := &ep.Media[i].Part[j]
+				if p.ID != part {
+					continue
+				}
+				for k := range p.Stream {
+					if st := &p.Stream[k]; kind(st) {
+						st.Selected = int(st.ID) == id
+					}
+				}
+			}
+		}
 	}
 }
 
-// TestFindReferenceEpisode_CapsSearchAtMaxDepth pins both the depth cap and
-// the per-fetch search counter: with more episodes than the cap and none
-// carrying a selected audio, the search must stop after exactly maxDepth
-// fetches. An off-by-one in the cap would let one extra episode through, and
-// a counter that failed to advance would never trip the cap and would scan
-// every episode.
-func TestFindReferenceEpisode_CapsSearchAtMaxDepth(t *testing.T) {
-	t.Parallel()
-	const maxDepth = 3
-	episodes := []streams.Episode{
-		{RatingKey: "1"},
-		{RatingKey: "2"},
-		{RatingKey: "3"},
-		{RatingKey: "4"},
-		{RatingKey: "5"},
-	}
-	// Empty EpisodeByKey → every reader.Episode returns ErrNotFound, so the
-	// search never finds a candidate and runs until the depth cap.
-	plx := &fakeapi.Plex{}
+var _ PlexReadWriter = liveClient{}
 
-	ref, searched, _ := findReferenceEpisode(t.Context(), plx, episodes, "exclude-none", maxDepth)
+// seedLib is show 1001 as the admin reader and each user's own client read
+// it, each with its own selections and views, over one cache.
+type seedLib struct {
+	admin   *fakeapi.Plex
+	clients map[string]liveClient
+	cache   *fakeapi.Cache
+	s       *Syncer
+	ids     []string
+	clock   int64
+}
 
-	if ref != nil {
-		t.Errorf("findReferenceEpisode ref = %+v, want nil (no selected audio anywhere)", ref)
-	}
-	if searched != maxDepth {
-		t.Errorf("findReferenceEpisode searched = %d, want %d (must stop exactly at the depth cap)", searched, maxDepth)
+func newFakePlex() *fakeapi.Plex {
+	return &fakeapi.Plex{
+		ShowEpisodesByShow:  map[string][]streams.Episode{},
+		SeasonEpisodesByKey: map[string][]streams.Episode{},
+		EpisodeByKey:        map[string]*streams.Episode{},
 	}
 }
 
-// TestFindReferenceEpisode_SkipsTriggeringEpisode pins the excludeKey guard:
-// the episode that triggered the search appears in the show's episode list,
-// and must never become its own reference. slices.Backward visits newest
-// first, so the excluded "100" is seen first and skipped without a metadata
-// fetch, and the older "2" becomes the reference.
-//
-// A mutant that dropped the `ep.RatingKey == excludeKey` skip would fetch
-// "100" and return it as the reference, failing both assertions below.
-func TestFindReferenceEpisode_SkipsTriggeringEpisode(t *testing.T) {
-	t.Parallel()
-	episodes := []streams.Episode{
-		{RatingKey: "2"},   // older — the real reference
-		{RatingKey: "100"}, // the triggering episode itself — must be excluded
+func newSeedLib(t *testing.T, cfg Config, ids []string, eps ...streams.Episode) *seedLib {
+	t.Helper()
+	l := &seedLib{admin: newFakePlex(), clients: map[string]liveClient{}, cache: fakeapi.NewCache(), ids: ids, clock: 1000}
+	for _, id := range ids {
+		l.clients[id] = liveClient{newFakePlex()}
 	}
-	plx := &fakeapi.Plex{
-		EpisodeByKey: map[string]*streams.Episode{
-			"2":   mkSelectedAudioEpisode("2"),
-			"100": mkSelectedAudioEpisode("100"),
+	for i := range eps {
+		l.add(eps[i])
+	}
+	l.build(cfg)
+	return l
+}
+
+// build replaces the syncer with one under cfg over the same library and
+// cache, as a restart with changed settings does.
+func (l *seedLib) build(cfg Config) {
+	accounts := make([]users.Account, len(l.ids))
+	for i, id := range l.ids {
+		accounts[i] = users.Account{ID: id}
+	}
+	l.s = New(cfg, Deps{
+		Cache: l.cache, Users: &fakeUsers{AllResult: accounts},
+		UserClient: func(id string) PlexReadWriter {
+			if c, ok := l.clients[id]; ok {
+				return c
+			}
+			return nil
 		},
-	}
+	})
+	l.s.apply.now = func() time.Time { return time.Unix(l.clock, 0) }
+}
 
-	ref, _, _ := findReferenceEpisode(t.Context(), plx, episodes, "100", maxRefSearchDepth)
-
-	if ref == nil || ref.RatingKey != "2" {
-		t.Fatalf("findReferenceEpisode ref = %+v, want episode 2 (triggering episode 100 must be excluded)", ref)
+// add puts ep in the library; every reader gets its own copy.
+func (l *seedLib) add(ep streams.Episode) {
+	put := func(f *fakeapi.Plex) {
+		c := cloneEp(ep)
+		f.ShowEpisodesByShow[c.GrandparentRatingKey] = append(f.ShowEpisodesByShow[c.GrandparentRatingKey], c)
+		f.SeasonEpisodesByKey[c.ParentRatingKey] = append(f.SeasonEpisodesByKey[c.ParentRatingKey], c)
+		f.EpisodeByKey[c.RatingKey] = &c
 	}
-	if got := countCalls(plx.CallNames(), "Episode:100"); got != 0 {
-		t.Errorf("Episode:100 fetched %d times, want 0 (excluded episode must not be fetched)", got)
-	}
-	if got := countCalls(plx.CallNames(), "Episode:2"); got != 1 {
-		t.Errorf("Episode:2 fetched %d times, want 1", got)
+	put(l.admin)
+	for _, c := range l.clients {
+		put(c.Plex)
 	}
 }
 
-// TestFindReferenceEpisode_CountsFetchErrors pins the fetchErrors return
-// value of findReferenceEpisode and its ErrNotFound-vs-real-error
-// discrimination: a candidate whose metadata fetch fails with a real
-// transport/server error increments fetchErrors, while a benign
-// plex.ErrNotFound (candidate has no metadata) does not. searched counts
-// every candidate visited regardless of fetch outcome.
-func TestFindReferenceEpisode_CountsFetchErrors(t *testing.T) {
+// reader is the admin's fake for "admin", else the user's.
+func (l *seedLib) reader(user string) *fakeapi.Plex {
+	if user == "admin" {
+		return l.admin
+	}
+	return l.clients[user].Plex
+}
+
+// selectFor makes exactly the ids in selected the user's selection on ep.
+func (l *seedLib) selectFor(user string, ep *streams.Episode, selected ...int) {
+	stored := l.reader(user).EpisodeByKey[ep.RatingKey]
+	for i := range stored.Media[0].Part[0].Stream {
+		st := &stored.Media[0].Part[0].Stream[i]
+		st.Selected = slices.Contains(selected, int(st.ID))
+	}
+}
+
+// viewFor is the user finishing ep at at, a play the app did not see.
+func (l *seedLib) viewFor(user string, ep *streams.Episode, at int64) {
+	f := l.reader(user)
+	f.EpisodeByKey[ep.RatingKey].LastViewedAt = streams.FlexInt(at)
+	for _, list := range []([]streams.Episode){f.ShowEpisodesByShow[ep.GrandparentRatingKey], f.SeasonEpisodesByKey[ep.ParentRatingKey]} {
+		for i := range list {
+			if list[i].RatingKey == ep.RatingKey {
+				list[i].LastViewedAt = streams.FlexInt(at)
+			}
+		}
+	}
+}
+
+// seed runs SeedEpisode on ep as the admin reads it.
+func (l *seedLib) seed(t *testing.T, ep *streams.Episode) {
+	t.Helper()
+	l.s.SeedEpisode(t.Context(), l.admin.EpisodeByKey[ep.RatingKey], "scan_new")
+}
+
+// play is user picking the ids in selected on ep and playing it.
+func (l *seedLib) play(t *testing.T, user string, ep *streams.Episode, selected ...int) {
+	t.Helper()
+	l.selectFor(user, ep, selected...)
+	read := cloneEp(*l.reader(user).EpisodeByKey[ep.RatingKey])
+	if err := l.s.Observe(t.Context(), user, &read, "play"); err != nil {
+		t.Fatalf("Observe = %v, want nil", err)
+	}
+}
+
+func (l *seedLib) reconcile(t *testing.T, user string, ep *streams.Episode) {
+	t.Helper()
+	read := cloneEp(*l.reader(user).EpisodeByKey[ep.RatingKey])
+	if err := l.s.Reconcile(t.Context(), user, &read, "scheduler"); err != nil {
+		t.Fatalf("Reconcile = %v, want nil", err)
+	}
+}
+
+// writes are the user's accepted writes from index from on.
+func (l *seedLib) writes(user string, from int) []fakeapi.Write {
+	return l.clients[user].Writes()[from:]
+}
+
+func (l *seedLib) basis(user string, ep *streams.Episode) streams.Basis {
+	rec, _ := l.cache.AppliedFor(user, ep.RatingKey)
+	return rec.Basis
+}
+
+// choose records user's choice of audio (and sub, when set) under key.
+func choose(c *fakeapi.Cache, user, key, audio, sub string, anchor streams.Anchor, at int64) {
+	a := obsAud(0, audio, "")
+	pair := streams.Pair{Audio: &a}
+	if sub != "" {
+		s := obsSub(0, sub)
+		pair.Subtitle = &s
+	}
+	c.RecordIntent(user, key, streams.NewIntent(pair, anchor, at))
+}
+
+func anchorOn(season, index int) streams.Anchor {
+	ep := obsEp(season, index, nil)
+	return streams.Anchor{RatingKey: ep.RatingKey, Season: season, Index: index}
+}
+
+func audioWrite(ep *streams.Episode, lang string) fakeapi.Write {
+	return fakeapi.Write{Kind: kindAudio, PartID: partOf(ep), StreamID: streamOf(ep, kindAudio, lang)}
+}
+
+func subWrite(ep *streams.Episode, lang string) fakeapi.Write {
+	return fakeapi.Write{Kind: kindSubtitle, PartID: partOf(ep), StreamID: streamOf(ep, kindSubtitle, lang)}
+}
+
+var (
+	allShowSeeding  = Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll, SeedNewEpisodes: true}
+	allShowProfiles = Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll, LanguageProfiles: true, SeedNewEpisodes: true}
+	nextShow        = Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyNext, LanguageProfiles: true, SeedNewEpisodes: true}
+)
+
+func profileBasis(audio, sub string) streams.Basis {
+	return streams.Basis{Version: profileVersion(streams.ProfileKey(audio), sub), Source: streams.SourceProfile}
+}
+
+func TestSeedNeverUsesAdminSelection(t *testing.T) {
 	t.Parallel()
-	episodes := []streams.Episode{{RatingKey: "1"}, {RatingKey: "2"}}
+	e1, e2 := seedEp(1, 1), seedEp(1, 2)
 	tests := []struct {
-		name            string
-		plex            *fakeapi.Plex
-		wantSearched    int
-		wantFetchErrors int
+		name     string
+		want     []fakeapi.Write
+		profiles bool
 	}{
-		{
-			name:            "real transport errors are counted",
-			plex:            &fakeapi.Plex{EpisodeErr: errors.New("plex 503")},
-			wantSearched:    2,
-			wantFetchErrors: 2,
-		},
-		{
-			name:            "ErrNotFound candidates are benign and not counted",
-			plex:            &fakeapi.Plex{},
-			wantSearched:    2,
-			wantFetchErrors: 0,
-		},
+		{"no profile writes nothing", nil, false},
+		{"the profile sets only the subtitle", []fakeapi.Write{subWrite(&e2, "eng")}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ref, searched, fetchErrors := findReferenceEpisode(
-				t.Context(), tc.plex, episodes, "exclude-none", maxRefSearchDepth,
-			)
-			if ref != nil {
-				t.Errorf("ref = %+v, want nil (no candidate has selected audio)", ref)
-			}
-			if searched != tc.wantSearched {
-				t.Errorf("searched = %d, want %d", searched, tc.wantSearched)
-			}
-			if fetchErrors != tc.wantFetchErrors {
-				t.Errorf("fetchErrors = %d, want %d", fetchErrors, tc.wantFetchErrors)
+			l := newSeedLib(t, Config{UpdateLevel: LevelShow, UpdateStrategy: StrategyAll, LanguageProfiles: tc.profiles, SeedNewEpisodes: true}, []string{"alice"}, e1, e2)
+			l.selectFor("admin", &e1, streamOf(&e1, kindAudio, "jpn"), streamOf(&e1, kindSubtitle, "fra"))
+			l.selectFor("admin", &e2, streamOf(&e2, kindAudio, "jpn"), streamOf(&e2, kindSubtitle, "fra"))
+			l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+
+			l.seed(t, &e2)
+
+			if got := l.writes("alice", 0); !slices.Equal(got, tc.want) {
+				t.Errorf("alice's writes = %+v, want %+v (the admin's own Japanese and French are no one's choice)", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestFindEpisodeReference_logsDegradedPlexAsWarn pins the
-// candidate_fetch_errors observability contract: when every reference
-// candidate fetch fails with a real (non-ErrNotFound) error, the search
-// returns nil AND emits a WARN tagged reason=candidate_fetch_errors so
-// operators can distinguish a degraded Plex from a show that genuinely
-// has no reference yet (which stays a DEBUG reason=no_candidate). Both
-// paths return nil, so the slog output is the only observable difference.
-func TestFindEpisodeReference_logsDegradedPlexAsWarn(t *testing.T) {
-	episodes := []streams.Episode{{RatingKey: "2"}, {RatingKey: "3"}}
+func TestSeedHouseholdFromRecordedIntent(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	l := newSeedLib(t, allShowSeeding, []string{"alice", "bob"}, e2)
+	choose(l.cache, "bob", obsShow, "jpn", "", streams.Anchor{}, 1000)
+
+	l.seed(t, &e2)
+
+	if got, want := l.writes("alice", 0), []fakeapi.Write{audioWrite(&e2, "jpn")}; !slices.Equal(got, want) {
+		t.Fatalf("alice's writes = %+v, want bob's Japanese %+v", got, want)
+	}
+	if got, want := l.basis("alice", &e2), (streams.Basis{From: "bob", Version: 1000, Source: streams.SourceHousehold}); got != want {
+		t.Errorf("alice's record basis = %+v, want %+v", got, want)
+	}
+
+	choose(l.cache, "bob", obsShow, "fra", "", streams.Anchor{}, 1100)
+	l.clock = 2000
+	l.seed(t, &e2)
+
+	if got, want := l.writes("alice", 1), []fakeapi.Write{audioWrite(&e2, "fra")}; !slices.Equal(got, want) {
+		t.Errorf("after bob's newer choice alice's writes = %+v, want %+v", got, want)
+	}
+
+	choose(l.cache, "alice", obsShow, "eng", "eng", streams.Anchor{}, 1200)
+	l.clock = 3000
+	l.seed(t, &e2)
+
+	want := []fakeapi.Write{audioWrite(&e2, "eng"), subWrite(&e2, "eng")}
+	if got := l.writes("alice", 2); !slices.Equal(got, want) {
+		t.Errorf("after alice's own choice her writes = %+v, want %+v", got, want)
+	}
+	if got, want := l.basis("alice", &e2), (streams.Basis{Version: 1200, Source: streams.SourceIntent}); got != want {
+		t.Errorf("alice's record basis = %+v, want her own choice %+v", got, want)
+	}
+}
+
+func TestSeedProfileDistinctFromHousehold(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	newLib := func(t *testing.T) *seedLib {
+		t.Helper()
+		l := newSeedLib(t, allShowProfiles, []string{"alice", "bob"}, e2)
+		l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+		l.seed(t, &e2)
+		if got, want := l.basis("alice", &e2), profileBasis("jpn", "eng"); got != want {
+			t.Fatalf("first seed basis = %+v, want the profile's %+v", got, want)
+		}
+		l.clock = 2000
+		return l
+	}
+
+	t.Run("an unchanged profile is not applied twice", func(t *testing.T) {
+		t.Parallel()
+		l := newLib(t)
+		calls := len(l.clients["alice"].CallNames())
+
+		l.seed(t, &e2)
+
+		if got := l.clients["alice"].CallNames()[calls:]; len(got) != 0 {
+			t.Errorf("second seed requests = %v, want none", got)
+		}
+	})
+	t.Run("a household choice replaces the profile seed", func(t *testing.T) {
+		t.Parallel()
+		l := newLib(t)
+		choose(l.cache, "bob", obsShow, "jpn", "fra", streams.Anchor{}, 1500)
+
+		l.seed(t, &e2)
+
+		want := []fakeapi.Write{audioWrite(&e2, "jpn"), subWrite(&e2, "fra")}
+		if got := l.writes("alice", 1); !slices.Equal(got, want) {
+			t.Errorf("writes = %+v, want bob's choice %+v", got, want)
+		}
+	})
+	t.Run("a changed profile is applied again", func(t *testing.T) {
+		t.Parallel()
+		l := newLib(t)
+		l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "fra"})
+
+		l.seed(t, &e2)
+
+		if got, want := l.writes("alice", 1), []fakeapi.Write{subWrite(&e2, "fra")}; !slices.Equal(got, want) {
+			t.Errorf("writes = %+v, want the new subtitle %+v", got, want)
+		}
+		if got, want := l.basis("alice", &e2), profileBasis("jpn", "fra"); got != want {
+			t.Errorf("basis = %+v, want %+v", got, want)
+		}
+	})
+}
+
+func TestSeedProfileUsesUserNotAdmin(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	l := newSeedLib(t, allShowProfiles, []string{"alice"}, e2)
+	l.selectFor("admin", &e2, streamOf(&e2, kindAudio, "eng"), streamOf(&e2, kindSubtitle, "eng"))
+	l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+
+	l.seed(t, &e2)
+
+	if got, want := l.writes("alice", 0), []fakeapi.Write{subWrite(&e2, "eng")}; !slices.Equal(got, want) {
+		t.Errorf("alice's writes = %+v, want %+v (the admin's subtitle already being English says nothing of hers)", got, want)
+	}
+}
+
+func TestSeedProfileFromDefaultAudio(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	l := newSeedLib(t, allShowProfiles, []string{"alice"}, e2)
+	l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "eng", Subtitle: "fra"})
+	l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: ""})
+	l.selectFor("alice", &e2, streamOf(&e2, kindAudio, "eng"), streamOf(&e2, kindSubtitle, "eng"))
+
+	l.seed(t, &e2)
+
+	want := []fakeapi.Write{{Kind: "subtitle-off", PartID: partOf(&e2)}}
+	if got := l.writes("alice", 0); !slices.Equal(got, want) {
+		t.Errorf("writes = %+v, want subtitles off from the default Japanese audio's profile %+v", got, want)
+	}
+}
+
+func TestSeedNoChoiceReadsNothing(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	noAudio := obsEp(1, 3, []streams.Stream{obsSub(9134, "eng")})
 	tests := []struct {
-		name       string
-		plex       *fakeapi.Plex
-		wantReason string
-		wantWarn   bool
+		name    string
+		ep      streams.Episode
+		profile bool
+	}{
+		{"no record and no profile", e2, false},
+		{"a profile for another language", e2, true},
+		{"no audio stream", noAudio, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := newSeedLib(t, allShowProfiles, []string{"alice"}, tc.ep)
+			if tc.profile {
+				l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "kor", Subtitle: "eng"})
+			}
+
+			l.seed(t, &tc.ep)
+
+			if got := l.clients["alice"].CallNames(); len(got) != 0 {
+				t.Errorf("requests = %v, want none", got)
+			}
+		})
+	}
+}
+
+func TestSeedProtectsPlayedEpisode(t *testing.T) {
+	t.Parallel()
+	e1, e2 := seedEp(1, 1), seedEp(1, 2)
+	l := newSeedLib(t, allShowSeeding, []string{"alice"}, e1, e2)
+	choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+	l.selectFor("alice", &e2, streamOf(&e2, kindAudio, "fra"))
+	l.viewFor("alice", &e2, 1500)
+	l.clock = 2000
+
+	l.reconcile(t, "alice", &e2)
+	l.seed(t, &e2)
+
+	if got, want := l.writes("alice", 0), []fakeapi.Write{audioWrite(&e1, "jpn")}; !slices.Equal(got, want) {
+		t.Errorf("writes = %+v, want only E1 put on Japanese %+v (E2 was played after the choice)", got, want)
+	}
+}
+
+func TestSeedUpdatedSameBasisSkips(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	basis := streams.Basis{Version: 1000, Source: streams.SourceIntent}
+
+	t.Run("a record at the current basis", func(t *testing.T) {
+		t.Parallel()
+		l := newSeedLib(t, allShowSeeding, []string{"alice"}, e2)
+		choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+		l.cache.RecordApplied("alice", e2.RatingKey, streams.Applied{Basis: basis, At: 1500, PartID: partOf(&e2), AudioID: streamOf(&e2, kindAudio, "eng")})
+
+		l.seed(t, &e2)
+
+		if got := l.clients["alice"].CallNames(); len(got) != 0 {
+			t.Errorf("requests = %v, want none", got)
+		}
+	})
+	t.Run("a replaced file", func(t *testing.T) {
+		t.Parallel()
+		replaced := cloneEp(e2)
+		replaced.Media[0].Part[0].ID = 5999
+		l := newSeedLib(t, allShowSeeding, []string{"alice"}, replaced)
+		choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+		l.cache.RecordApplied("alice", e2.RatingKey, streams.Applied{Basis: basis, At: 1500, PartID: partOf(&e2), AudioID: streamOf(&e2, kindAudio, "jpn")})
+		l.viewFor("alice", &replaced, 3000)
+		l.clock = 4000
+
+		l.seed(t, &replaced)
+
+		if got, want := l.writes("alice", 0), []fakeapi.Write{audioWrite(&replaced, "jpn")}; !slices.Equal(got, want) {
+			t.Errorf("writes = %+v, want the new file put on Japanese %+v", got, want)
+		}
+		if rec, _ := l.cache.AppliedFor("alice", e2.RatingKey); rec.PartID != 5999 {
+			t.Errorf("record part = %d, want 5999", rec.PartID)
+		}
+	})
+}
+
+func TestSeedOutOfScopeFallsThrough(t *testing.T) {
+	t.Parallel()
+	e3 := seedEp(1, 3)
+	l := newSeedLib(t, nextShow, []string{"alice"}, e3)
+	choose(l.cache, "alice", obsShow, "jpn", "", anchorOn(1, 5), 1000)
+	l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+
+	l.seed(t, &e3)
+
+	if got, want := l.writes("alice", 0), []fakeapi.Write{subWrite(&e3, "eng")}; !slices.Equal(got, want) {
+		t.Errorf("writes = %+v, want the profile's subtitle only %+v", got, want)
+	}
+	if got, want := l.basis("alice", &e3), profileBasis("jpn", "eng"); got != want {
+		t.Errorf("basis = %+v, want %+v", got, want)
+	}
+}
+
+func TestSeedHouseholdNewestOutOfScopeOlderSeeds(t *testing.T) {
+	t.Parallel()
+	e5 := seedEp(1, 5)
+	tests := []struct {
+		name      string
+		bobAnchor streams.Anchor
+		want      fakeapi.Write
+		wantBasis streams.Basis
+	}{
+		{"the newest choice starts after the episode", anchorOn(1, 9), audioWrite(&e5, "fra"), streams.Basis{From: "carol", Version: 1000, Source: streams.SourceHousehold}},
+		{"the newest choice covers the episode", anchorOn(1, 3), audioWrite(&e5, "jpn"), streams.Basis{From: "bob", Version: 1001, Source: streams.SourceHousehold}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := newSeedLib(t, nextShow, []string{"alice", "bob", "carol"}, e5)
+			choose(l.cache, "bob", obsShow, "jpn", "", tc.bobAnchor, 1001)
+			choose(l.cache, "carol", obsShow, "fra", "", anchorOn(1, 1), 1000)
+
+			l.seed(t, &e5)
+
+			if got := l.writes("alice", 0); !slices.Equal(got, []fakeapi.Write{tc.want}) {
+				t.Errorf("alice's writes = %+v, want %+v", got, tc.want)
+			}
+			if got := l.basis("alice", &e5); got != tc.wantBasis {
+				t.Errorf("basis = %+v, want %+v", got, tc.wantBasis)
+			}
+		})
+	}
+}
+
+func TestSeedHouseholdSkipsSupersededRecord(t *testing.T) {
+	t.Parallel()
+	s2e5 := seedEp(2, 5)
+	cfg := Config{UpdateLevel: LevelSeason, UpdateStrategy: StrategyNext, LanguageProfiles: true, SeedNewEpisodes: true}
+	tests := []struct {
+		name      string
+		wantBasis streams.Basis
+		want      []fakeapi.Write
+		carol     bool
+	}{
+		{"an older choice that still governs seeds", streams.Basis{From: "carol", Version: 999, Source: streams.SourceHousehold}, []fakeapi.Write{audioWrite(&s2e5, "fra")}, true},
+		{"with none, the profile seeds", profileBasis("jpn", "eng"), []fakeapi.Write{subWrite(&s2e5, "eng")}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := newSeedLib(t, cfg, []string{"alice", "bob", "carol"}, s2e5)
+			choose(l.cache, "bob", obsShow, "jpn", "", anchorOn(1, 1), 1000)
+			choose(l.cache, "bob", "1001/s2", "eng", "", anchorOn(2, 9), 1001)
+			if tc.carol {
+				choose(l.cache, "carol", obsShow, "fra", "", anchorOn(1, 1), 999)
+			}
+			l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
+
+			l.seed(t, &s2e5)
+
+			if got := l.writes("alice", 0); !slices.Equal(got, tc.want) {
+				t.Errorf("alice's writes = %+v, want %+v (bob's show choice no longer governs his season 2)", got, tc.want)
+			}
+			if got := l.basis("alice", &s2e5); got != tc.wantBasis {
+				t.Errorf("basis = %+v, want %+v", got, tc.wantBasis)
+			}
+		})
+	}
+}
+
+func TestSeedEachUserThroughOwnClient(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	l := newSeedLib(t, allShowSeeding, []string{"alice", "bob"}, e2)
+	choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+	choose(l.cache, "bob", obsShow, "fra", "", streams.Anchor{}, 1001)
+
+	l.seed(t, &e2)
+
+	if got, want := l.writes("alice", 0), []fakeapi.Write{audioWrite(&e2, "jpn")}; !slices.Equal(got, want) {
+		t.Errorf("alice's writes = %+v, want her Japanese %+v", got, want)
+	}
+	if got, want := l.writes("bob", 0), []fakeapi.Write{audioWrite(&e2, "fra")}; !slices.Equal(got, want) {
+		t.Errorf("bob's writes = %+v, want his French %+v", got, want)
+	}
+	if got := l.admin.Writes(); len(got) != 0 {
+		t.Errorf("admin client writes = %+v, want none", got)
+	}
+}
+
+// Not parallel: it swaps the process-global default logger.
+func TestSeedSkipsUserWithNilClient(t *testing.T) {
+	e2 := seedEp(1, 2)
+	l := newSeedLib(t, allShowSeeding, []string{"alice", "carol"}, e2)
+	delete(l.clients, "carol")
+	choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+	choose(l.cache, "carol", obsShow, "jpn", "", streams.Anchor{}, 1000)
+	buf := captureLogs(t)
+
+	l.seed(t, &e2)
+
+	if got := l.writes("alice", 0); len(got) != 1 {
+		t.Errorf("alice's writes = %+v, want one", got)
+	}
+	if got := l.admin.Writes(); len(got) != 0 {
+		t.Errorf("admin client writes = %+v, want none: a user without a client is skipped, never written as the admin", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "sync: no per-user client, skipping user") || !strings.Contains(out, "user_id=carol") {
+		t.Errorf("log = %q, want a warning skipping user_id=carol", out)
+	}
+}
+
+func TestSeedStopsOnCancelledContext(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	l := newSeedLib(t, allShowProfiles, []string{"alice"}, e2)
+	choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled on purpose; Background, not t.Context()
+
+	l.s.SeedEpisode(ctx, l.admin.EpisodeByKey[e2.RatingKey], "scan_new")
+
+	if got := l.clients["alice"].CallNames(); len(got) != 0 {
+		t.Errorf("requests = %v, want none on a cancelled context", got)
+	}
+}
+
+func TestSeedEpisodeOffIsNoop(t *testing.T) {
+	t.Parallel()
+	e2 := seedEp(1, 2)
+	off := allShowProfiles
+	off.SeedNewEpisodes = false
+	l := newSeedLib(t, off, []string{"alice", "bob"}, e2)
+	choose(l.cache, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000)
+	choose(l.cache, "bob", obsShow, "fra", "", streams.Anchor{}, 1100)
+	l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "eng", Subtitle: "eng"})
+
+	l.seed(t, &e2)
+
+	for _, user := range []string{"alice", "bob"} {
+		if got := l.clients[user].CallNames(); len(got) != 0 {
+			t.Errorf("%s's requests = %v, want none with seeding off", user, got)
+		}
+		if rec, ok := l.cache.AppliedFor(user, e2.RatingKey); ok {
+			t.Errorf("%s's record = %+v, want none with seeding off", user, rec)
+		}
+	}
+}
+
+// Not parallel: it swaps the process-global default logger.
+func TestSeedLogsEachSource(t *testing.T) {
+	e2 := seedEp(1, 2)
+	tests := []struct {
+		name   string
+		setup  func(c *fakeapi.Cache)
+		msg    string
+		attrs  map[string]string
+		silent bool
 	}{
 		{
-			name: "candidate fetches error logs WARN candidate_fetch_errors",
-			plex: &fakeapi.Plex{
-				ShowEpisodesByShow: map[string][]streams.Episode{"42": episodes},
-				EpisodeErr:         errors.New("plex 503"),
-			},
-			wantReason: "candidate_fetch_errors",
-			wantWarn:   true,
+			name:  "own choice",
+			setup: func(c *fakeapi.Cache) { choose(c, "alice", obsShow, "jpn", "", streams.Anchor{}, 1000) },
+			msg:   "new/updated episode language set",
+			attrs: map[string]string{"source": "intent", "trigger": "scan_new"},
 		},
 		{
-			name: "no candidate without fetch errors logs DEBUG no_candidate",
-			plex: &fakeapi.Plex{
-				ShowEpisodesByShow: map[string][]streams.Episode{"42": episodes},
+			name:  "another user's choice",
+			setup: func(c *fakeapi.Cache) { choose(c, "bob", obsShow, "jpn", "", streams.Anchor{}, 1000) },
+			msg:   "new/updated episode language set",
+			attrs: map[string]string{"source": "household", "from": "user-bob"},
+		},
+		{
+			name: "the profile",
+			setup: func(c *fakeapi.Cache) {
+				c.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
 			},
-			wantReason: "no_candidate",
-			wantWarn:   false,
+			msg:   "language profile applied to new show",
+			attrs: map[string]string{"audio_lang": "jpn", "subtitle_lang": "eng"},
+		},
+		{
+			name: "a seed that changed nothing",
+			setup: func(c *fakeapi.Cache) {
+				choose(c, "alice", obsShow, "eng", "", streams.Anchor{}, 1000)
+			},
+			msg:    "new/updated episode language set",
+			silent: true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			buf := captureLogs(t)
+			l := newSeedLib(t, allShowProfiles, []string{"alice"}, e2)
+			tc.setup(l.cache)
+			rec := capture.Default(t)
 
-			s := newSyncer(Config{}, tc.plex, fakeapi.NewCache(), &fakeUsers{})
-			ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
+			l.seed(t, &e2)
 
-			if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
-				t.Fatalf("findEpisodeReference = %+v, want nil (no usable reference)", ref)
+			for key, want := range tc.attrs {
+				if !rec.HasAttr(tc.msg, key, want) {
+					t.Errorf("%q with %s=%q not logged: %v", tc.msg, key, want, rec.Records())
+				}
 			}
-			out := buf.String()
-			if !strings.Contains(out, "reason="+tc.wantReason) {
-				t.Errorf("log %q missing reason=%s", out, tc.wantReason)
-			}
-			if gotWarn := strings.Contains(out, "level=WARN"); gotWarn != tc.wantWarn {
-				t.Errorf("WARN present = %v, want %v; log = %q", gotWarn, tc.wantWarn, out)
+			if tc.silent && rec.Contains(tc.msg) {
+				t.Errorf("%q logged for a seed that wrote nothing: %v", tc.msg, rec.Records())
 			}
 		})
 	}
 }
 
-// TestFindEpisodeReference_logsShowEpisodesFetchError pins the
-// get_show_episodes_error observability branch of findEpisodeReference
-// (episode.go): when the admin reader's ShowEpisodes call fails, the search
-// returns nil AND emits a WARN carrying the inviolate key "failed to fetch
-// show episodes for reference" and the frozen reason label
-// get_show_episodes_error. This is symmetric to the already-pinned
-// candidate_fetch_errors branch and is the only observable difference from the
-// benign no_grandparent_key / no_candidate DEBUG paths, which also return nil.
-func TestFindEpisodeReference_logsShowEpisodesFetchError(t *testing.T) {
-	plx := &fakeapi.Plex{ShowEpisodesErr: errors.New("plex 503")}
-
-	buf := captureLogs(t)
-
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
-	s := newSyncer(Config{}, plx, fakeapi.NewCache(), &fakeUsers{})
-
-	if ref := s.findEpisodeReference(t.Context(), ep); ref != nil {
-		t.Fatalf("findEpisodeReference = %+v, want nil when ShowEpisodes errors", ref)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "reason=get_show_episodes_error") {
-		t.Errorf("log %q missing reason=get_show_episodes_error", out)
-	}
-	if !strings.Contains(out, "failed to fetch show episodes for reference") {
-		t.Errorf("log %q missing the inviolate WARN key 'failed to fetch show episodes for reference'", out)
-	}
-	if !strings.Contains(out, "level=WARN") {
-		t.Errorf("a ShowEpisodes fetch error must log at WARN; log = %q", out)
-	}
-}
-
-// TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient pins the
-// per-user-write-isolation fail-closed contract in the fan-out loop: when
-// s.userClient returns nil for a user (its per-user Plex client cannot be
-// built), that user is SKIPPED with a warn rather than processed under the
-// admin client. Writing a shared user's selection under the admin token
-// corrupts the admin's own per-user state (the documented h-f6 bug), so the
-// skip is security-critical. A regression that dropped the guard would call
-// applyEpisodeForUser with a nil client and panic on the first nil-interface
-// Episode() call, so this fails loudly if the skip is removed.
+// An unreadable language code is learned and matched verbatim, so a
+// malformed file tag reaches the profile-applied record.
 //
-// Not parallel: it swaps the process-global default slog logger.
-func TestProcessNewOrUpdatedEpisodeAllUsers_SkipsUserWithNilClient(t *testing.T) {
-	plx := &fakeapi.Plex{
-		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
-		EpisodeByKey: map[string]*streams.Episode{
-			"2":   mkSelectedAudioEpisode("2"),
-			"100": mkSelectedAudioEpisode("100"),
-		},
-	}
-	lookup := &fakeUsers{AllResult: []users.Account{
-		{ID: "1"},
-		{ID: "2"},
-	}}
-	s := New(Config{}, Deps{
-		Plex:  plx,
-		Cache: fakeapi.NewCache(),
-		Users: lookup,
-		UserClient: func(uid string) PlexReadWriter {
-			if uid == "2" {
-				return nil
-			}
-			return plx
-		},
-	})
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
+// Not parallel: it swaps the process-global default logger.
+func TestSeedProfileSanitizesLanguageFieldsInLog(t *testing.T) {
+	const (
+		hostileAudio = "jpn\nlevel=ERROR \u202ea"
+		hostileSub   = "eng\nlevel=ERROR \u202es"
+	)
+	ep := obsEp(1, 2, []streams.Stream{obsAud(9121, hostileAudio, ""), obsSub(9124, hostileSub)})
+	l := newSeedLib(t, allShowProfiles, []string{"alice"}, ep)
+	l.cache.LearnLanguageProfile("alice", streams.LanguageChoice{Audio: hostileAudio, Subtitle: hostileSub})
+	rec := capture.Default(t)
 
-	buf := captureLogs(t)
+	l.seed(t, &ep)
 
-	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
-
-	if got := countCalls(plx.CallNames(), "Episode:100"); got != 1 {
-		t.Errorf("target episode reloaded %d times; want 1 (user 2 has a nil client and must be skipped, not processed under admin)", got)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "skipping user") || !strings.Contains(out, "user_id=2") {
-		t.Errorf("expected a warn skipping user_id=2 for a nil per-user client; log = %q", out)
-	}
-}
-
-// TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile pins the
-// no-reference language-profile fallback in the fan-out path: when a show has
-// no prior episode with a selection (ref == nil) and LEARN_LANGUAGE_PROFILES is
-// enabled, a new episode receives the user's learned audio->subtitle profile
-// applied per user. This is the documented "applies your habits to brand-new
-// shows" feature; a regression that skipped the fallback branch would leave
-// the new episode's subtitle unset (SetSubtitle count 0).
-func TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile(t *testing.T) {
-	t.Parallel()
-	plx := &fakeapi.Plex{
-		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil}, // no candidate -> ref nil
-	}
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
-	c := fakeapi.NewCache()
-	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
-	s := newSyncer(Config{LanguageProfiles: true}, plx, c, lookup)
-	ep := &streams.Episode{
-		RatingKey:            "100",
-		GrandparentRatingKey: "42",
-		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-			{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-		}}}}},
-	}
-
-	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
-
-	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 1 {
-		t.Errorf("SetSubtitle called %d times; want 1 (language-profile fallback must apply the learned eng subtitle when no reference exists)", got)
-	}
-}
-
-// TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser pins
-// the successful per-user apply path: when a shared reference episode is found
-// and a target episode needs a different audio track, the fan-out applies the
-// change through the per-user client and emits the inviolate "new/updated
-// episode language set" summary. The existing fan-out tests only exercise
-// no-change targets, so the changed==true branch of applyEpisodeForUser and
-// its documented log key are otherwise unverified.
-//
-// Not parallel: it swaps the process-global default slog logger.
-func TestProcessNewOrUpdatedEpisodeAllUsers_AppliesReferenceAndLogsPerUser(t *testing.T) {
-	plx := &fakeapi.Plex{
-		ShowEpisodesByShow: map[string][]streams.Episode{"42": {{RatingKey: "2"}}},
-		EpisodeByKey: map[string]*streams.Episode{
-			"2": {RatingKey: "2", Media: []streams.Media{{Part: []streams.Part{{ID: 100, Stream: []streams.Stream{
-				{ID: 11, StreamType: plexapi.StreamTypeAudio, LanguageCode: "jpn", Selected: true},
-			}}}}}},
-			"100": targetNeedingAudioSwitch("100"),
-		},
-	}
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
-	s := newSyncer(Config{}, plx, fakeapi.NewCache(), lookup)
-	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42", GrandparentTitle: textsafe.NewUntrusted("Show")}
-
-	buf := captureLogs(t)
-
-	s.ProcessNewOrUpdatedEpisodeAllUsers(t.Context(), ep, "scan_new")
-
-	if got := countCalls(plx.CallNames(), "SetAudio"); got != 1 {
-		t.Errorf("SetAudio called %d times; want 1 (reference jpn audio applied to the target for the one user)", got)
-	}
-	if out := buf.String(); !strings.Contains(out, "new/updated episode language set") {
-		t.Errorf("missing inviolate 'new/updated episode language set' summary after a per-user change; log = %q", out)
-	}
-}
-
-// TestFindReferenceEpisode_StopsOnCancelledContext pins the top-of-loop context
-// guard in findReferenceEpisode (episode.go): on an already-cancelled context
-// the search must return immediately with searched==0 and issue no per-candidate
-// metadata fetch, so a shutdown mid-scan cannot keep hitting Plex. A mutant that
-// dropped the top-of-loop ctx.Err() guard would fetch the newest candidate
-// (which has a selected audio here) and return it as the reference.
-func TestFindReferenceEpisode_StopsOnCancelledContext(t *testing.T) {
-	t.Parallel()
-	episodes := []streams.Episode{{RatingKey: "1"}, {RatingKey: "2"}}
-	plx := &fakeapi.Plex{
-		EpisodeByKey: map[string]*streams.Episode{
-			"1": mkSelectedAudioEpisode("1"),
-			"2": mkSelectedAudioEpisode("2"),
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancelled on purpose; Background, not t.Context()
-
-	ref, searched, fetchErrors := findReferenceEpisode(ctx, plx, episodes, "exclude-none", maxRefSearchDepth)
-
-	if ref != nil {
-		t.Errorf("findReferenceEpisode ref = %+v, want nil on a cancelled context", ref)
-	}
-	if searched != 0 {
-		t.Errorf("searched = %d, want 0 (the top-of-loop ctx guard must stop before the first fetch)", searched)
-	}
-	if fetchErrors != 0 {
-		t.Errorf("fetchErrors = %d, want 0", fetchErrors)
-	}
-	if got := len(plx.CallNames()); got != 0 {
-		t.Errorf("Plex Episode fetched %d times on a cancelled context, want 0", got)
-	}
-}
-
-// TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext pins the
-// per-user fan-out loop's context guard: a cancelled context halts the fan-out
-// before any per-user apply. The reference search returns nil (empty show), so
-// without the guard the loop would fall through to the language-profile path
-// and apply the learned subtitle; the guard prevents that. Mirrors
-// TestProcessNewOrUpdatedEpisodeAllUsers_FallsBackToLanguageProfile, which shows
-// the same setup DOES apply the profile on a live context.
-func TestProcessNewOrUpdatedEpisodeAllUsers_StopsOnCancelledContext(t *testing.T) {
-	t.Parallel()
-	plx := &fakeapi.Plex{
-		ShowEpisodesByShow: map[string][]streams.Episode{"42": nil},
-	}
-	lookup := &fakeUsers{AllResult: []users.Account{{ID: "1"}}}
-	c := fakeapi.NewCache()
-	c.LearnLanguageProfile("1", streams.LanguageChoice{Audio: "jpn", Subtitle: "eng"})
-	s := newSyncer(Config{LanguageProfiles: true}, plx, c, lookup)
-	ep := &streams.Episode{
-		RatingKey:            "100",
-		GrandparentRatingKey: "42",
-		Media: []streams.Media{{Part: []streams.Part{{ID: 7, Stream: []streams.Stream{
-			{ID: 11, StreamType: plexapi.StreamTypeAudio, Selected: true, LanguageCode: "jpn"},
-			{ID: 12, StreamType: plexapi.StreamTypeSubtitle, LanguageCode: "eng", Codec: "srt"},
-		}}}}},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancelled on purpose; Background, not t.Context()
-
-	s.ProcessNewOrUpdatedEpisodeAllUsers(ctx, ep, "scan_new")
-
-	if got := countCalls(plx.CallNames(), "SetSubtitle"); got != 0 {
-		t.Errorf("SetSubtitle called %d times on a cancelled context; want 0 (the fan-out loop's ctx guard must halt before applying the language profile)", got)
+	for key, raw := range map[string]string{"audio_lang": hostileAudio, "subtitle_lang": hostileSub} {
+		want := textsafe.SanitizeSingleLine(raw)
+		if !rec.HasAttr("language profile applied", key, want) {
+			t.Errorf("%s was not logged as %q; a learned language comes from the media file and reached the log raw: %v", key, want, rec.Records())
+		}
 	}
 }

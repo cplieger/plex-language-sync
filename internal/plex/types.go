@@ -67,7 +67,4 @@ type HistoryItem struct {
 	Type         string          `json:"type"`
 	LibraryTitle string          `json:"librarySectionTitle"`
 	AccountID    streams.FlexInt `json:"accountID"`
-	// ViewedAt is the play's unix timestamp, the same field the History
-	// fetch filters on server-side (viewedAt>=N). 0 when absent.
-	ViewedAt streams.FlexInt `json:"viewedAt"`
 }

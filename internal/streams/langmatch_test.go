@@ -252,7 +252,7 @@ func TestIntentCarriesTheFinerTag(t *testing.T) {
 	t.Parallel()
 	audio := aud(1, "spa", "es-ES")
 	subtitle := sub(2, "spa", "es-ES")
-	intent := NewIntent(Pair{Audio: audio, Subtitle: subtitle}, 0)
+	intent := NewIntent(Pair{Audio: audio, Subtitle: subtitle}, Anchor{}, 0)
 
 	got := intent.RefStreams()
 	if got.Audio.LanguageTag != "es-ES" {
@@ -271,16 +271,12 @@ func TestIntentCarriesTheFinerTag(t *testing.T) {
 	}
 }
 
-// TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter pins the regression
-// three reviewers found independently.
-//
-// The forced flag is a hard requirement and is applied before the language
-// grading; the hearing-impaired flag is a preference and must be applied after.
-// filterByBoolPref falls back to the whole set only when NOTHING in it matches,
+// TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter pins the filter
+// order. The forced flag is a hard requirement applied before the language
+// grading; the hearing-impaired flag is a preference applied after.
+// filterByBoolPref falls back to the whole set only when nothing in it matches,
 // so applying it first lets one hearing-impaired track in an unrelated language
-// capture the candidate set, after which the grading finds nothing acceptable in
-// it and returns no subtitle at all. That is worse than the plain string
-// equality this change replaced.
+// capture the candidate set, and the grading then returns no subtitle at all.
 func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 	t.Parallel()
 
@@ -359,14 +355,11 @@ func TestMatchSubtitleHearingImpairedIsAPreferenceNotAFilter(t *testing.T) {
 }
 
 // TestUntaggedSubtitleReferenceMatchesNothing pins the one place the audio and
-// subtitle paths diverge on untagged media, and restores behavior a review
-// found had been widened by accident.
-//
-// The previous implementation refused outright when the reference subtitle
-// carried no language, while the audio path matched untagged to untagged. That
-// asymmetry is deliberate: an untagged audio track is almost always THE audio
-// track, whereas an untagged subtitle is as likely to be signs-and-songs or
-// commentary, and switching one on across a whole show is visible and unwanted.
+// subtitle paths diverge on untagged media: an untagged subtitle reference
+// matches nothing, while an untagged audio reference matches an untagged track.
+// An untagged audio track is almost always THE audio track, whereas an untagged
+// subtitle is as likely to be signs-and-songs or commentary, and switching one
+// on across a whole show is visible and unwanted.
 func TestUntaggedSubtitleReferenceMatchesNothing(t *testing.T) {
 	t.Parallel()
 	ref := sub(10, "", "")
@@ -388,12 +381,10 @@ func TestUntaggedSubtitleReferenceMatchesNothing(t *testing.T) {
 	}
 }
 
-// TestUnreadableCodeComparesTheCoarseFieldOnly covers a regression a reviewer
-// found in the first version of the unreadable-code fallback.
-//
-// The previous implementation compared languageCode alone, so two tracks sharing
-// a private or misspelled code matched even when their finer tags differed.
-// Requiring both fields to agree refused pairs that used to match.
+// TestUnreadableCodeComparesTheCoarseFieldOnly pins the unreadable-code
+// fallback: two tracks sharing a private or misspelled languageCode match even
+// when their finer tags differ, because requiring both fields to agree would
+// refuse pairs that carry the same code.
 func TestUnreadableCodeComparesTheCoarseFieldOnly(t *testing.T) {
 	t.Parallel()
 	ref := sub(10, "zzz", "!!!")
@@ -409,9 +400,9 @@ func TestUnreadableCodeComparesTheCoarseFieldOnly(t *testing.T) {
 }
 
 // TestMatchTierAgreesWithTheDecision pins that the tier the app logs never
-// contradicts the match it describes. A reviewer found the two cases carrying no
-// readable tag reported "none" for pairs the matcher had just accepted, which
-// would make a log line argue with itself.
+// contradicts the match it describes, including the two cases carrying no
+// readable tag, so a log line never reports "none" for a pair the matcher
+// accepted.
 func TestMatchTierAgreesWithTheDecision(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {

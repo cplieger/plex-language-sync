@@ -248,27 +248,6 @@ func TestTimelineActionAlwaysReturnsValidAction(t *testing.T) {
 	})
 }
 
-func TestBuildStreamCacheKeyFormat(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		userID := rapid.StringMatching(`[0-9]{1,5}`).Draw(t, "userID")
-		ratingKey := rapid.StringMatching(`[0-9]{1,5}`).Draw(t, "ratingKey")
-		audioID := rapid.IntRange(0, 100000).Draw(t, "audioID")
-		subID := rapid.IntRange(0, 100000).Draw(t, "subID")
-
-		got := BuildStreamCacheKey(StreamSelectionKey{UserID: userID, RatingKey: ratingKey, AudioID: audioID, SubtitleID: subID})
-
-		if !strings.HasPrefix(got, "streams:") {
-			t.Errorf("BuildStreamCacheKey(...) = %q, want 'streams:' prefix", got)
-		}
-		if !strings.Contains(got, userID) {
-			t.Errorf("BuildStreamCacheKey result %q does not contain userID %q", got, userID)
-		}
-		if !strings.Contains(got, ratingKey) {
-			t.Errorf("BuildStreamCacheKey result %q does not contain ratingKey %q", got, ratingKey)
-		}
-	})
-}
-
 // TestConnectAndListen_SlowDialNotStable is the regression guard for the
 // stability-timing fix: connection stability must be measured from
 // handshake SUCCESS, not from before the dial. A slow-but-successful

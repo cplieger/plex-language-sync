@@ -62,6 +62,21 @@ func Subtitle(ep *Episode) []*Stream {
 	return streamsByType(ep, (*Stream).IsSubtitle)
 }
 
+// DefaultAudio returns the first audio stream Plex marks default, else
+// the first audio stream, else nil.
+func DefaultAudio(ep *Episode) *Stream {
+	audio := Audio(ep)
+	for _, s := range audio {
+		if s.Default {
+			return s
+		}
+	}
+	if len(audio) == 0 {
+		return nil
+	}
+	return audio[0]
+}
+
 // FirstPartID returns the part ID of the first media part, or 0 when
 // the episode has no media/parts.
 func FirstPartID(ep *Episode) int {

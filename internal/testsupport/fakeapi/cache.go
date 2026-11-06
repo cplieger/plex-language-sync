@@ -9,7 +9,10 @@
 package fakeapi
 
 import (
+	"cmp"
 	"maps"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +31,7 @@ type Cache struct {
 	processed    map[string]time.Time
 	profiles     map[string]map[string]string
 	intents      map[string]map[string]streams.Intent
+	applied      map[string]map[string]streams.Applied
 	tokens       map[string]string
 	recentWindow time.Duration
 	mu           sync.Mutex
@@ -41,6 +45,7 @@ func NewCache() *Cache {
 		processed:    make(map[string]time.Time),
 		profiles:     make(map[string]map[string]string),
 		intents:      make(map[string]map[string]streams.Intent),
+		applied:      make(map[string]map[string]streams.Applied),
 		tokens:       make(map[string]string),
 		recentWindow: 5 * time.Minute,
 	}
@@ -109,11 +114,11 @@ func (c *Cache) SubtitleLangForAudio(userID, audioLang string) (string, bool) {
 	return lang, ok
 }
 
-// RecordIntent stores a user's observed track selection for a show,
-// mirroring internal/cache.Cache: deep-copied, keyed on (user, show),
-// nil intent and empty keys ignored.
-func (c *Cache) RecordIntent(userID, showKey string, intent *streams.Intent) {
-	if intent == nil || userID == "" || showKey == "" {
+// RecordIntent stores a user's observed track selection under a scope key,
+// mirroring internal/cache.Cache: deep-copied, keyed on (user, key), nil
+// intent and empty keys ignored.
+func (c *Cache) RecordIntent(userID, key string, intent *streams.Intent) {
+	if intent == nil || userID == "" || key == "" {
 		return
 	}
 	c.mu.Lock()
@@ -121,23 +126,86 @@ func (c *Cache) RecordIntent(userID, showKey string, intent *streams.Intent) {
 	if c.intents[userID] == nil {
 		c.intents[userID] = make(map[string]streams.Intent)
 	}
-	c.intents[userID][showKey] = intent.Clone()
+	c.intents[userID][key] = intent.Clone()
 }
 
-// IntentFor returns the recorded intent for a (user, show) pair,
+// IntentFor returns the intent recorded under exactly (user, key),
 // deep-copied.
-func (c *Cache) IntentFor(userID, showKey string) (streams.Intent, bool) {
+func (c *Cache) IntentFor(userID, key string) (streams.Intent, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	userIntents, ok := c.intents[userID]
 	if !ok {
 		return streams.Intent{}, false
 	}
-	intent, ok := userIntents[showKey]
+	intent, ok := userIntents[key]
 	if !ok {
 		return streams.Intent{}, false
 	}
 	return intent.Clone(), true
+}
+
+// ownedIntent is one recorded intent with the user and key it is stored under.
+type ownedIntent struct {
+	user, key string
+	in        streams.Intent
+}
+
+// LatestIntentFor mirrors internal/cache.Cache: the newest accepted intent of
+// another user, ties by user then key, deep-copied, match run unlocked.
+func (c *Cache) LatestIntentFor(exceptUser string, match func(user, key string, in streams.Intent) bool) (in streams.Intent, key, fromUser string, ok bool) {
+	c.mu.Lock()
+	var all []ownedIntent
+	for user, byKey := range c.intents {
+		if user == exceptUser {
+			continue
+		}
+		for k := range byKey {
+			rec := byKey[k]
+			all = append(all, ownedIntent{user: user, key: k, in: rec.Clone()})
+		}
+	}
+	c.mu.Unlock()
+	slices.SortFunc(all, func(a, b ownedIntent) int {
+		return cmp.Or(cmp.Compare(b.in.ObservedAt, a.in.ObservedAt),
+			strings.Compare(a.user, b.user), strings.Compare(a.key, b.key))
+	})
+	for i := range all {
+		if o := &all[i]; match(o.user, o.key, o.in) {
+			return o.in, o.key, o.user, true
+		}
+	}
+	return streams.Intent{}, "", "", false
+}
+
+// AppliedFor returns the record of what the app left on one episode for one
+// user, mirroring internal/cache.Cache.
+func (c *Cache) AppliedFor(userID, ratingKey string) (streams.Applied, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	a, ok := c.applied[userID][ratingKey]
+	return a, ok
+}
+
+// RecordApplied stores the record for one episode and user, replacing any
+// earlier one; empty keys are ignored, mirroring internal/cache.Cache.
+func (c *Cache) RecordApplied(userID, ratingKey string, a streams.Applied) {
+	if userID == "" || ratingKey == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.applied[userID] == nil {
+		c.applied[userID] = make(map[string]streams.Applied)
+	}
+	c.applied[userID][ratingKey] = a
+}
+
+// ForgetApplied drops the record for one episode and user, if any.
+func (c *Cache) ForgetApplied(userID, ratingKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.applied[userID], ratingKey)
 }
 
 // UserTokens returns a defensive copy of the userID → accessToken map.

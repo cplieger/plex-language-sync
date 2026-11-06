@@ -1,20 +1,45 @@
 package streams
 
-// Intent is the app's own durable record of a user's last deliberately
-// observed track selection for a show — captured on the event plane and
-// applied on the reconcile plane. Plex's metadata reads expose only an
-// ambient current selection whose per-user attribution is not reliable
-// after the fact, so this captures the choice at the only moment it is
-// attributable.
+// Intent is the app's durable record of a user's last observed track
+// selection for a show, captured on the event plane at play time: a later
+// library read cannot tell the user's pick from a write this app made
+// afterwards or from Plex's default.
 //
-// JSON tags are part of the on-disk profiles.json schema; do not change
-// without a migration.
+// JSON tags are the profiles.json schema. Fields are additive; an intent
+// without "anchor" loads with a zero anchor.
 type Intent struct {
 	// Subtitle nil means the user chose "no subtitles" for this audio.
 	Subtitle *intentStream `json:"subtitle"`
 	// Audio is never absent: an episode with no selected audio records no intent.
 	Audio      intentStream `json:"audio"`
+	Anchor     Anchor       `json:"anchor,omitzero"`
 	ObservedAt int64        `json:"observed_at"`
+}
+
+// Anchor is the episode and the stream ids the choice was observed on.
+type Anchor struct {
+	RatingKey  string `json:"ratingKey"`
+	Season     int    `json:"season"`
+	Index      int    `json:"index"`
+	AudioID    int    `json:"audioID"`
+	SubtitleID int    `json:"subtitleID,omitempty"` // 0 = no subtitle
+}
+
+// IsZero reports an anchor absent from the record, as on an intent
+// written before the field existed.
+func (a Anchor) IsZero() bool { return a.RatingKey == "" }
+
+// AnchorOf anchors sel, the selection observed on ep. A nil sel.Subtitle
+// records subtitle id 0, "no subtitle".
+func AnchorOf(ep *Episode, sel Pair) Anchor {
+	a := Anchor{RatingKey: ep.RatingKey, Season: ep.SeasonNum(), Index: ep.Num()}
+	if sel.Audio != nil {
+		a.AudioID = int(sel.Audio.ID)
+	}
+	if sel.Subtitle != nil {
+		a.SubtitleID = int(sel.Subtitle.ID)
+	}
+	return a
 }
 
 // intentStream is the persisted projection of a Stream: exactly the
@@ -41,10 +66,11 @@ type intentStream struct {
 
 // NewIntent projects an observed (audio, subtitle) selection into an
 // Intent. ref.Audio must be non-nil; ref.Subtitle may be nil ("no subtitles").
-func NewIntent(ref Pair, observedAt int64) *Intent {
+func NewIntent(ref Pair, anchor Anchor, observedAt int64) *Intent {
 	return &Intent{
 		Audio:      *intentStreamFrom(ref.Audio),
 		Subtitle:   intentStreamFrom(ref.Subtitle),
+		Anchor:     anchor,
 		ObservedAt: observedAt,
 	}
 }

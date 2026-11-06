@@ -4,7 +4,11 @@ This page explains how plex-language-sync decides which tracks to set, when it s
 
 ## Following your choice as you watch
 
-plex-language-sync keeps a WebSocket connection open to your Plex server, so Plex tells it the moment playback starts or the library changes. When you play an episode, it reads the audio and subtitle tracks you have selected, records them as your choice for that show, and sets matching tracks on the other episodes. `UPDATE_LEVEL` decides whether that means the whole show or the current season. `UPDATE_STRATEGY` decides whether every episode changes or only the episodes after the one you played.
+plex-language-sync keeps a WebSocket connection open to your Plex server, so Plex tells it the moment playback starts or the library changes. When you play an episode, it reads the audio and subtitle tracks you have selected. It compares each one with the track it set on that episode, or would set there. When a track differs, it records the track as your choice and sets matching tracks on the other episodes. When no choice of yours covers the episode yet, both tracks you play become your choice.
+
+`UPDATE_LEVEL` and `UPDATE_STRATEGY` set a choice's range. With `UPDATE_LEVEL=show` a choice covers the whole show, and with `season` it covers the season you played. `UPDATE_STRATEGY` decides whether every episode changes or only the episodes after the one you played. A change of `UPDATE_LEVEL` applies only to the choices you make afterwards. Where a saved show choice and a season choice both cover an episode, the newer one wins.
+
+A new choice is set on every episode in its range, including an episode you changed by hand. On an episode with no track matching your choice, the app leaves the track Plex had selected, and playing that track keeps your choice. For example, a show you watch in Japanese stays in Japanese when you play an episode that has only an English dub. To change the choice, pick the new track on an episode that has a matching track.
 
 The only thing it changes in Plex is which audio and subtitle track each episode has selected. Your account's language settings stay as they are.
 
@@ -24,21 +28,23 @@ Languages are matched by how close they are rather than by exact code, as [Confi
 
 When Plex adds an episode, plex-language-sync sets its tracks for each user in this order of preference:
 
-1. The choice that user last made for the show.
-2. The tracks other viewers already settled on for the show.
-3. The language habit learned for that user, for a show nobody has watched yet.
+1. The choice that user made for the show or its season, when the episode is in that choice's range.
+2. The most recent choice another user made whose range holds the episode.
+3. The language habit learned for that user, when no recorded choice covers the episode.
 
-`TRIGGER_ON_SCAN=false` turns this off. `TRIGGER_ON_PLAY=false` stops it reacting to playback.
+It skips an episode for a user who played it after the app last set its tracks there, or who has played it at all when the app has never set its tracks there and the tracks would come from another user or the habit. A choice the user made after that play is still applied.
+
+`TRIGGER_ON_SCAN=false` turns this off, both when Plex reports a new episode and in the daily deep scan. `TRIGGER_ON_PLAY=false` stops it reacting to playback.
 
 ## Learning your habits
 
-With `LEARN_LANGUAGE_PROFILES` on, each play also records which subtitle language a user pairs with which audio language, such as English subtitles with Japanese audio. A user keeps one subtitle language per audio language, the one chosen most recently, or none when they watch that audio without subtitles. A new show that nobody has played yet gets its subtitle from that habit, based on the audio track Plex plays by default. The habit never changes the audio of a new show. Shows you leave out with a label or a library name are never learned from.
+With `LEARN_LANGUAGE_PROFILES` on, each choice you make while watching also records which subtitle language a user pairs with which audio language, such as English subtitles with Japanese audio. A user keeps one subtitle language per audio language, the one chosen most recently, or none when they watch that audio without subtitles. A new episode that no recorded choice covers gets its subtitle from that habit, based on the audio track Plex plays by default. The habit never changes the audio of a new episode. Shows you leave out with a label or a library name are never learned from.
 
 ## The daily deep scan
 
-Once a day by default, set by `DEEP_SCAN_INTERVAL`, plex-language-sync goes over the time since its last finished pass, 24 hours at least and 30 days at most. It gives the episodes Plex added in that time their tracks, which covers an episode added while the app was stopped. For each episode watched in that time, it sets your recorded choice again on the other episodes of the show, for example where an earlier change failed or a file was replaced. It only applies choices it recorded while you watched.
+Once a day by default, set by `DEEP_SCAN_INTERVAL`, plex-language-sync goes over the time since its last finished pass, 24 hours at least and 30 days at most. Unless `TRIGGER_ON_SCAN=false`, it gives the episodes Plex added in that time their tracks, which covers an episode added while the app was stopped. For each episode watched in that time, it sets your recorded choice again across its range. That repairs an earlier change that failed or a file that was replaced. It only applies choices it recorded while you watched.
 
-The scan never infers a choice from what Plex reports later, because Plex cannot say afterwards which user selected a track. It also skips an episode you watched after your last recorded choice, so it never undoes a change you made by hand.
+The scan never infers a choice from what Plex reports later. A later read cannot tell a track you picked from one the app set or the file's default. It skips an episode you played after both your latest choice and the app's last change there. This keeps a change you made while watching. It never sets the same choice twice on one file, so a track you change on an episode's page stays once the app has set it.
 
 The scan keeps its schedule across restarts, and a restart runs it straight away only when the last one finished more than one interval ago. `DEEP_SCAN_INTERVAL=off`, `disabled` or a zero duration such as `0` turns it off, and the app then works from live events only.
 
