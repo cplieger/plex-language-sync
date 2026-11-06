@@ -92,7 +92,7 @@ func (src *seedSource) log(trigger, username string, ep *streams.Episode) {
 // The caller holds the user's show lock.
 func (s *Syncer) seedPlan(userID string, ep *streams.Episode) (*plan, seedSource) {
 	floor, strategy := s.cfg.SubtitleFloor, s.cfg.UpdateStrategy
-	if key, in, ok := s.intentFor(userID, ep); ok && InScope(key, strategy, in.Anchor, ep) {
+	if key, in, ok := s.intentFor(userID, ep); ok && inScope(key, strategy, in.Anchor, ep) {
 		ref := in.RefStreams()
 		return &plan{
 			pick: pickForIntent(ref, floor), ref: ref,
@@ -107,7 +107,7 @@ func (s *Syncer) seedPlan(userID string, ep *streams.Episode) (*plan, seedSource
 			return false
 		}
 		governing, _, ok := s.intentFor(owner, ep)
-		return ok && governing.String() == key && InScope(governing, strategy, in.Anchor, ep)
+		return ok && governing.String() == key && inScope(governing, strategy, in.Anchor, ep)
 	})
 	if ok {
 		fromName := s.users.Name(from)

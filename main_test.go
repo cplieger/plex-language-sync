@@ -542,9 +542,9 @@ func TestLoadConfigTrimsFileSecrets(t *testing.T) {
 // through a fake Plex server, since the adapter holds no dedup of its own.
 // ---------------------------------------------------------------------------
 
-// newTimelineSyncer is a syncer over client with seeding set to seed and no
+// newTimelineSyncer is a syncer with seeding set to seed and no
 // per-user clients.
-func newTimelineSyncer(client *plex.Client, c *cache.Cache, mgr *users.Manager, seed bool) *tracksync.Syncer {
+func newTimelineSyncer(c *cache.Cache, mgr *users.Manager, seed bool) *tracksync.Syncer {
 	return tracksync.New(tracksync.Config{SeedNewEpisodes: seed}, tracksync.Deps{
 		Cache: c, Users: mgr,
 		UserClient: func(string) tracksync.PlexReadWriter { return nil },
@@ -559,7 +559,7 @@ func newTestAdapter(t *testing.T, triggerOnPlay, seed bool) *notifyAdapter {
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	return &notifyAdapter{
-		syncer: newTimelineSyncer(client, c, mgr, seed),
+		syncer: newTimelineSyncer(c, mgr, seed),
 		cfg:    &config{triggerOnPlay: triggerOnPlay},
 		users:  mgr,
 		client: client,
@@ -839,7 +839,7 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 		mgr.Init(&plex.User{ID: "1", Name: "admin"})
 		client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 		return &notifyAdapter{
-			syncer: newTimelineSyncer(client, c, mgr, seed),
+			syncer: newTimelineSyncer(c, mgr, seed),
 			cfg:    &config{triggerOnPlay: play},
 			users:  mgr,
 			client: client,
@@ -890,7 +890,7 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	adapter := &notifyAdapter{
-		syncer: newTimelineSyncer(client, c, mgr, true),
+		syncer: newTimelineSyncer(c, mgr, true),
 		cfg:    &config{},
 		users:  mgr,
 		client: client,
@@ -960,7 +960,7 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := newTimelineSyncer(client, c, mgr, true)
+	syncer := newTimelineSyncer(c, mgr, true)
 	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{},
@@ -999,7 +999,7 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := newTimelineSyncer(client, c, mgr, true)
+	syncer := newTimelineSyncer(c, mgr, true)
 	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{},
@@ -1035,7 +1035,7 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	mgr := users.NewManager(c)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
-	syncer := newTimelineSyncer(client, c, mgr, true)
+	syncer := newTimelineSyncer(c, mgr, true)
 	adapter := &notifyAdapter{
 		syncer: syncer,
 		cfg:    &config{},
@@ -1073,7 +1073,7 @@ func TestTimelineSeedingOffFetchesNothing(t *testing.T) {
 		c := cache.New()
 		mgr := users.NewManager(c)
 		mgr.Init(&plex.User{ID: "1", Name: "admin"})
-		adapter := &notifyAdapter{syncer: newTimelineSyncer(client, c, mgr, seed), cfg: &config{}, users: mgr, client: client, cache: c}
+		adapter := &notifyAdapter{syncer: newTimelineSyncer(c, mgr, seed), cfg: &config{}, users: mgr, client: client, cache: c}
 		before := hits.Load()
 		adapter.OnTimeline(t.Context(), entries)
 		return hits.Load() - before

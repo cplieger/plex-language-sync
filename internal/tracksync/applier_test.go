@@ -494,12 +494,12 @@ func TestApplyReloadFailsAfterAudioWrite(t *testing.T) {
 				t.Errorf("reload warnings = %d; want %d:\n%s", got, tc.warnings, logs)
 			}
 			intent := streams.NewIntent(p.ref, streams.Anchor{RatingKey: "2000", Season: 1, Index: 1, AudioID: jpnAudioID, SubtitleID: engSubID}, 100)
-			in := ClassifyInput{
+			in := classifyInput{
 				Played: plx.EpisodeByKey["2001"], Intent: *intent, Applied: rec,
 				Floor: langtag.TierSameLanguage, HasIntent: true, HasApplied: ok,
 			}
-			if got, _ := Classify(&in); got != VerdictEcho {
-				t.Errorf("Classify of the part as it now stands = %v; want %v", got, VerdictEcho)
+			if got, _ := classify(&in); got != verdictEcho {
+				t.Errorf("classify of the part as it now stands = %v; want %v", got, verdictEcho)
 			}
 		})
 	}

@@ -70,210 +70,210 @@ func TestClassify(t *testing.T) {
 	inherited := pairView{audio: "0:jpn", subtitle: "0:eng"}
 	tests := []struct {
 		name string
-		in   ClassifyInput
-		want Verdict
+		in   classifyInput
+		want playVerdict
 		pair pairView
 	}{
 		{
 			name: "no selected audio and no intent",
-			in:   ClassifyInput{Played: playedEp("1001", 1, jpn, dub, on(eng))},
-			want: VerdictNoAudio,
+			in:   classifyInput{Played: playedEp("1001", 1, jpn, dub, on(eng))},
+			want: verdictNoAudio,
 		},
 		{
 			name: "no selected audio with an intent and a current record",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, jpn, dub, on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9002, 9011), HasApplied: true,
 			},
-			want: VerdictNoAudio,
+			want: verdictNoAudio,
 		},
 		{
 			name: "no intent with a seed record equal to the play picks both kinds",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played:  playedEp("1007", 7, on(jpn), dub, on(eng)),
 				Applied: streams.Applied{Basis: streams.Basis{From: "bob", Version: 90, Source: streams.SourceHousehold}, PartID: 5001, AudioID: 9002, SubtitleID: 9011}, HasApplied: true,
 			},
-			want: VerdictChoice, pair: pairView{audio: "9002:jpn", subtitle: "9011:eng"},
+			want: verdictChoice, pair: pairView{audio: "9002:jpn", subtitle: "9011:eng"},
 		},
 		{
 			name: "no intent and no record picks both kinds",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(dub), on(fre))},
-			want: VerdictChoice, pair: pairView{audio: "9001:eng", subtitle: "9012:fre"},
+			in:   classifyInput{Played: playedEp("1007", 7, on(dub), on(fre))},
+			want: verdictChoice, pair: pairView{audio: "9001:eng", subtitle: "9012:fre"},
 		},
 		{
 			name: "missing track: the dub the app left is an echo",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(dub), on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9001, 9011), HasApplied: true,
 			},
-			want: VerdictEcho, pair: inherited,
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "missing track with no record is an echo",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(dub), on(eng)), Intent: intentJ, HasIntent: true},
-			want: VerdictEcho, pair: inherited,
+			in:   classifyInput{Played: playedEp("1007", 7, on(dub), on(eng)), Intent: intentJ, HasIntent: true},
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "substitute region the app left is an echo",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(ptPT)), Intent: intentPtBR, HasIntent: true,
 				Applied: appliedOn(9003, 0), HasApplied: true,
 			},
-			want: VerdictEcho, pair: pairView{audio: "0:por"},
+			want: verdictEcho, pair: pairView{audio: "0:por"},
 		},
 		{
 			name: "substitute region with no record is an echo",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(ptPT)), Intent: intentPtBR, HasIntent: true},
-			want: VerdictEcho, pair: pairView{audio: "0:por"},
+			in:   classifyInput{Played: playedEp("1007", 7, on(ptPT)), Intent: intentPtBR, HasIntent: true},
+			want: verdictEcho, pair: pairView{audio: "0:por"},
 		},
 		{
 			name: "no subtitle left where the chosen subtitle is missing is an echo",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(jpn), fre), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9002, 0), HasApplied: true,
 			},
-			want: VerdictEcho, pair: inherited,
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "a part recorded with what it holds after a failed write is an echo",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(jpn), dub, eng, on(fre)), Intent: intentJ, HasIntent: true,
 				Applied: streams.Applied{At: 200, PartID: 5001, AudioID: 9002, SubtitleID: 9012}, HasApplied: true,
 			},
-			want: VerdictEcho, pair: inherited,
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "a subtitle not read back after an audio write is inherited whatever plays",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(jpn), dub, eng, on(fre)), Intent: intentJ, HasIntent: true,
 				Applied: subtitleUnknown, HasApplied: true,
 			},
-			want: VerdictEcho, pair: inherited,
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "a subtitle not read back still judges the audio against the record",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, jpn, on(dub), eng, on(fre)), Intent: intentJ, HasIntent: true,
 				Applied: subtitleUnknown, HasApplied: true,
 			},
-			want: VerdictChoice, pair: pairView{audio: "9001:eng", subtitle: "0:eng"},
+			want: verdictChoice, pair: pairView{audio: "9001:eng", subtitle: "0:eng"},
 		},
 		{
 			name: "no subtitle where the chosen subtitle is missing, no record, is an echo",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(jpn), fre), Intent: intentJ, HasIntent: true},
-			want: VerdictEcho, pair: inherited,
+			in:   classifyInput{Played: playedEp("1007", 7, on(jpn), fre), Intent: intentJ, HasIntent: true},
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "another subtitle where the chosen subtitle is missing, no record, is an echo",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(jpn), on(fre)), Intent: intentJ, HasIntent: true},
-			want: VerdictEcho, pair: inherited,
+			in:   classifyInput{Played: playedEp("1007", 7, on(jpn), on(fre)), Intent: intentJ, HasIntent: true},
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "subtitle-only pick on a dub-only part keeps the intent's audio",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(dub), eng, on(fre)), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9001, 9011), HasApplied: true,
 			},
-			want: VerdictChoice, pair: pairView{audio: "0:jpn", subtitle: "9012:fre"},
+			want: verdictChoice, pair: pairView{audio: "0:jpn", subtitle: "9012:fre"},
 		},
 		{
 			name: "switch back on the anchor is a choice",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1001", 1, dub, on(jpn), eng), Intent: intentDub, HasIntent: true,
 				Applied: appliedOn(9001, 0), HasApplied: true,
 			},
-			want: VerdictChoice, pair: pairView{audio: "9002:jpn"},
+			want: verdictChoice, pair: pairView{audio: "9002:jpn"},
 		},
 		{
 			name: "re-announcement of the anchor is a repeat",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1001", 1, dub, on(jpn), on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9002, 9011), HasApplied: true,
 			},
-			want: VerdictRepeat, pair: inherited,
+			want: verdictRepeat, pair: inherited,
 		},
 		{
 			name: "anchor ids are inherited where the record disagrees",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1001", 1, dub, on(jpn), on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9001, 9011), HasApplied: true,
 			},
-			want: VerdictRepeat, pair: inherited,
+			want: verdictRepeat, pair: inherited,
 		},
 		{
 			name: "legacy anchor never inherits by the anchor rule",
-			in:   ClassifyInput{Played: playedEp("", 1, on(jpn), eng), Intent: intentLegacy, HasIntent: true},
-			want: VerdictChoice, pair: pairView{audio: "0:jpn"},
+			in:   classifyInput{Played: playedEp("", 1, on(jpn), eng), Intent: intentLegacy, HasIntent: true},
+			want: verdictChoice, pair: pairView{audio: "0:jpn"},
 		},
 		{
 			name: "legacy anchor with every kind inherited is an echo, never a repeat",
-			in:   ClassifyInput{Played: playedEp("", 1, on(jpn), on(eng)), Intent: intentLegacy, HasIntent: true},
-			want: VerdictEcho, pair: inherited,
+			in:   classifyInput{Played: playedEp("", 1, on(jpn), on(eng)), Intent: intentLegacy, HasIntent: true},
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "commentary choice keeps any subtitle where its language is missing",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(dub), eng, on(fre)), Intent: intentCommentary, HasIntent: true},
-			want: VerdictEcho, pair: pairView{audio: "0:jpn", subtitle: "0:eng"},
+			in:   classifyInput{Played: playedEp("1007", 7, on(dub), eng, on(fre)), Intent: intentCommentary, HasIntent: true},
+			want: verdictEcho, pair: pairView{audio: "0:jpn", subtitle: "0:eng"},
 		},
 		{
 			name: "subtitle turned on against a no-subtitle choice is a choice",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(jpn), on(eng)), Intent: intentNoSub, HasIntent: true},
-			want: VerdictChoice, pair: pairView{audio: "0:jpn", subtitle: "9011:eng"},
+			in:   classifyInput{Played: playedEp("1007", 7, on(jpn), on(eng)), Intent: intentNoSub, HasIntent: true},
+			want: verdictChoice, pair: pairView{audio: "0:jpn", subtitle: "9011:eng"},
 		},
 		{
 			name: "subtitle off under a no-subtitle choice is an echo",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(jpn), eng), Intent: intentNoSub, HasIntent: true},
-			want: VerdictEcho, pair: pairView{audio: "0:jpn"},
+			in:   classifyInput{Played: playedEp("1007", 7, on(jpn), eng), Intent: intentNoSub, HasIntent: true},
+			want: verdictEcho, pair: pairView{audio: "0:jpn"},
 		},
 		// A failure or cancellation that changed nothing, an episode before
-		// the anchor under next and an evicted record reach Classify as a
+		// the anchor under next and an evicted record reach classify as a
 		// part with no record; a part an earlier PUT changed is the
 		// zero-basis row above.
 		{
 			name: "no record, observed equals the match",
-			in:   ClassifyInput{Played: playedEp("1007", 7, dub, on(jpn), on(eng)), Intent: intentJ, HasIntent: true},
-			want: VerdictEcho, pair: inherited,
+			in:   classifyInput{Played: playedEp("1007", 7, dub, on(jpn), on(eng)), Intent: intentJ, HasIntent: true},
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "no record, no candidate for the chosen audio",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(dub), on(eng)), Intent: intentJ, HasIntent: true},
-			want: VerdictEcho, pair: inherited,
+			in:   classifyInput{Played: playedEp("1007", 7, on(dub), on(eng)), Intent: intentJ, HasIntent: true},
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "no record, a different candidate is a choice",
-			in:   ClassifyInput{Played: playedEp("1007", 7, on(dub), jpn, on(eng)), Intent: intentJ, HasIntent: true},
-			want: VerdictChoice, pair: pairView{audio: "9001:eng", subtitle: "0:eng"},
+			in:   classifyInput{Played: playedEp("1007", 7, on(dub), jpn, on(eng)), Intent: intentJ, HasIntent: true},
+			want: verdictChoice, pair: pairView{audio: "9001:eng", subtitle: "0:eng"},
 		},
 		{
 			name: "a stale record is not read even when its ids equal the play",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, on(dub), jpn, on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: stale,
 			},
-			want: VerdictChoice, pair: pairView{audio: "9001:eng", subtitle: "0:eng"},
+			want: verdictChoice, pair: pairView{audio: "9001:eng", subtitle: "0:eng"},
 		},
 		{
 			name: "a stale record falls back to the match",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, dub, on(jpn), on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: stale,
 			},
-			want: VerdictEcho, pair: inherited,
+			want: verdictEcho, pair: inherited,
 		},
 		{
 			name: "a current record decides without the match",
-			in: ClassifyInput{
+			in: classifyInput{
 				Played: playedEp("1007", 7, dub, on(jpn), on(eng)), Intent: intentJ, HasIntent: true,
 				Applied: appliedOn(9001, 9011), HasApplied: true,
 			},
-			want: VerdictChoice, pair: pairView{audio: "9002:jpn", subtitle: "0:eng"},
+			want: verdictChoice, pair: pairView{audio: "9002:jpn", subtitle: "0:eng"},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tc.in.Floor = langtag.TierSameLanguage
-			got, pair := Classify(&tc.in)
+			got, pair := classify(&tc.in)
 			if got != tc.want {
 				t.Errorf("verdict = %v, want %v", got, tc.want)
 			}
@@ -286,11 +286,11 @@ func TestClassify(t *testing.T) {
 
 func TestVerdictString(t *testing.T) {
 	t.Parallel()
-	for v, want := range map[Verdict]string{
-		VerdictRepeat: "repeat", VerdictEcho: "echo", VerdictChoice: "choice", VerdictNoAudio: "no_audio", 0: "unknown",
+	for v, want := range map[playVerdict]string{
+		verdictRepeat: "repeat", verdictEcho: "echo", verdictChoice: "choice", verdictNoAudio: "no_audio", 0: "unknown",
 	} {
 		if got := v.String(); got != want {
-			t.Errorf("Verdict(%d).String() = %q, want %q", v, got, want)
+			t.Errorf("playVerdict(%d).String() = %q, want %q", v, got, want)
 		}
 	}
 }

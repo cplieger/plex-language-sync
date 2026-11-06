@@ -5,35 +5,35 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
 
-// Verdict is what one play-time selection means for the user's recorded choice.
-type Verdict uint8
+// playVerdict is what one play-time selection means for the user's recorded choice.
+type playVerdict uint8
 
-// The verdicts Classify returns.
+// The verdicts classify returns.
 const (
-	VerdictRepeat  Verdict = iota + 1 // the anchor's own selection again
-	VerdictEcho                       // every kind is what the app left or would leave there
-	VerdictChoice                     // at least one kind is the user's pick
-	VerdictNoAudio                    // no audio selected on the play: nothing to classify
+	verdictRepeat  playVerdict = iota + 1 // the anchor's own selection again
+	verdictEcho                           // every kind is what the app left or would leave there
+	verdictChoice                         // at least one kind is the user's pick
+	verdictNoAudio                        // no audio selected on the play: nothing to classify
 )
 
-func (v Verdict) String() string {
+func (v playVerdict) String() string {
 	switch v {
-	case VerdictRepeat:
+	case verdictRepeat:
 		return "repeat"
-	case VerdictEcho:
+	case verdictEcho:
 		return "echo"
-	case VerdictChoice:
+	case verdictChoice:
 		return "choice"
-	case VerdictNoAudio:
+	case verdictNoAudio:
 		return "no_audio"
 	default:
 		return "unknown"
 	}
 }
 
-// ClassifyInput is one play-time read and the user's records for its show
+// classifyInput is one play-time read and the user's records for its show
 // and episode.
-type ClassifyInput struct {
+type classifyInput struct {
 	Played     *streams.Episode // the user's play-time read: selection and inventory
 	Intent     streams.Intent
 	Applied    streams.Applied
@@ -42,19 +42,19 @@ type ClassifyInput struct {
 	HasApplied bool // false with no record, and for a stale one (PartID differs from Played's part)
 }
 
-// Classify decides, per kind, whether the played selection is inherited or
+// classify decides, per kind, whether the played selection is inherited or
 // the user's pick. A kind is inherited when it equals the app's record for
 // the part, the intent's anchor on the anchor episode, or, with no current
 // record, what the app would leave there (no candidate counts as inherited).
 // With no intent every kind is picked. The pair takes picked kinds from the
-// play and inherited kinds from the intent; VerdictNoAudio returns no pair.
-func Classify(in *ClassifyInput) (Verdict, streams.Pair) {
+// play and inherited kinds from the intent; verdictNoAudio returns no pair.
+func classify(in *classifyInput) (playVerdict, streams.Pair) {
 	played := streams.Selected(in.Played)
 	if played.Audio == nil {
-		return VerdictNoAudio, streams.Pair{}
+		return verdictNoAudio, streams.Pair{}
 	}
 	if !in.HasIntent {
-		return VerdictChoice, played
+		return verdictChoice, played
 	}
 	ref := in.Intent.RefStreams()
 	audioKept, subKept := inherited(in, played, ref)
@@ -67,18 +67,18 @@ func Classify(in *ClassifyInput) (Verdict, streams.Pair) {
 	}
 	switch {
 	case !audioKept || !subKept:
-		return VerdictChoice, merged
+		return verdictChoice, merged
 	case atAnchor(in):
-		return VerdictRepeat, merged
+		return verdictRepeat, merged
 	default:
-		return VerdictEcho, merged
+		return verdictEcho, merged
 	}
 }
 
 // inherited reports, per kind, whether the record, the anchor or the match
 // accounts for the played track. The match is consulted only without a
 // current record, since a record says what the app actually left there.
-func inherited(in *ClassifyInput, played, ref streams.Pair) (audio, subtitle bool) {
+func inherited(in *classifyInput, played, ref streams.Pair) (audio, subtitle bool) {
 	audioID, subID := streams.ID(played.Audio), streams.ID(played.Subtitle)
 	if in.HasApplied {
 		audio = audioID == in.Applied.AudioID
@@ -100,7 +100,7 @@ func inherited(in *ClassifyInput, played, ref streams.Pair) (audio, subtitle boo
 
 // atAnchor reports a play of the episode the intent was observed on. A zero
 // anchor matches nothing, though an empty rating key would equal it.
-func atAnchor(in *ClassifyInput) bool {
+func atAnchor(in *classifyInput) bool {
 	return !in.Intent.Anchor.IsZero() && in.Played.RatingKey == in.Intent.Anchor.RatingKey
 }
 

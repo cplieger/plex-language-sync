@@ -2,7 +2,7 @@
 // episodes they govern.
 //
 // Observe, on a resolved play, is the only code that records a choice or
-// learns a profile: Classify tells the user's pick from what the app or Plex
+// learns a profile: classify tells the user's pick from what the app or Plex
 // left on the part. The history replay re-applies recorded choices, and new
 // episodes are seeded from the user's own choice, another user's, or the
 // learned profile. Every stream write goes through the applier, under the
@@ -111,15 +111,15 @@ func (s *Syncer) Observe(ctx context.Context, userID string, played *streams.Epi
 
 	key, in, hasIntent := s.intentFor(userID, played)
 	rec, hasRec := s.cache.AppliedFor(userID, played.RatingKey)
-	verdict, merged := Classify(&ClassifyInput{
+	verdict, merged := classify(&classifyInput{
 		Played: played, Intent: in, Applied: rec, Floor: s.cfg.SubtitleFloor,
 		HasIntent: hasIntent, HasApplied: hasRec && rec.PartID == streams.FirstPartID(played),
 	})
 	switch verdict {
-	case VerdictNoAudio:
+	case verdictNoAudio:
 		slog.Debug("no audio stream selected on reference, skipping", "episode", played.ShortName(), "user", username)
 		return nil
-	case VerdictRepeat, VerdictEcho:
+	case verdictRepeat, verdictEcho:
 		slog.Debug("play keeps the recorded choice", "episode", played.ShortName(), "user", username,
 			"verdict", verdict.String(), "key", key.String())
 		return nil
@@ -150,7 +150,7 @@ func (s *Syncer) Observe(ctx context.Context, userID string, played *streams.Epi
 	}
 	targets, err := s.targets(ctx, client, userID, key, key, anchor, played)
 	if err != nil {
-		return s.listFailed(ctx, played, username, err)
+		return listFailed(ctx, played, username, err)
 	}
 	p := &plan{
 		pick: pickForIntent(merged, s.cfg.SubtitleFloor), ref: merged, targets: targets,
@@ -165,7 +165,7 @@ func (s *Syncer) Observe(ctx context.Context, userID string, played *streams.Epi
 // intentFor returns the user's record that governs ep and the key it is
 // stored under: the newer of ep's show and season records, a tie to the
 // show's. A record's coverage comes from its key, never from UPDATE_LEVEL.
-func (s *Syncer) intentFor(userID string, ep *streams.Episode) (ScopeKey, streams.Intent, bool) {
+func (s *Syncer) intentFor(userID string, ep *streams.Episode) (scopeKey, streams.Intent, bool) {
 	show, season := coveringKeys(ep)
 	showIn, showOK := s.cache.IntentFor(userID, show.String())
 	seasonIn, seasonOK := s.cache.IntentFor(userID, season.String())
@@ -175,17 +175,17 @@ func (s *Syncer) intentFor(userID string, ep *streams.Episode) (ScopeKey, stream
 	case showOK:
 		return show, showIn, true
 	default:
-		return ScopeKey{}, streams.Intent{}, false
+		return scopeKey{}, streams.Intent{}, false
 	}
 }
 
 // targets lists, through the user's client, the episodes the user's record
-// under key with anchor writes: Scope of cover, less the episodes another
+// under key with anchor writes: scopeOf cover, less the episodes another
 // record of the user governs. cover is key, or the season a legacy show
 // record covers (see Reconcile). ep is an episode of cover's season, whose
 // season list a season key reads.
 func (s *Syncer) targets(ctx context.Context, client PlexReadWriter, userID string,
-	key, cover ScopeKey, anchor streams.Anchor, ep *streams.Episode,
+	key, cover scopeKey, anchor streams.Anchor, ep *streams.Episode,
 ) ([]streams.Episode, error) {
 	var list []streams.Episode
 	var err error
@@ -197,7 +197,7 @@ func (s *Syncer) targets(ctx context.Context, client PlexReadWriter, userID stri
 	if err != nil {
 		return nil, err
 	}
-	scoped := Scope(cover, s.cfg.UpdateStrategy, anchor, list)
+	scoped := scopeOf(cover, s.cfg.UpdateStrategy, anchor, list)
 	out := scoped[:0]
 	for i := range scoped {
 		if governing, _, ok := s.intentFor(userID, &scoped[i]); ok && governing == key {
@@ -210,7 +210,7 @@ func (s *Syncer) targets(ctx context.Context, client PlexReadWriter, userID stri
 // listFailed returns ctx.Err() for a list the context ended; any other
 // failure is logged and no episode is written. A choice Observe already
 // recorded stays, and the history replay retries the writes.
-func (s *Syncer) listFailed(ctx context.Context, ep *streams.Episode, username string, err error) error {
+func listFailed(ctx context.Context, ep *streams.Episode, username string, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
@@ -284,7 +284,7 @@ func (s *Syncer) Reconcile(ctx context.Context, userID string, ep *streams.Episo
 	}
 	targets, err := s.targets(ctx, client, userID, key, cover, anchor, ep)
 	if err != nil {
-		return s.listFailed(ctx, ep, username, err)
+		return listFailed(ctx, ep, username, err)
 	}
 	p := &plan{
 		pick: pickForIntent(ref, s.cfg.SubtitleFloor), ref: ref, targets: targets,

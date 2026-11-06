@@ -40,12 +40,12 @@ func TestScope(t *testing.T) {
 		scopeEp(1, 1), scopeEp(1, 2), scopeEp(1, 3), scopeEp(1, 4),
 		scopeEp(2, 1), scopeEp(2, 2), scopeEp(2, 3),
 	}
-	show := ScopeKey{Show: "1001", Season: -1}
-	season1 := ScopeKey{Show: "1001", Season: 1}
-	season2 := ScopeKey{Show: "1001", Season: 2}
+	show := scopeKey{Show: "1001", Season: -1}
+	season1 := scopeKey{Show: "1001", Season: 1}
+	season2 := scopeKey{Show: "1001", Season: 2}
 	tests := []struct {
 		name     string
-		key      ScopeKey
+		key      scopeKey
 		strategy string
 		anchor   streams.Anchor
 		episodes []streams.Episode
@@ -128,9 +128,9 @@ func TestScope(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := ratingKeys(Scope(tt.key, tt.strategy, tt.anchor, tt.episodes))
+			got := ratingKeys(scopeOf(tt.key, tt.strategy, tt.anchor, tt.episodes))
 			if !slices.Equal(got, tt.want) {
-				t.Errorf("Scope(%q, %q, %+v) = %v, want %v", tt.key.String(), tt.strategy, tt.anchor, got, tt.want)
+				t.Errorf("scopeOf(%q, %q, %+v) = %v, want %v", tt.key.String(), tt.strategy, tt.anchor, got, tt.want)
 			}
 		})
 	}
@@ -138,11 +138,11 @@ func TestScope(t *testing.T) {
 
 func TestInScope(t *testing.T) {
 	t.Parallel()
-	show := ScopeKey{Show: "1001", Season: -1}
-	season1 := ScopeKey{Show: "1001", Season: 1}
+	show := scopeKey{Show: "1001", Season: -1}
+	season1 := scopeKey{Show: "1001", Season: 1}
 	tests := []struct {
 		name     string
-		key      ScopeKey
+		key      scopeKey
 		strategy string
 		anchor   streams.Anchor
 		ep       streams.Episode
@@ -162,8 +162,8 @@ func TestInScope(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := InScope(tt.key, tt.strategy, tt.anchor, &tt.ep); got != tt.want {
-				t.Errorf("InScope(%q, %q, %+v, %s) = %v, want %v", tt.key.String(), tt.strategy, tt.anchor, tt.ep.RatingKey, got, tt.want)
+			if got := inScope(tt.key, tt.strategy, tt.anchor, &tt.ep); got != tt.want {
+				t.Errorf("inScope(%q, %q, %+v, %s) = %v, want %v", tt.key.String(), tt.strategy, tt.anchor, tt.ep.RatingKey, got, tt.want)
 			}
 		})
 	}
@@ -173,19 +173,19 @@ func TestScopeKeyString(t *testing.T) {
 	t.Parallel()
 	t.Run("show key", func(t *testing.T) {
 		t.Parallel()
-		if got := (ScopeKey{Show: "1001", Season: -1}).String(); got != "1001" {
+		if got := (scopeKey{Show: "1001", Season: -1}).String(); got != "1001" {
 			t.Errorf("show key String() = %q, want %q", got, "1001")
 		}
 	})
 	t.Run("season key", func(t *testing.T) {
 		t.Parallel()
-		if got := (ScopeKey{Show: "1001", Season: 2}).String(); got != "1001/s2" {
+		if got := (scopeKey{Show: "1001", Season: 2}).String(); got != "1001/s2" {
 			t.Errorf("season key String() = %q, want %q", got, "1001/s2")
 		}
 	})
 	t.Run("specials season key", func(t *testing.T) {
 		t.Parallel()
-		if got := (ScopeKey{Show: "1001", Season: 0}).String(); got != "1001/s0" {
+		if got := (scopeKey{Show: "1001", Season: 0}).String(); got != "1001/s0" {
 			t.Errorf("season 0 key String() = %q, want %q", got, "1001/s0")
 		}
 	})
@@ -199,7 +199,7 @@ func TestScopeKeyString(t *testing.T) {
 	t.Run("season level key names the played season", func(t *testing.T) {
 		t.Parallel()
 		ep := scopeEp(2, 1)
-		if got, want := scopeKeyFor(LevelSeason, &ep), (ScopeKey{Show: "1001", Season: 2}); got != want {
+		if got, want := scopeKeyFor(LevelSeason, &ep), (scopeKey{Show: "1001", Season: 2}); got != want {
 			t.Errorf("scopeKeyFor(season) = %+v, want %+v", got, want)
 		}
 	})
@@ -220,10 +220,10 @@ func TestCoversKey(t *testing.T) {
 		}
 	}
 	show, season := coveringKeys(&ep)
-	if want := (ScopeKey{Show: "1001", Season: -1}); show != want {
+	if want := (scopeKey{Show: "1001", Season: -1}); show != want {
 		t.Errorf("coveringKeys show = %+v, want %+v", show, want)
 	}
-	if want := (ScopeKey{Show: "1001", Season: 2}); season != want {
+	if want := (scopeKey{Show: "1001", Season: 2}); season != want {
 		t.Errorf("coveringKeys season = %+v, want %+v", season, want)
 	}
 }

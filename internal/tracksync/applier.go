@@ -147,7 +147,7 @@ func (r *applyRun) write(ctx context.Context, ep *streams.Episode, part int) (bo
 			return false, r.failed(ctx, msg, ep, err)
 		}
 		// A part an earlier PUT changed is recorded with what it is known
-		// to hold and no basis: Classify reads the app's write as an echo
+		// to hold and no basis: classify reads the app's write as an echo
 		// rather than the user's pick, and no plan's basis is zero, so the
 		// next pass retries.
 		got.Basis = streams.Basis{}
