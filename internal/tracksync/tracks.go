@@ -132,12 +132,11 @@ func (s *Syncer) Observe(ctx context.Context, userID string, played *streams.Epi
 	slog.Info("play event detected", "episode", played.ShortName(), "user", username,
 		"trigger", trigger, "verdict", verdict.String())
 
-	// ObservedAt is the plan's basis version, so a second choice within one
-	// second must still differ from the first, or appliedOnce skips its writes.
-	now := s.apply.now().Unix()
-	if hasIntent {
-		now = max(now, in.ObservedAt+1)
-	}
+	// ObservedAt is the plan's basis version and decides whether a show or a
+	// season record governs, so a new choice outranks every choice saved for
+	// the show, even one stamped ahead of the clock in the same second.
+	now := max(s.apply.now().Unix(),
+		s.cache.NewestObservedAt(userID, keysOfShow(played.GrandparentRatingKey))+1)
 	key = scopeKeyFor(s.cfg.UpdateLevel, played)
 	anchor := streams.AnchorOf(played, streams.Selected(played))
 	s.cache.RecordIntent(userID, key.String(), streams.NewIntent(merged, anchor, now))

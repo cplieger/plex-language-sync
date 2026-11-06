@@ -2,6 +2,7 @@ package tracksync
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
@@ -48,6 +49,13 @@ func scopeKeyFor(level string, ep *streams.Episode) scopeKey {
 func coveringKeys(ep *streams.Episode) (show, season scopeKey) {
 	return scopeKey{Show: ep.GrandparentRatingKey, Season: showSeason},
 		scopeKey{Show: ep.GrandparentRatingKey, Season: ep.SeasonNum()}
+}
+
+// keysOfShow reports whether a stored key is show's own key or one of its
+// season keys. The "/s" suffix keeps "10011" from passing for show 1001.
+func keysOfShow(show string) func(key string) bool {
+	prefix := show + "/s"
+	return func(key string) bool { return key == show || strings.HasPrefix(key, prefix) }
 }
 
 // coversKey is covers for a stored key string. It compares whole strings, so

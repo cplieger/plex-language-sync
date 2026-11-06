@@ -51,6 +51,7 @@ type cacheStore interface {
 	// resolved play session, never a reconstructed attribution).
 	RecordIntent(userID, key string, intent *streams.Intent)
 	IntentFor(userID, key string) (streams.Intent, bool)
+	NewestObservedAt(userID string, match func(key string) bool) int64
 	// LatestIntentFor runs match with no cache lock held, so match may read
 	// the cache.
 	LatestIntentFor(exceptUser string, match func(user, key string, in streams.Intent) bool) (in streams.Intent, key, fromUser string, ok bool)

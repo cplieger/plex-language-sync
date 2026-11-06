@@ -111,3 +111,22 @@ func TestLegacyShowRecordAtSeasonLevelKeepsItsSeason(t *testing.T) {
 		t.Errorf("writes = %+v, want season 2 only %+v", got, want)
 	}
 }
+
+// A whole-show choice outranks a season choice saved earlier, even when the
+// season's ObservedAt ran ahead of the clock: two season choices in one second
+// stamp the second a second ahead, and a restart can follow within it.
+func TestShowChoiceAfterBumpedSeasonChoiceGoverns(t *testing.T) {
+	t.Parallel()
+	s1e1, s1e2, s2e1, s2e2 := seedEp(1, 1), seedEp(1, 2), seedEp(2, 1), seedEp(2, 2)
+	l := newSeedLib(t, Config{UpdateLevel: LevelSeason, UpdateStrategy: StrategyAll, SeedNewEpisodes: true},
+		[]string{"alice"}, s1e1, s1e2, s2e1, s2e2)
+	l.play(t, "alice", &s2e1, streamOf(&s2e1, kindAudio, "fra"))
+	l.play(t, "alice", &s2e1, streamOf(&s2e1, kindAudio, "eng"))
+
+	l.build(allShowSeeding)
+	from := len(l.clients["alice"].Writes())
+	l.play(t, "alice", &s1e1, streamOf(&s1e1, kindAudio, "fra"))
+	if got, want := l.writes("alice", from), []fakeapi.Write{audioWrite(&s1e2, "fra"), audioWrite(&s2e1, "fra"), audioWrite(&s2e2, "fra")}; !slices.Equal(got, want) {
+		t.Errorf("writes = %+v, want the show choice on every episode %+v", got, want)
+	}
+}

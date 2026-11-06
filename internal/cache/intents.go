@@ -49,6 +49,22 @@ func (c *Cache) IntentFor(userID, key string) (streams.Intent, bool) {
 	return intent.Clone(), true
 }
 
+// NewestObservedAt returns the greatest ObservedAt among userID's intents
+// whose key match accepts, or 0 when none does. match runs under the cache
+// lock, so it must not read the cache.
+func (c *Cache) NewestObservedAt(userID string, match func(key string) bool) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var newest int64
+	byKey := c.data.Intents[userID]
+	for key := range byKey {
+		if match(key) {
+			newest = max(newest, byKey[key].ObservedAt)
+		}
+	}
+	return newest
+}
+
 // ownedIntent is one recorded intent with the user and key it is stored under.
 type ownedIntent struct {
 	user, key string
