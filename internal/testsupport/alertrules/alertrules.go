@@ -5,6 +5,7 @@ package alertrules
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -100,4 +101,30 @@ func Match(line string, filters []LineFilter) bool {
 		}
 	}
 	return true
+}
+
+// promqlWords are the PromQL functions, operators and modifiers a rule may
+// use; any other identifier in an expression is a series name.
+var promqlWords = []string{
+	"sum", "max", "min", "avg", "count", "increase", "rate", "irate", "delta", "absent", "time",
+	"and", "or", "unless", "by", "without", "on", "ignoring", "group_left", "group_right",
+	"bool", "offset", "histogram_quantile", "clamp_min", "clamp_max", "vector", "scalar",
+}
+
+var (
+	promqlStrip = regexp.MustCompile(`"[^"]*"|\{[^}]*\}|\[[^\]]*\]|\b(by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)`)
+	promqlIdent = regexp.MustCompile(`[a-zA-Z_:][a-zA-Z0-9_:]*`)
+)
+
+// SeriesNames returns the series a PromQL expression reads, in order and
+// with repeats: every identifier that is not a function, operator or
+// modifier, once label matchers, ranges and grouping lists are removed.
+func SeriesNames(expr string) []string {
+	var out []string
+	for _, id := range promqlIdent.FindAllString(promqlStrip.ReplaceAllString(expr, " "), -1) {
+		if !slices.Contains(promqlWords, id) && !strings.HasSuffix(id, "_over_time") {
+			out = append(out, id)
+		}
+	}
+	return out
 }

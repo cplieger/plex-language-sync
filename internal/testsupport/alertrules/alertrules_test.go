@@ -36,3 +36,14 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestSeriesNames(t *testing.T) {
+	t.Parallel()
+	expr := `up{job="a"} == 0 or absent(up{job="a"})
+		and increase(x_total{kind="b"}[1h]) > 0
+		and sum by (job) (max_over_time(y_seconds[5m])) > 2 * z + 7200`
+	want := []string{"up", "up", "x_total", "y_seconds", "z"}
+	if got := SeriesNames(expr); !slices.Equal(got, want) {
+		t.Errorf("SeriesNames = %q, want %q", got, want)
+	}
+}

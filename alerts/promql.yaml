@@ -1,0 +1,72 @@
+# Recommended PromQL alert rules for plex-language-sync, for a Prometheus,
+# Mimir or vmalert ruler. They need METRICS_LISTEN_ADDR set and a scrape job
+# named plex-language-sync. This file is the alternative to alerts/logql.yaml:
+# load one of the two, not both, or each fault pages twice.
+# PlexLanguageSyncErrorLog exists only in alerts/logql.yaml; here the
+# WebSocket, resolution and cache-save alerts cover its causes.
+# The deep scan alert reads DEEP_SCAN_INTERVAL from the metrics, so it needs no
+# editing and stays silent with the scan off. Thresholds and severity labels
+# are starting points.
+groups:
+  - name: plex-language-sync
+    rules:
+      - alert: PlexLanguageSyncDown
+        expr: up{job="plex-language-sync"} == 0 or absent(up{job="plex-language-sync"})
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync is not being scraped"
+          description: >
+            No successful scrape of plex-language-sync for 10m, or no scrape
+            target at all. Check that the container runs, METRICS_LISTEN_ADDR
+            is set and the scrape job is named plex-language-sync.
+      - alert: PlexLanguageSyncDeepScanStalled
+        expr: |
+          time() - plex_language_sync_deep_scan_last_success_timestamp_seconds
+            > 2 * plex_language_sync_deep_scan_interval_seconds + 7200
+          and plex_language_sync_deep_scan_interval_seconds > 0
+          and time() - process_start_time_seconds
+            > 2 * plex_language_sync_deep_scan_interval_seconds + 7200
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "no complete plex-language-sync deep scan in two intervals"
+          description: >
+            No deep scan has covered its whole window for two scan intervals
+            plus 2h. Missed episodes then get no tracks. Read the `deep
+            analysis completed` lines with `complete=false`.
+      - alert: PlexLanguageSyncWebSocketDown
+        expr: plex_language_sync_websocket_connected == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync is not receiving Plex notifications"
+          description: >
+            The Plex WebSocket stream has been down for 10m, so no play or
+            library event is handled. Check that Plex is up and reachable and
+            that PLEX_TOKEN is still valid.
+      - alert: PlexLanguageSyncResolutionStalled
+        expr: plex_language_sync_user_resolution_stalled > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync is attributing no playback to any user"
+          description: >
+            No language choices are saved. Read the `cause` label: for
+            `sessions_unreadable`, check PLEX_TOKEN admin rights and the server;
+            for `all_clients_absent`, session matching is failing.
+      - alert: PlexLanguageSyncCacheSaveFailed
+        expr: increase(plex_language_sync_cache_save_failures_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync could not save its cache"
+          description: >
+            A save of the cache to /config failed in the last hour, so learned
+            profiles and user tokens may be lost on the next restart. Give the
+            container user write access to /config.
