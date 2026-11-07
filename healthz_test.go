@@ -213,4 +213,49 @@ func TestHealthzAgreesWithTheProbe(t *testing.T) {
 			agree(t, "one tick after the marker became a symlink loop", h, path, reasonTicker)
 		})
 	})
+
+	// A dangling symlink at the marker path reads as absent, and every
+	// refresh fails to create the file through it.
+	t.Run("marker absent while the app is healthy", func(t *testing.T) {
+		capture.Default(t)
+		synctest.Test(t, func(t *testing.T) {
+			live, h, path, _ := newAgreement(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go beatEvery(ctx, live.loops()...)
+			live.start()
+			synctest.Wait()
+			agree(t, "marker written", h, path)
+
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(filepath.Dir(path), "missing", "x"), path); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(livenessTick)
+			synctest.Wait()
+			agree(t, "one tick after the marker became a dangling symlink", h, path, reasonTicker)
+		})
+	})
+
+	t.Run("ticker stopped while the marker is absent", func(t *testing.T) {
+		capture.Default(t)
+		synctest.Test(t, func(t *testing.T) {
+			live, h, path, stop := newAgreement(t)
+			live.start()
+			time.Sleep(live.reconnect.lease + 2*livenessTick)
+			synctest.Wait()
+			agree(t, "reconnect loop stale", h, path, reasonReconnect)
+
+			stop()
+			synctest.Wait()
+			for _, e := range live.loops() {
+				e.Beat()
+			}
+			time.Sleep(markerLease.Duration() + time.Second)
+			synctest.Wait()
+			agree(t, "loops recovered with the ticker stopped", h, path, reasonTicker)
+		})
+	})
 }

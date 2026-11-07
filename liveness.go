@@ -153,12 +153,18 @@ var _ health.Signal = signalFunc(nil)
 
 func (f signalFunc) Healthy() bool { return f() }
 
-// markerRefreshed is the probe's own verdict on the marker, failing only on a
-// marker that is there but stale or unreadable. Absence is left to the other
-// checks, which name its cause.
+// markerRefreshed is the probe's verdict on the marker while every other
+// check passes; when one fails, that check names the cause.
 func (l *liveness) markerRefreshed() bool {
-	s := health.Inspect(l.path, probeOptions()...).State
-	return s != health.MarkerStale && s != health.MarkerUnreadable
+	if !l.serving.Load() {
+		return true
+	}
+	for _, e := range l.loops() {
+		if !e.Healthy() {
+			return true
+		}
+	}
+	return health.Inspect(l.path, probeOptions()...).Healthy()
 }
 
 // checks are /healthz's: one per loop, plus the two other conditions the
