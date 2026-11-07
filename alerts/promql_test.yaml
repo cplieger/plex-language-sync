@@ -62,8 +62,8 @@ tests:
         exp_alerts: []
 
   # A container restarted every 40h whose passes never complete: the gauge
-  # holds the recorded pass at 2h across restarts, so the alert fires at 54h
-  # although the process is 14h old.
+  # holds the recorded pass at 2h across restarts, so the alert is firing by
+  # 54h although the process is 14h old.
   - interval: 10m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}

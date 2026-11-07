@@ -86,6 +86,8 @@ func run() int {
 
 	metrics := obs.New()
 	metrics.DeepScanInterval(cfg.schedulerInterval)
+	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
+	seedDeepScan(metrics, stamp, &cfg)
 	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
 	if err != nil {
 		slog.Error("cannot bind the metrics listener", "error", err)
@@ -225,7 +227,7 @@ func run() int {
 		&deepscan.Deps{
 			Plex:       client,
 			Cache:      c,
-			Stamp:      scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName)),
+			Stamp:      stamp,
 			UserClient: scanUserClient,
 			Sync:       syncer,
 			SaveCache:  persist.save,
@@ -266,6 +268,18 @@ func run() int {
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
 	return 0
+}
+
+// seedDeepScan sets the last complete scan from stamp before /metrics serves,
+// so no scrape after a restart reads 0; deepscan.Deps.Stamp owns what the
+// stamp holds.
+func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, cfg *config) {
+	if !cfg.schedulerEnabled || cfg.schedulerInterval <= 0 {
+		return
+	}
+	if rec, known := stamp.Last(); known {
+		m.DeepScanSeeded(rec.Time)
+	}
 }
 
 // bindMetrics binds the opt-in metrics listener before any work, so a bad

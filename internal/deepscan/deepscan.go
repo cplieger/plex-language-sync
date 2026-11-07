@@ -107,8 +107,8 @@ type Deps struct {
 	Plex plexReader
 	// Cache holds the dedup keys that keep an added episode from being seeded twice.
 	Cache runLedger
-	// Stamp is the persisted last-run record: it gates the startup pass and
-	// anchors the replay look-back window.
+	// Stamp is the persisted record of the last complete pass, the only kind
+	// written: it gates the startup pass and anchors the replay look-back window.
 	Stamp *scheduler.Stamp
 	// UserClient returns the per-user episode reader for a userID.
 	UserClient userClientFunc
@@ -149,12 +149,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 
 	slog.Info("scheduler enabled", "interval", s.cfg.Interval.String())
-
-	// The stamp records only complete passes, so a restart keeps the deadman's
-	// clock running instead of resetting it to process start.
-	if rec, known := s.stamp.Last(); known {
-		s.metrics.DeepScanSeeded(rec.Time)
-	}
 
 	// Run immediately when never run before or the last run is older than
 	// one interval, so a container restarting more often than the interval

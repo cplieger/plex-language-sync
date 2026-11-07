@@ -91,6 +91,56 @@ func TestRunExitsOnAnUnbindableMetricsAddr(t *testing.T) {
 	}
 }
 
+// stampAt returns a Stamp holding one complete run dated at. Record always
+// stamps the current time, so backdating writes the file format directly.
+func stampAt(t *testing.T, at time.Time) *scheduler.Stamp {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "last-run")
+	if err := os.WriteFile(path, []byte(at.UTC().Format(time.RFC3339Nano)+" ok\n"), 0o600); err != nil {
+		t.Fatalf("seed stamp: %v", err)
+	}
+	return scheduler.NewStamp(path)
+}
+
+func TestSeedDeepScanFromTheStamp(t *testing.T) {
+	t.Parallel()
+	const lastSuccess = "plex_language_sync_deep_scan_last_success_timestamp_seconds"
+	const runs = "plex_language_sync_deep_scan_runs_total"
+	enabled := &config{schedulerEnabled: true, schedulerInterval: 24 * time.Hour}
+	for _, age := range []time.Duration{time.Hour, 72 * time.Hour} {
+		t.Run(age.String()+" old", func(t *testing.T) {
+			t.Parallel()
+			at := time.Now().Add(-age).Truncate(time.Second)
+			m := obs.New()
+			seedDeepScan(m, stampAt(t, at), enabled)
+			if got := metrictest.Value(t, m, lastSuccess); got != float64(at.Unix()) {
+				t.Errorf("the last complete scan = %v, want the record's %d", got, at.Unix())
+			}
+			for _, outcome := range []string{"complete", "incomplete"} {
+				if got := metrictest.Value(t, m, runs, outcome); got != 0 {
+					t.Errorf("seeding counted %v %s runs, want 0", got, outcome)
+				}
+			}
+		})
+	}
+	t.Run("no record", func(t *testing.T) {
+		t.Parallel()
+		m := obs.New()
+		seedDeepScan(m, scheduler.NewStamp(filepath.Join(t.TempDir(), "last-run")), enabled)
+		if got := metrictest.Value(t, m, lastSuccess); got != 0 {
+			t.Errorf("the last complete scan = %v with no record, want 0", got)
+		}
+	})
+	t.Run("scan off", func(t *testing.T) {
+		t.Parallel()
+		m := obs.New()
+		seedDeepScan(m, stampAt(t, time.Now().Add(-time.Hour)), &config{})
+		if got := metrictest.Value(t, m, lastSuccess); got != 0 {
+			t.Errorf("the last complete scan = %v with the scan off, want 0", got)
+		}
+	})
+}
+
 func TestServeMetrics(t *testing.T) {
 	t.Parallel()
 	ln, err := bindMetrics(t.Context(), "127.0.0.1:0")
