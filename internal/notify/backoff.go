@@ -2,10 +2,15 @@ package notify
 
 import "time"
 
-// Config holds the tunables for the reconnect loop. Production uses
-// DefaultConfig(); tests shrink durations so assertions run fast without
-// mutating package globals.
+// Config holds the reconnect loop's tunables and its two liveness receivers.
+// Production uses DefaultConfig() with the receivers set; tests shrink
+// durations so assertions run fast without mutating package globals.
 type Config struct {
+	// ReadLoop and ReconnectLoop receive each loop's liveness beats; nil
+	// receives none.
+	ReadLoop      Loop
+	ReconnectLoop Loop
+
 	// MinBackoff is the initial delay and the floor nextBackoff clamps to.
 	MinBackoff time.Duration
 

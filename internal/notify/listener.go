@@ -33,32 +33,22 @@ const wsReadLimitBytes = 1 << 20
 
 // persistentReconnectThreshold is the number of consecutive non-stable
 // reconnect attempts after which Listen escalates from the per-cycle
-// Warn line to a single ERROR. By this depth the backoff has reached
-// MaxBackoff (default 30s) and the outage is clearly sustained (Plex
-// unreachable, token revoked, network partition) rather than a transient
-// blip. The file-marker health intentionally never reflects WebSocket
-// state, so this ERROR is the only alertable signal that the container is
-// healthy-but-processing-nothing.
+// Warn line to an ERROR on each further attempt. By this depth the backoff
+// has reached MaxBackoff (default 30s) and the outage is clearly sustained
+// (Plex unreachable, token revoked, network partition) rather than a
+// transient blip.
 const persistentReconnectThreshold = 5
 
-// Handler receives decoded events from the Listener. Implementations
-// live in the composition root (main package) and typically fan out
-// per-event work to the sync subsystem.
-//
-// OnPlay is called for each PlaySessionStateNotification entry in a
-// "playing" notification, unfiltered; the caller applies its own
-// relevance policy (see IsRelevantPlayEvent). OnTimeline is called
-// once per notification with the full TimelineEntry slice so the
-// caller can apply its own per-entry relevance, dedup, or batching
-// policy.
-//
-// The Handler is invoked synchronously from the read loop; a slow
-// handler delays the next Read and can trigger the keepalive timeout.
-// Handlers that need to perform long work should hand it off to a
-// goroutine or worker pool.
+// Handler receives the Listener's events, synchronously from the read loop:
+// a slow handler delays the next read, so long work goes to a goroutine.
+// OnPlay gets each play-session entry unfiltered (see IsRelevantPlayEvent),
+// OnTimeline each notification's whole entry slice, and OnConnection true
+// after each handshake and false after each drop or failed dial that Listen
+// will retry.
 type Handler interface {
 	OnPlay(ctx context.Context, ev PlayEvent)
 	OnTimeline(ctx context.Context, entries []TimelineEntry)
+	OnConnection(ctx context.Context, connected bool)
 }
 
 // PlexClient is the subset of an HTTP-based Plex client the Listener
@@ -77,6 +67,20 @@ type PlexClient interface {
 	BaseTransport() *http.Transport
 }
 
+// Loop is one of Listen's two loops' liveness entry: Beat records progress
+// and Park marks the loop idle by design. Only one of the loops runs at a
+// time, so each parks its entry when it hands over to the other.
+type Loop interface {
+	Beat()
+	Park()
+}
+
+// noLoop is the Loop of a Config that names none.
+type noLoop struct{}
+
+func (noLoop) Beat() {}
+func (noLoop) Park() {}
+
 // Listener dials Plex's /:/websockets/notifications endpoint, decodes
 // the JSON envelope, and delivers events to a Handler with an outer
 // reconnect loop and stable-connection backoff reset.
@@ -86,16 +90,25 @@ type Listener struct {
 }
 
 // NewListener builds a Listener from a Plex client and a Config.
-// Production callers pass DefaultConfig(); tests pass a shrunk Config
-// so the reconnect-loop assertions run quickly.
+// Production callers pass DefaultConfig() with ReadLoop and ReconnectLoop
+// set; tests pass a shrunk Config so the reconnect-loop assertions run
+// quickly.
 func NewListener(client PlexClient, cfg Config) *Listener {
+	if cfg.ReadLoop == nil {
+		cfg.ReadLoop = noLoop{}
+	}
+	if cfg.ReconnectLoop == nil {
+		cfg.ReconnectLoop = noLoop{}
+	}
 	return &Listener{client: client, cfg: cfg}
 }
 
 // Listen runs the reconnect loop: dial the WebSocket, decode and
 // dispatch messages until a read error or the context is cancelled,
-// then wait for a bounded backoff and reconnect. Returns when the
-// supplied context is cancelled.
+// then wait for a bounded backoff and reconnect. It beats ReconnectLoop
+// around each attempt and ReadLoop at the handshake and after each read,
+// and parks whichever loop is not running. Returns when the supplied
+// context is cancelled.
 func (l *Listener) Listen(ctx context.Context, h Handler) {
 	defer slog.Info("websocket listener stopped")
 
@@ -118,7 +131,10 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 				"attempt", reconnects,
 				"backoff", backoff.String())
 		}
+		l.cfg.ReconnectLoop.Beat()
 		connected, handshakeAt, err := l.connectAndListen(ctx, h)
+		l.cfg.ReconnectLoop.Beat()
+		l.cfg.ReadLoop.Park()
 		if ctx.Err() != nil {
 			return
 		}
@@ -127,7 +143,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		// from before the dial, so a slow-but-successful dial followed by
 		// a short real uptime is not falsely classified stable (which
 		// would reset backoff and zero the persistent-reconnect counter
-		// that drives the sole health ERROR). Avoids the "accept
+		// that drives the persistent-reconnect ERROR). Avoids the "accept
 		// handshake then immediately close" flap hammering Plex at
 		// MinBackoff indefinitely.
 		stable := connected && time.Since(handshakeAt) > stableThreshold
@@ -141,6 +157,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
+		h.OnConnection(ctx, false)
 		logDisconnect(ctx, err, backoff, stable, reconnects)
 
 		delay := time.NewTimer(backoff)
@@ -171,13 +188,10 @@ func (l *Listener) backoffBounds() (minBackoff, maxBackoff time.Duration) {
 }
 
 // logDisconnect emits the per-cycle disconnect log at the level the
-// disconnect reason warrants and escalates to a single ERROR once
-// consecutive reconnects pile up past the threshold. Clean server-close
-// is expected info-level; dial/read errors stay warnings. A sustained
-// outage leaves the file-marker health green while zero events are
-// processed, so the escalation is the only alertable signal that the
-// container is healthy-but-processing-nothing; the shipped error-log alert
-// counts that ERROR.
+// disconnect reason warrants and escalates to an ERROR on each further
+// attempt once consecutive reconnects reach the threshold. Clean
+// server-close is expected info-level; dial/read errors stay warnings. The
+// shipped error-log alert counts that ERROR.
 func logDisconnect(ctx context.Context, err error, backoff time.Duration, stable bool, reconnects int) {
 	level := slog.LevelWarn
 	reason := classifyError(err)
@@ -239,6 +253,9 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 	}()
 
 	slog.Info("websocket connected", "host", base.Host)
+	l.cfg.ReadLoop.Beat()
+	l.cfg.ReconnectLoop.Park()
+	h.OnConnection(ctx, true)
 
 	// Limit WebSocket message size to prevent OOM from oversized messages.
 	conn.SetReadLimit(wsReadLimitBytes)
@@ -264,6 +281,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		if readErr != nil {
 			return true, handshakeAt, wrapReadError(readErr)
 		}
+		l.cfg.ReadLoop.Beat()
 		var notif notification
 		if jsonErr := json.Unmarshal(message, &notif); jsonErr != nil {
 			slog.Debug("invalid websocket message", "error", jsonErr)

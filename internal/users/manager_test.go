@@ -15,8 +15,10 @@ import (
 
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/metrictest"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/plexclient"
 )
 
@@ -30,7 +32,7 @@ var _ interface {
 } = (*Manager)(nil)
 
 func TestManager_InitSeedsAdmin(t *testing.T) {
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	// Asserted through the same two-method surface production consumers
@@ -49,7 +51,7 @@ func TestManager_InitSeedsAdmin(t *testing.T) {
 }
 
 func TestManager_InitPreservesExistingShared(t *testing.T) {
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	fc := m.cache.(*fakeapi.Cache)
 	fc.SetUserTokens(map[string]string{"2": "pre-token"})
 	m.LoadFromCache()
@@ -71,7 +73,7 @@ func TestManager_LoadFromCacheSeedsTokens(t *testing.T) {
 		"3": "other-token",
 	})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -91,7 +93,7 @@ func TestManager_LoadFromCacheSkipsAdmin(t *testing.T) {
 		"2": "friend-token",
 	})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -106,7 +108,7 @@ func TestManager_ClientForUser(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -132,7 +134,7 @@ func TestManager_AllReturnsAdminAndShared(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "t-bob", "3": "t-carol"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -148,7 +150,7 @@ func TestManager_AllReturnsAdminAndShared(t *testing.T) {
 }
 
 func TestManager_NameUnknownReturnsPlaceholder(t *testing.T) {
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	if got := m.Name("999"); got != "unknown-999" {
 		t.Errorf("Name(unknown) = %q, want unknown-999", got)
@@ -173,7 +175,7 @@ func TestManager_ConcurrentClientForUser_TokenRotation(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "tok-0"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -253,7 +255,7 @@ func TestRefreshTokens_HappyPath(t *testing.T) {
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
@@ -285,7 +287,7 @@ func TestManager_NameSanitizesAccountNames(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin\r\nlevel=ERROR"})
 	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
 
@@ -321,7 +323,7 @@ func TestRefreshTokens_EvictsRevokedUsers(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -368,7 +370,7 @@ func TestRefreshTokens_APIFailureKeepsExistingState(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "existing-token"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -398,7 +400,7 @@ func TestRefreshTokens_SkipsEmptyUserIDOrToken(t *testing.T) {
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
@@ -430,7 +432,7 @@ func TestInitialRefreshWithRetry_cached_users_short_circuit(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "cached-token"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -461,7 +463,7 @@ func TestInitialRefreshWithRetry_success_on_second_attempt(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	cfg := testRefreshConfig(5, 5*time.Millisecond, 20*time.Millisecond)
@@ -487,7 +489,7 @@ func TestInitialRefreshWithRetry_gives_up_after_max_attempts(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	cfg := testRefreshConfig(3, 5*time.Millisecond, 10*time.Millisecond)
@@ -514,7 +516,7 @@ func TestInitialRefreshWithRetry_context_cancellation(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	// Long delays so the test must rely on context cancellation to exit.
@@ -573,7 +575,7 @@ func TestManager_ClientForUserCachesInstance(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -599,7 +601,7 @@ func TestManager_ClientForUser_DerivesFromAdminClient(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "friend-token"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -637,7 +639,7 @@ func TestManager_ConcurrentClientForUser_ConvergesOnOneCachedInstance(t *testing
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "stable-token"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -689,7 +691,7 @@ func TestManager_ClientForUserRebuildsAfterTokenRotation(t *testing.T) {
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"2": "tok-old"})
 
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -739,7 +741,7 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 
 	fc := fakeapi.NewCache()
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	m.refreshTokens(t.Context(), adminClient, "machine-id-123")
@@ -771,7 +773,7 @@ func TestRefreshTokens_SkipsAdminIDInSharedList(t *testing.T) {
 func TestRefreshLoop_ExitsOnContextCancel(t *testing.T) {
 	parsed, _ := url.Parse("http://plex:32400")
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}})
-	m := NewManager(fakeapi.NewCache())
+	m := NewManager(fakeapi.NewCache(), nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -811,7 +813,7 @@ func TestRefreshTokens_LogsPrunedUsersAudit(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", "200": "token-200"})
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 
@@ -850,7 +852,7 @@ func TestRefreshTokens_PrunedUserIDsSanitizedInLog(t *testing.T) {
 
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "old-token-100", hostile: "token-200"})
-	m := NewManager(fc)
+	m := NewManager(fc, nil)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 	m.LoadFromCache()
 	rec := capture.Default(t)
@@ -864,5 +866,35 @@ func TestRefreshTokens_PrunedUserIDsSanitizedInLog(t *testing.T) {
 	want := []string{textsafe.SanitizeSingleLine(hostile)}
 	if got, _ := v.Any().([]string); !slices.Equal(got, want) {
 		t.Errorf("user_ids = %q, want %q", v.Any(), want)
+	}
+}
+
+func TestSharedUsersGaugeFollowsTheSharedMap(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<MediaContainer>` +
+			`<SharedServer id="1" username="friend1" userID="100" accessToken="token-100"/>` +
+			`<SharedServer id="2" username="friend2" userID="200" accessToken="token-200"/>` +
+			`</MediaContainer>`))
+	}))
+	t.Cleanup(srv.Close)
+	parsed, _ := url.Parse("http://plex:32400")
+	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
+	fc := fakeapi.NewCache()
+	fc.SetUserTokens(map[string]string{"100": "token-100"})
+	metrics := obs.New()
+	m := NewManager(fc, metrics)
+	m.Init(&plex.User{ID: "1", Name: "admin"})
+
+	m.LoadFromCache()
+	if got := metrictest.Value(t, metrics, "plex_language_sync_shared_users"); got != 1 {
+		t.Errorf("shared_users after loading one cached user = %v, want 1", got)
+	}
+	if err := m.refreshTokens(t.Context(), adminClient, "machine-id-123"); err != nil {
+		t.Fatal(err)
+	}
+	if got := metrictest.Value(t, metrics, "plex_language_sync_shared_users"); got != 2 {
+		t.Errorf("shared_users after a refresh naming two users = %v, want 2", got)
 	}
 }

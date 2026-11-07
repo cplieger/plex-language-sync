@@ -38,17 +38,9 @@ const (
 	reasonReadError   = "read_error"
 )
 
-// classifyError maps a WebSocket disconnect error to a stable reason
-// code so alerts can segment by cause without matching on error text.
-//
-// Classification order (first match wins):
-//  1. nil → reasonUnknown
-//  2. context.DeadlineExceeded → reasonReadError (read-idle backstop fired)
-//  3. typed sentinel wraps via errors.Is (errReadLimit, errServerClose,
-//     errDialFailed, errReadError)
-//  4. *websocket.CloseError via errors.As for codes 1000 / 1001 / 1006
-//     → reasonServerClose
-//  5. default → reasonUnknown
+// classifyError maps a WebSocket disconnect error to a stable reason code so
+// a reader can tell causes apart without matching error text. The first
+// match wins; a context.DeadlineExceeded is the read-idle backstop.
 func classifyError(err error) string {
 	if err == nil {
 		return reasonUnknown

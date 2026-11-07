@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
@@ -61,18 +62,21 @@ type tokenStore interface {
 // safe for concurrent use.
 type Manager struct {
 	cache   tokenStore
+	metrics *obs.Metrics
 	shared  map[id]record       // keyed by typed userID
 	clients map[id]*plex.Client // cached per-user clients
 	admin   record
 	mu      sync.Mutex
 }
 
-// NewManager returns a Manager with empty shared-user and client maps.
-// The Init method (called by the composition root after the admin user
-// is resolved) seeds the admin identity.
-func NewManager(c tokenStore) *Manager {
+// NewManager returns a Manager with empty shared-user and client maps,
+// recording the shared-user count on metrics, which may be nil. The Init
+// method (called by the composition root after the admin user is resolved)
+// seeds the admin identity.
+func NewManager(c tokenStore, metrics *obs.Metrics) *Manager {
 	return &Manager{
 		cache:   c,
+		metrics: metrics,
 		shared:  make(map[id]record),
 		clients: make(map[id]*plex.Client),
 	}
@@ -111,27 +115,15 @@ func (m *Manager) LoadFromCache() {
 			m.shared[uid] = record{ID: uid, Token: plex.Token(token), Name: "user-" + uidStr}
 		}
 	}
+	m.metrics.SharedUsers(len(m.shared))
 }
 
-// ClientForUser returns a *plex.Client scoped to the given user's token,
-// derived from adminClient via ForToken (a pure same-server derivation, no
-// disk I/O, cannot fail). Derived clients are cached per user until the
-// token rotates.
-//
-// Returns the admin client when userID matches admin. Returns nil (fail
-// closed) when no per-user identity is available — the user is
-// unknown/departed, or holds an empty token. The caller must skip the
-// operation rather than write under the admin token: a per-user stream PUT
-// is per-user-scoped on the server, so writing under the admin token
-// corrupts the admin's own selection and still drops the intended user's
-// preference.
-//
-// Silent on the nil path: callers own the "skipping" log and already
-// de-spam it (the scheduler history path guards one WARN per unknown user
-// per pass; handlePlayEvent WARNs on the naturally rate-limited play path).
-//
-// userID is a plain string so consumers need not import this package for
-// the ID type.
+// ClientForUser returns a *plex.Client scoped to userID's token, derived from
+// adminClient and cached until the token rotates, or adminClient itself for
+// the admin. It returns nil (fail closed) for an unknown user or an empty
+// token, and logs nothing: the caller skips the write and owns the skip log,
+// because a stream PUT under the admin token overwrites the admin's own
+// selection and still drops the user's.
 func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.Client {
 	uid := id(userID)
 

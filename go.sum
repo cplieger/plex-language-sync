@@ -8,10 +8,14 @@ github.com/cplieger/go/health v1.0.0-dev.3 h1:cTbUZ38yLP8Je8aup6f+WNezkf0rJbtUbH
 github.com/cplieger/go/health v1.0.0-dev.3/go.mod h1:Qo0xx+JK05tjEi+oAjPT0zcRrhZkcKFEO32SRkjZd7I=
 github.com/cplieger/go/httpclient v1.0.0-dev.4 h1:TSeqhBSwwoOvvgTT6fykSOp+nsjqyPyeiXM6kTb99DU=
 github.com/cplieger/go/httpclient v1.0.0-dev.4/go.mod h1:zXZyXwYWXVujBH7qoNR16WYGHOGCo8hbJb0Gy8gNgBQ=
+github.com/cplieger/go/httpserver v1.0.0-dev.5 h1:D/U/s6iU5/xKZt5Wk3K2VtmWuCvE9rW0ar098F6F3lg=
+github.com/cplieger/go/httpserver v1.0.0-dev.5/go.mod h1:JEmYTXf41gzCh9IsslcEaAX8WMcHJBuqEiLEJCvoPUo=
 github.com/cplieger/go/jsonx v1.0.0-dev.2 h1:XP5vemRQ+PWJT+kX5aZtHm1U/aLi36sZPwgMSjMxaVI=
 github.com/cplieger/go/jsonx v1.0.0-dev.2/go.mod h1:ank2TTHUDI/GrTBZ/KAwU72ECOdrCCDDYqlRSuR/+BQ=
 github.com/cplieger/go/keylock v1.0.0-dev.1 h1:4KT6TIuv44v7S9IAZQ+TMSFTujV5EQqYodesaeH7epg=
 github.com/cplieger/go/keylock v1.0.0-dev.1/go.mod h1:wV/zGnEWTzeH0tpTtcbpo62AGZSTfP+NC8QA3UwZbX4=
+github.com/cplieger/go/measure v1.0.0-dev.3 h1:BxcWofAcSibuM3WZFY/y9HKiiIwZE7gJD67dkm0HBeA=
+github.com/cplieger/go/measure v1.0.0-dev.3/go.mod h1:KY7f8SnaQkwhMKsmKIe+eIyYW7z0Xe6vE9AF02fMubw=
 github.com/cplieger/go/pathinside v1.0.0-dev.1 h1:iVkDRXYDDAgaTBm02ekQ+VH7KhXZTIpdpx8O9pGprY8=
 github.com/cplieger/go/pathinside v1.0.0-dev.1/go.mod h1:+Fj6L8z2GUfDFi/uvAzoxF1iIADDf83g4fMbrvelDUY=
 github.com/cplieger/go/scheduler v1.0.0-dev.1 h1:SliSxE9oAN2UWDgvipCQIKK1JJkcGnysGgGf43PWUT0=
@@ -26,6 +30,8 @@ github.com/cplieger/langtag/v3 v3.2.0-dev.1 h1:gXHAaMDLaJQRxiIC9cQMEsEmN9Y6g+8eM
 github.com/cplieger/langtag/v3 v3.2.0-dev.1/go.mod h1:l9xswWicp31qquRod3FKzweWF0gJ06XKj/rqsNGESAQ=
 github.com/cplieger/plexapi/v3 v3.0.0-dev.4 h1:nDhHcWxawWlpFfe9Z/bYugIIziv5cPOeSQKTGYnw0tk=
 github.com/cplieger/plexapi/v3 v3.0.0-dev.4/go.mod h1:e5QGI56ytBnFgCakzATwnpYzxlUpjE/wkv9ULiyQHGM=
+go.yaml.in/yaml/v4 v4.0.0 h1:/LG1pNO84Z4l603j/xMn69CcS5OYhMQ/f7l2LoQUGuw=
+go.yaml.in/yaml/v4 v4.0.0/go.mod h1:aZqd9kCMsGL7AuUv/m/PvWLdg5sjJsZ4oHDEnfPPfY0=
 golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
 golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
 golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=

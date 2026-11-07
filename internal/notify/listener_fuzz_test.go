@@ -16,6 +16,7 @@ type countingHandler struct {
 
 func (h *countingHandler) OnPlay(context.Context, PlayEvent)           { h.plays++ }
 func (h *countingHandler) OnTimeline(context.Context, []TimelineEntry) { h.timelines++ }
+func (*countingHandler) OnConnection(context.Context, bool)            {}
 
 // FuzzNotificationUnmarshal feeds arbitrary bytes through the same
 // Unmarshal+dispatch path the live read loop uses. Beyond crash-safety it

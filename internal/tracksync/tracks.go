@@ -20,6 +20,7 @@ import (
 
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/langtag/v3"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 )
@@ -67,8 +68,8 @@ type Syncer struct {
 
 // Deps carries New's collaborators. A struct rather than a positional list:
 // a transposition between collaborators with compatible method sets would
-// type-check, and the composition root wires them exactly once. All three
-// are required.
+// type-check, and the composition root wires them exactly once. Cache, Users
+// and UserClient are required.
 type Deps struct {
 	// Cache persists learned profiles, recorded intents and applied records.
 	Cache cacheStore
@@ -78,6 +79,8 @@ type Deps struct {
 	// Plex records selection writes against the requesting token, and the
 	// user's own reads carry that user's selection and views.
 	UserClient userClientFunc
+	// Metrics counts the stream writes; nil records nothing.
+	Metrics *obs.Metrics
 }
 
 // New constructs a Syncer from cfg and deps. Fields stay unexported so
@@ -88,7 +91,7 @@ func New(cfg Config, deps Deps) *Syncer {
 		cache:      deps.Cache,
 		users:      deps.Users,
 		userClient: deps.UserClient,
-		apply:      newApplier(deps.Cache, deps.Users),
+		apply:      newApplier(deps.Cache, deps.Users, deps.Metrics),
 	}
 }
 

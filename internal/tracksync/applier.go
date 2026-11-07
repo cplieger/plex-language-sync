@@ -10,6 +10,7 @@ import (
 
 	"github.com/cplieger/go/keylock"
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plexapi/v3"
@@ -55,17 +56,18 @@ func (p *plan) playedSince(rec streams.Applied, hasRec bool, part int, viewed in
 	return viewed > max(rec.At, p.observedAt)
 }
 
-// applier is the only code that writes stream selections; each applyLocked
-// call writes one plan for one user.
+// applier is the only code that writes stream selections, so it counts every
+// write; each applyLocked call writes one plan for one user.
 type applier struct {
-	cache cacheStore
-	users userLookup
-	locks *keylock.Set[userShow]
-	now   func() time.Time
+	cache   cacheStore
+	users   userLookup
+	locks   *keylock.Set[userShow]
+	now     func() time.Time
+	metrics *obs.Metrics
 }
 
-func newApplier(c cacheStore, u userLookup) *applier {
-	return &applier{cache: c, users: u, locks: newShowLocks(), now: time.Now}
+func newApplier(c cacheStore, u userLookup, m *obs.Metrics) *applier {
+	return &applier{cache: c, users: u, locks: newShowLocks(), now: time.Now, metrics: m}
 }
 
 // lock takes the user's show until unlock is called, or returns ctx.Err()
@@ -179,6 +181,7 @@ func (r *applyRun) putAudio(ctx context.Context, ep *streams.Episode, want *sele
 		return false, "", nil
 	}
 	err = r.client.SetAudioStream(ctx, plexapi.StreamSelection{PartID: got.PartID, StreamID: id})
+	r.counted(ctx, obs.TrackAudio, err)
 	if err != nil {
 		return false, "failed to set audio stream", err
 	}
@@ -203,12 +206,14 @@ func (r *applyRun) putSubtitle(ctx context.Context, ep *streams.Episode, want *s
 	switch id := streams.ID(want.Subtitle); {
 	case want.SubtitleOff && got.SubtitleID != 0:
 		err = r.client.DisableSubtitles(ctx, got.PartID)
+		r.counted(ctx, obs.TrackSubtitle, err)
 		if err != nil {
 			return false, "failed to disable subtitles", err
 		}
 		got.SubtitleID = 0
 	case want.Subtitle != nil && id != got.SubtitleID:
 		err = r.client.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: got.PartID, StreamID: id})
+		r.counted(ctx, obs.TrackSubtitle, err)
 		if err != nil {
 			return false, "failed to set subtitle stream", err
 		}
@@ -220,6 +225,15 @@ func (r *applyRun) putSubtitle(ctx context.Context, ep *streams.Episode, want *s
 		return false, "", nil
 	}
 	return true, "", nil
+}
+
+// counted counts one PUT by its outcome. A request the context ended is not
+// a failed write: the pass stopped, and a later one retries it.
+func (r *applyRun) counted(ctx context.Context, kind obs.TrackKind, err error) {
+	if err != nil && ctx.Err() != nil {
+		return
+	}
+	r.metrics.TrackUpdate(kind, err == nil)
 }
 
 // failed returns ctx.Err() for a request the context ended, which the caller

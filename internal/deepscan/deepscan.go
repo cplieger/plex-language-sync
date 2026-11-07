@@ -2,10 +2,11 @@
 // plus recently-added sweep) over a bounded worker pool whose circuit breaker
 // aborts after consecutive per-item failures. It runs on a Go-duration interval
 // (default 24h), so it reads no wall-clock time, and a scheduler.Stamp file
-// keeps a cold restart from double-running. alerts/logql.yaml matches "deep
-// analysis completed" and docs/monitoring.md names "scheduled deep analysis
-// starting": keep both exact. Every collaborator is an interface declared in
-// deps.go, so deepscan imports no internal/tracksync.
+// keeps a cold restart from double-running. TestDeepScanStalledRuleMatchesCompletePassesOnly
+// binds "deep analysis completed" and its complete field to alerts/logql.yaml,
+// and docs/monitoring.md names "scheduled deep analysis starting": keep both
+// exact. Every collaborator is an interface declared in deps.go, so deepscan
+// imports no internal/tracksync.
 package deepscan
 
 import (
@@ -20,6 +21,7 @@ import (
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"golang.org/x/sync/singleflight"
@@ -64,14 +66,19 @@ type Config struct {
 // runner goroutine that loses the dedup race logs one WARN,
 // "scheduler: deep analysis already in progress, skipping".
 type Scheduler struct {
-	plex       plexReader
-	cache      runLedger
-	sync       syncer
-	stamp      *scheduler.Stamp
-	dedup      singleflight.Group
-	userClient userClientFunc
-	saveCache  cacheSaver
-	cfg        Config
+	plex  plexReader
+	cache runLedger
+	sync  syncer
+	stamp *scheduler.Stamp
+	dedup singleflight.Group
+	// loggedUnknownUsers holds the userIDs whose missing per-user client was
+	// already logged, once per process.
+	loggedUnknownUsers sync.Map
+	userClient         userClientFunc
+	saveCache          cacheSaver
+	live               beater
+	metrics            *obs.Metrics
+	cfg                Config
 	// workers bounds in-flight per-item work during a deep-analysis
 	// pass; zero (the default) means deepAnalysisConcurrency. Exists as
 	// a test seam: a serial (workers=1) run lets the breaker's
@@ -101,8 +108,8 @@ type Deps struct {
 	Plex plexReader
 	// Cache holds the dedup keys that keep an added episode from being seeded twice.
 	Cache runLedger
-	// Stamp is the persisted last-run record: it gates the startup pass and
-	// anchors the replay look-back window.
+	// Stamp is the persisted record of the last complete pass, the only kind
+	// written: it gates the startup pass and anchors the replay look-back window.
 	Stamp *scheduler.Stamp
 	// UserClient returns the per-user episode reader for a userID.
 	UserClient userClientFunc
@@ -111,11 +118,16 @@ type Deps struct {
 	// SaveCache flushes the cache to disk. May be nil in tests that do not
 	// exercise the disk-flush path.
 	SaveCache cacheSaver
+	// Metrics records each pass; nil records nothing.
+	Metrics *obs.Metrics
+	// Liveness is beaten when Run starts and as each pass starts and ends;
+	// nil receives no beats.
+	Liveness beater
 }
 
 // New constructs a Scheduler from cfg and deps.
-func New(cfg Config, deps Deps) *Scheduler {
-	return &Scheduler{
+func New(cfg Config, deps *Deps) *Scheduler {
+	s := &Scheduler{
 		cfg:        cfg,
 		plex:       deps.Plex,
 		cache:      deps.Cache,
@@ -123,7 +135,13 @@ func New(cfg Config, deps Deps) *Scheduler {
 		userClient: deps.UserClient,
 		sync:       deps.Sync,
 		saveCache:  deps.SaveCache,
+		live:       deps.Liveness,
+		metrics:    deps.Metrics,
 	}
+	if s.live == nil {
+		s.live = noBeat{}
+	}
+	return s
 }
 
 // Run is the outer scheduler loop: it runs a deep-analysis pass at
@@ -140,6 +158,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 
 	slog.Info("scheduler enabled", "interval", s.cfg.Interval.String())
+	s.live.Beat()
 
 	// Run immediately when never run before or the last run is older than
 	// one interval, so a container restarting more often than the interval
@@ -177,13 +196,11 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 	// singleflight.Do returns shared=true to EVERY caller that received
 	// this result once a duplicate joined — including the goroutine
 	// that actually executed the callback (Do returns c.dups>0 to the
-	// winner, not only to the losers). Guarding the "skipping" alert on
+	// winner, not only to the losers). Guarding the skip WARN on
 	// `shared` alone therefore makes the winner that DID the work also
 	// log the skip under concurrent Run. Track execution with a local
 	// flag set inside the callback: only the winner runs the callback,
-	// so `executed` stays false on every loser. Preserve the
-	// operational-alert key ("scheduler: deep analysis already in
-	// progress, skipping") from the earlier implementation.
+	// so `executed` stays false on every loser.
 	executed := false
 	_, _, shared := s.dedup.Do("deep_analysis", func() (any, error) {
 		executed = true
@@ -199,6 +216,7 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 // runs exactly once per singleflight key; overlapping callers share
 // its completion via dedup.Do.
 func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
+	s.live.Beat()
 	complete := false
 	defer func() {
 		// Record the run ONLY when this pass fully covered its look-back
@@ -219,6 +237,7 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 				slog.Warn("cache save failed", "error", err)
 			}
 		}
+		s.live.Beat()
 	}()
 
 	// Look back to the previous completed run so no window is missed when
@@ -240,29 +259,32 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 	}
 	sinceUnix := time.Now().Add(-lookback).Unix()
 
-	histComplete := s.processRecentHistory(ctx, sinceUnix)
+	histComplete, unknownUsers := s.processRecentHistory(ctx, sinceUnix)
 	addedComplete := s.processRecentlyAdded(ctx, sinceUnix)
 	complete = histComplete && addedComplete && ctx.Err() == nil
+	s.metrics.DeepScanFinished(complete, time.Now())
 
 	slog.Info("deep analysis completed",
 		"since", time.Unix(sinceUnix, 0).UTC().Format(time.RFC3339),
 		"complete", complete,
-		"marker_advanced", complete)
+		"unknown_users", unknownUsers)
 }
 
 // processRecentHistory hands each item of the last window of play history
 // to the Syncer's Reconcile, across deepAnalysisConcurrency workers. The
 // workers share the maxConsecutiveErrors breaker through an atomic counter
-// that a success resets; once it trips, every worker stops processing.
-func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) bool {
+// that a success resets; once it trips, every worker stops processing. It
+// also returns how many distinct users the pass skipped for having no
+// per-user client.
+func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) (complete bool, unknownUsers int) {
 	history, err := s.plex.History(ctx, sinceUnix)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			slog.Debug("scheduler: history fetch cancelled during shutdown", "error", err)
-			return false
+			return false, 0
 		}
 		slog.Warn("scheduler: failed to fetch history", "error", err)
-		return false
+		return false, 0
 	}
 	slog.Debug("scheduler: processing recent history",
 		"items", len(history))
@@ -271,14 +293,12 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) b
 	var wg sync.WaitGroup
 	var consecutiveErrors atomic.Int32
 	var totalErrors atomic.Int32
-	// unknownUsers de-spams the per-item "no per-user client" WARN: each
-	// unknown userID is reported once per pass instead of once per history
-	// item, so a single unmanaged user with N recent plays no longer emits
-	// N identical WARN lines. Created per pass and shared across workers.
-	var unknownUsers sync.Map
+	// passUnknown holds the distinct unknown userIDs of this pass, shared
+	// across workers.
+	var passUnknown sync.Map
 
 	for range s.workerCount() {
-		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors, &totalErrors, &unknownUsers) })
+		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors, &totalErrors, &passUnknown) })
 	}
 	fedAll := s.feedHistory(ctx, work, history, &consecutiveErrors)
 	close(work)
@@ -295,14 +315,15 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) b
 	// cancelled). Scattered per-item fetch failures that did not trip the
 	// breaker do NOT block completion — they are the design's accepted
 	// skip-and-continue loss, already surfaced by the WARN above.
-	return fedAll && ctx.Err() == nil
+	passUnknown.Range(func(_, _ any) bool { unknownUsers++; return true })
+	return fedAll && ctx.Err() == nil, unknownUsers
 }
 
 // historyWorker drains work until it closes, replaying each history
 // item via processHistoryItem. It does no further work once the context
 // is cancelled (returning) or the shared circuit breaker has tripped
 // (continuing to drain so the feeder can finish and close the channel).
-func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors, totalErrors *atomic.Int32, unknownUsers *sync.Map) {
+func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors, totalErrors *atomic.Int32, passUnknown *sync.Map) {
 	for item := range work {
 		if ctx.Err() != nil {
 			return
@@ -312,7 +333,7 @@ func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryI
 			// exit; do no further work.
 			continue
 		}
-		s.processHistoryItem(ctx, item, consecutiveErrors, totalErrors, unknownUsers)
+		s.processHistoryItem(ctx, item, consecutiveErrors, totalErrors, passUnknown)
 	}
 }
 
@@ -354,15 +375,13 @@ func (s *Scheduler) processHistoryItem(
 	ctx context.Context,
 	item plex.HistoryItem,
 	consecutiveErrors, totalErrors *atomic.Int32,
-	unknownUsers *sync.Map,
+	passUnknown *sync.Map,
 ) {
 	userID := strconv.Itoa(int(item.AccountID))
 	userClient := s.userClient(userID)
 	if userClient == nil {
-		// Log once per unknown user per pass, not once per history item:
-		// an unmanaged/removed user's every recent play would otherwise
-		// emit a separate WARN and drown genuine signals in Loki.
-		if _, seen := unknownUsers.LoadOrStore(userID, struct{}{}); !seen {
+		passUnknown.Store(userID, struct{}{})
+		if _, logged := s.loggedUnknownUsers.LoadOrStore(userID, struct{}{}); !logged {
 			slog.Warn("scheduler: no per-user client, skipping history item",
 				"user", userID)
 		}

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,15 +31,30 @@ import (
 // tests can assert on the observed sequence without standing up a
 // full WebSocket server.
 type fakeHandler struct {
-	plays     []PlayEvent
-	timelines [][]TimelineEntry
-	mu        sync.Mutex
+	onConnection func(connected bool)
+	onPlay       func()
+	plays        []PlayEvent
+	timelines    [][]TimelineEntry
+	connections  []bool
+	mu           sync.Mutex
+}
+
+func (f *fakeHandler) OnConnection(_ context.Context, connected bool) {
+	f.mu.Lock()
+	f.connections = append(f.connections, connected)
+	f.mu.Unlock()
+	if f.onConnection != nil {
+		f.onConnection(connected)
+	}
 }
 
 func (f *fakeHandler) OnPlay(_ context.Context, ev PlayEvent) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.plays = append(f.plays, ev)
+	f.mu.Unlock()
+	if f.onPlay != nil {
+		f.onPlay()
+	}
 }
 
 func (f *fakeHandler) OnTimeline(_ context.Context, entries []TimelineEntry) {
@@ -186,7 +202,8 @@ func (f *fakePlexClient) RedirectPolicy() func(*http.Request, []*http.Request) e
 func (*fakePlexClient) BaseTransport() *http.Transport { return nil }
 
 // TestNewListener_UsesProvidedConfig confirms the Config shrinkage
-// tests can pass without mutating globals.
+// tests can pass without mutating globals, and that a Config naming no
+// loops gets receivers a beat cannot panic on.
 func TestNewListener_UsesProvidedConfig(t *testing.T) {
 	t.Parallel()
 	base, _ := url.Parse("http://plex.example:32400")
@@ -199,8 +216,10 @@ func TestNewListener_UsesProvidedConfig(t *testing.T) {
 	if l == nil {
 		t.Fatal("NewListener returned nil")
 	}
-	if l.cfg != cfg {
-		t.Errorf("listener cfg = %+v, want %+v", l.cfg, cfg)
+	want := cfg
+	want.ReadLoop, want.ReconnectLoop = noLoop{}, noLoop{}
+	if l.cfg != want {
+		t.Errorf("listener cfg = %+v, want %+v", l.cfg, want)
 	}
 }
 
@@ -248,21 +267,12 @@ func TestTimelineActionAlwaysReturnsValidAction(t *testing.T) {
 	})
 }
 
-// TestConnectAndListen_SlowDialNotStable is the regression guard for the
-// stability-timing fix: connection stability must be measured from
-// handshake SUCCESS, not from before the dial. A slow-but-successful
-// dial followed by a short real uptime previously inflated the elapsed
-// time with dial latency and was falsely classified "stable", which
-// resets the backoff and zeros the persistent-reconnect counter that
-// drives the sole health ERROR.
-//
-// The server delays the websocket Accept (slow handshake), then closes
-// immediately so the client's read returns almost at once (near-zero
-// real uptime). StableThreshold sits between the dial delay and the
-// uptime: time-from-handshake is BELOW it (correctly not stable), while
-// time-from-dial-start would be ABOVE it (the old bug). Asserting the
-// connection is NOT stable under the production formula pins the fix and
-// fails against the pre-fix `time.Since(connectStart)` code.
+// TestConnectAndListen_SlowDialNotStable measures stability from handshake
+// success, not from before the dial: a slow dial followed by a short uptime
+// must not read as stable, which would reset the backoff and zero the
+// persistent-reconnect counter. The server stalls the Accept, then closes at
+// once. StableThreshold sits between the dial delay and the uptime, so only a
+// clock started at the dial would call the connection stable.
 func TestConnectAndListen_SlowDialNotStable(t *testing.T) {
 	t.Parallel()
 
@@ -422,15 +432,11 @@ func TestWrapReadError(t *testing.T) {
 }
 
 // TestLogDisconnect_LevelAndEscalation pins the two level behaviors in
-// logDisconnect: server_close
-// disconnects log at INFO while every other reason logs at WARN, and a
-// single ERROR ("websocket reconnecting persistently") escalates once
-// consecutive reconnects reach persistentReconnectThreshold. The
-// file-marker health never reflects WebSocket state, so this ERROR is the
-// only alertable signal that the container is healthy-but-processing-
-// nothing; a regression flipping the level branch or the threshold
-// comparison would otherwise leave the suite green. Serial (no t.Parallel):
-// logDisconnect logs through the process-global slog.Default().
+// logDisconnect: server_close disconnects log at INFO while every other
+// reason logs at WARN, and an ERROR ("websocket reconnecting persistently")
+// is logged on each attempt once consecutive reconnects reach
+// persistentReconnectThreshold. Serial (no t.Parallel): logDisconnect logs
+// through the process-global slog.Default().
 func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -606,5 +612,40 @@ func TestConnectAndListen_PinnedCAHandshake(t *testing.T) {
 	}
 	if handshakeAt.IsZero() {
 		t.Error("handshakeAt is zero, want the post-handshake instant")
+	}
+}
+
+// Listen reports the handshake and every drop, so the handler can follow the
+// connection state and count the reconnect each drop leads to.
+func TestListen_ReportsConnectionState(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("server accept: %v", err)
+			return
+		}
+		c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	base, _ := url.Parse(srv.URL)
+	cfg := DefaultConfig()
+	cfg.MinBackoff, cfg.MaxBackoff = time.Millisecond, time.Millisecond
+	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	drops := 0
+	h := &fakeHandler{onConnection: func(connected bool) {
+		if !connected {
+			if drops++; drops == 2 {
+				cancel()
+			}
+		}
+	}}
+	l.Listen(ctx, h)
+
+	if want := []bool{true, false, true, false}; !slices.Equal(h.connections, want) {
+		t.Errorf("connection states = %v, want %v", h.connections, want)
 	}
 }
