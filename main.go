@@ -88,22 +88,24 @@ func run() int {
 	metrics.DeepScanInterval(cfg.schedulerInterval)
 	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
 	seedDeepScan(metrics, stamp, &cfg)
-	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
-	if err != nil {
-		slog.Error("cannot bind the metrics listener", "error", err)
-		return 1
-	}
-	if ln != nil {
-		done := serveMetrics(ctx, ln, metrics)
-		defer func() { cancel(); <-done }()
-		slog.Info("metrics listener started", "addr", ln.Addr().String())
-	}
 
 	marker := health.NewMarker(health.DefaultPath)
 	marker.Set(false)
 	wsCfg := notify.DefaultConfig()
 	live := newLiveness(marker, leasesFor(&cfg, wsCfg))
 	wsCfg.ReadLoop, wsCfg.ReconnectLoop = live.websocket, live.reconnect
+
+	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
+	if err != nil {
+		slog.Error("cannot bind the metrics listener", "error", err)
+		return 1
+	}
+	if ln != nil {
+		done := serveMetrics(ctx, ln, metrics, live)
+		defer func() { cancel(); <-done }()
+		slog.Info("metrics listener started", "addr", ln.Addr().String())
+	}
+
 	tickerDone := make(chan struct{})
 	go func() {
 		defer close(tickerDone)
@@ -300,12 +302,18 @@ func bindMetrics(ctx context.Context, addr string) (net.Listener, error) {
 	return ln, nil
 }
 
-// serveMetrics serves GET /metrics on ln until ctx ends; done closes once the
-// server has shut down.
-func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics) (done <-chan struct{}) {
+// newListenerMux routes the opt-in listener: GET /metrics and GET /healthz.
+func newListenerMux(m *obs.Metrics, live *liveness) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", m.Handler())
-	srv := httpserver.New(mux,
+	mux.Handle("GET /healthz", health.CheckHandler(live.checks()...))
+	return mux
+}
+
+// serveMetrics serves newListenerMux on ln until ctx ends; done closes once
+// the server has shut down.
+func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics, live *liveness) (done <-chan struct{}) {
+	srv := httpserver.New(newListenerMux(m, live),
 		httpserver.WithReadTimeout(10*time.Second),
 		httpserver.WithWriteTimeout(30*time.Second),
 		httpserver.WithSlogErrorLog(slog.LevelWarn))

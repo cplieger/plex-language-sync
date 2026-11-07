@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/cache"
@@ -147,12 +148,23 @@ func TestServeMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	done := serveMetrics(ctx, ln, obs.New())
+	live := newLiveness(health.NewMarker(filepath.Join(t.TempDir(), "healthy")), defaultLeases())
+	done := serveMetrics(ctx, ln, obs.New(), live)
 	t.Cleanup(func() { cancel(); <-done })
 	url := "http://" + ln.Addr().String() + "/metrics"
 
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+ln.Addr().String()+"/healthz", http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("GET /healthz before the app serves = %d, want 503", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

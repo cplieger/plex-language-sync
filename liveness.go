@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/go/health"
@@ -61,15 +62,17 @@ func leasesFor(cfg *config, ws notify.Config) loopLeases {
 // parked, while its lease is 0, or while its last beat is no older than the
 // lease, the comparison the probe's deadline makes.
 type loopEntry struct {
-	last   time.Time
-	name   string
+	last time.Time
+	name string
+	// reason is the fixed sentence /healthz lists while the entry is stale.
+	reason string
 	lease  time.Duration
 	mu     sync.Mutex
 	parked bool
 }
 
-func newLoopEntry(name string, lease time.Duration) *loopEntry {
-	return &loopEntry{name: name, lease: lease, parked: true}
+func newLoopEntry(name, reason string, lease time.Duration) *loopEntry {
+	return &loopEntry{name: name, reason: reason, lease: lease, parked: true}
 }
 
 // Beat records progress and arms the entry.
@@ -103,10 +106,15 @@ type liveness struct {
 	websocket *loopEntry
 	reconnect *loopEntry
 	deepScan  *loopEntry
+	// written beats on every marker write, so its lease is the probe's
+	// deadline on the marker's age.
+	written *loopEntry
 	// stale holds the loops already reported stale, so each stall logs once.
-	stale   map[*loopEntry]bool
-	mu      sync.Mutex
-	serving bool
+	stale map[*loopEntry]bool
+	mu    sync.Mutex
+	// serving is atomic so /healthz never waits on l.mu, which a marker write
+	// holds.
+	serving atomic.Bool
 }
 
 // newLiveness returns a liveness writing marker, every entry parked and the
@@ -114,9 +122,10 @@ type liveness struct {
 func newLiveness(marker *health.Marker, leases loopLeases) *liveness {
 	return &liveness{
 		latch:     health.NewLatch(marker),
-		websocket: newLoopEntry("websocket", leases.websocket),
-		reconnect: newLoopEntry("reconnect", leases.reconnect),
-		deepScan:  newLoopEntry("deep_scan", leases.deepScan),
+		websocket: newLoopEntry("websocket", "the Plex WebSocket listener stopped making progress", leases.websocket),
+		reconnect: newLoopEntry("reconnect", "the Plex reconnect loop stopped making progress", leases.reconnect),
+		deepScan:  newLoopEntry("deep_scan", "the deep scan stopped making progress", leases.deepScan),
+		written:   newLoopEntry("ticker", "the app stopped updating its health state", markerLease.Duration()),
 		stale:     map[*loopEntry]bool{},
 	}
 }
@@ -125,12 +134,28 @@ func (l *liveness) loops() []*loopEntry {
 	return []*loopEntry{l.websocket, l.reconnect, l.deepScan}
 }
 
+// signalFunc adapts a func to health.Signal.
+type signalFunc func() bool
+
+func (f signalFunc) Healthy() bool { return f() }
+
+// checks are /healthz's: one per loop, plus the two other conditions the
+// probe fails on, the app not serving and a marker no longer written, so the
+// endpoint and the probe give one verdict.
+func (l *liveness) checks() []health.Check {
+	cs := []health.Check{{Signal: signalFunc(l.serving.Load), Reason: "the app is starting or shutting down"}}
+	for _, e := range l.loops() {
+		cs = append(cs, health.Check{Signal: e, Reason: e.reason})
+	}
+	return append(cs, health.Check{Signal: l.written, Reason: l.written.reason})
+}
+
 // start marks the app able to serve, so from now on the marker follows the
 // loops. Calling it again changes nothing.
 func (l *liveness) start() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.serving = true
+	l.serving.Store(true)
 	l.updateLocked()
 }
 
@@ -138,7 +163,7 @@ func (l *liveness) start() {
 func (l *liveness) drain() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.serving = false
+	l.serving.Store(false)
 	l.latch.BeginDrain()
 }
 
@@ -163,7 +188,7 @@ func (l *liveness) run(ctx context.Context, every time.Duration) {
 // loop is inside its lease, and logs each loop that has just gone stale.
 // Caller holds l.mu.
 func (l *liveness) updateLocked() {
-	healthy := l.serving
+	healthy := l.serving.Load()
 	for _, e := range l.loops() {
 		ok := e.Healthy()
 		if !ok && !l.stale[e] {
@@ -173,4 +198,5 @@ func (l *liveness) updateLocked() {
 		healthy = healthy && ok
 	}
 	l.latch.Set(healthy)
+	l.written.Beat()
 }

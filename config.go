@@ -248,7 +248,7 @@ func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 }
 
 // loadMetricsListenAddr reads METRICS_LISTEN_ADDR, the opt-in address of the
-// /metrics listener; empty means no listener and no port. Invisible edge bytes
+// /metrics and /healthz listener; empty means no listener and no port. Invisible edge bytes
 // are trimmed, because an untrimmed " :9471" fails net.Listen on a host lookup
 // the operator cannot see.
 func loadMetricsListenAddr() string {
