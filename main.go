@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,12 +31,14 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/deepscan"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
 	"github.com/cplieger/plex-language-sync/internal/notify"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
@@ -80,6 +84,19 @@ func run() int {
 	cfg := loadConfig()
 	logConfig(&cfg)
 
+	metrics := obs.New()
+	metrics.DeepScanInterval(cfg.schedulerInterval)
+	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
+	if err != nil {
+		slog.Error("cannot bind the metrics listener", "error", err)
+		return 1
+	}
+	if ln != nil {
+		done := serveMetrics(ctx, ln, metrics)
+		defer func() { cancel(); <-done }()
+		slog.Info("metrics listener started", "addr", ln.Addr().String())
+	}
+
 	marker := health.NewMarker(health.DefaultPath)
 	marker.Set(false)
 
@@ -124,6 +141,7 @@ func run() int {
 	// key (derived above) makes user-token decryption work offline on restart.
 	c := cache.New()
 	c.SetEncryptionKey(encKey)
+	persist := &persister{cache: c, dir: cacheDir, metrics: metrics}
 	if code, ok := checkCacheDir(ctx, marker); !ok {
 		return code
 	}
@@ -138,7 +156,7 @@ func run() int {
 	}
 
 	// User manager — admin identity + cached shared-user tokens.
-	um := users.NewManager(c)
+	um := users.NewManager(c, metrics)
 	um.Init(admin)
 	um.LoadFromCache()
 
@@ -152,19 +170,7 @@ func run() int {
 	// Docker unhealthy/restart that cannot fix plex.tv. The periodic RefreshLoop
 	// keeps retrying.
 	marker.Set(true)
-	// Shutdown sequence: flag unhealthy first so Docker stops routing health
-	// probes as passing while the (slow) cache save runs, then persist the
-	// cache. Set(false) removes the marker, so no separate Cleanup is needed.
-	// A failed save here loses the latest learned language profiles and user
-	// tokens, so it is logged at Error (operator-actionable), not the Warn used
-	// for transient mid-run save failures.
-	defer func() {
-		marker.Set(false)
-		if err := c.Save(cacheDir); err != nil {
-			slog.Error("cache save on shutdown failed, profiles may be lost",
-				"path", cacheDir, "error", err)
-		}
-	}()
+	defer saveOnShutdown(marker, persist.save)
 
 	// Synchronous initial refresh with bounded exponential backoff. See
 	// internal/users/refresh.go for the retry semantics. Runs after the
@@ -207,6 +213,7 @@ func run() int {
 			Cache:      c,
 			Users:      um,
 			UserClient: syncUserClient,
+			Metrics:    metrics,
 		},
 	)
 	sched := deepscan.New(
@@ -215,13 +222,14 @@ func run() int {
 			Enable:   cfg.schedulerEnabled,
 			Ignore:   ignorePolicy,
 		},
-		deepscan.Deps{
+		&deepscan.Deps{
 			Plex:       client,
 			Cache:      c,
 			Stamp:      scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName)),
 			UserClient: scanUserClient,
 			Sync:       syncer,
-			SaveCache:  func() error { return c.Save(cacheDir) },
+			SaveCache:  persist.save,
+			Metrics:    metrics,
 		},
 	)
 
@@ -253,10 +261,72 @@ func run() int {
 		cache:         c,
 		ignore:        ignorePolicy,
 		resolveStalls: &resolveStallCounter{},
+		metrics:       metrics,
 	})
 
 	slog.Info("shutting down", "cause", context.Cause(ctx))
 	return 0
+}
+
+// bindMetrics binds the opt-in metrics listener before any work, so a bad
+// address stops the container at once instead of leaving it running with no
+// page. An empty addr binds nothing.
+func bindMetrics(ctx context.Context, addr string) (net.Listener, error) {
+	if addr == "" {
+		return nil, nil
+	}
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("METRICS_LISTEN_ADDR %q: %w", addr, err)
+	}
+	return ln, nil
+}
+
+// serveMetrics serves GET /metrics on ln until ctx ends; done closes once the
+// server has shut down.
+func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics) (done <-chan struct{}) {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", m.Handler())
+	srv := httpserver.New(mux,
+		httpserver.WithReadTimeout(10*time.Second),
+		httpserver.WithWriteTimeout(30*time.Second),
+		httpserver.WithSlogErrorLog(slog.LevelWarn))
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		if err := httpserver.Run(ctx, srv, ln, nil); err != nil {
+			slog.Warn("metrics listener stopped", "error", err)
+		}
+	}()
+	return stopped
+}
+
+// persister is the one path that saves the cache, used by the deep scan and at
+// shutdown, so every failed save is counted.
+type persister struct {
+	cache   *cache.Cache
+	metrics *obs.Metrics
+	dir     string
+}
+
+func (p *persister) save() error {
+	err := p.cache.Save(p.dir)
+	if err != nil {
+		p.metrics.CacheSaveFailed()
+	}
+	return err
+}
+
+// saveOnShutdown flags the container unhealthy, so Docker stops passing its
+// probe while the slow save runs, then saves. A failed save here loses the
+// profiles and tokens learned since the last one, so it is an ERROR, where a
+// mid-run failure the next pass retries is a WARN.
+func saveOnShutdown(marker *health.Marker, save func() error) {
+	marker.Set(false)
+	if err := save(); err != nil {
+		slog.Error("cache save on shutdown failed, profiles may be lost",
+			"path", cacheDir, "error", err)
+	}
 }
 
 // syncerConfig is the part of cfg the syncer reads. TRIGGER_ON_SCAN becomes
@@ -477,6 +547,7 @@ type notifyAdapter struct {
 	// events so the expected failures stay quiet and a real stall speaks
 	// once. A nil counter counts nothing (see resolveStallCounter).
 	resolveStalls *resolveStallCounter
+	metrics       *obs.Metrics
 }
 
 func (n *notifyAdapter) OnPlay(ctx context.Context, ev notify.PlayEvent) {
@@ -490,6 +561,14 @@ func (n *notifyAdapter) OnTimeline(ctx context.Context, entries []notify.Timelin
 	n.handleTimeline(ctx, entries)
 }
 
+// OnConnection records the stream state; every drop leads to one reconnect.
+func (n *notifyAdapter) OnConnection(_ context.Context, connected bool) {
+	n.metrics.WebSocketConnected(connected)
+	if !connected {
+		n.metrics.WebSocketReconnect()
+	}
+}
+
 // handlePlayEvent processes a single play session state notification.
 func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent) {
 	if !notify.IsRelevantPlayEvent(ev) {
@@ -497,6 +576,7 @@ func (n *notifyAdapter) handlePlayEvent(ctx context.Context, ev notify.PlayEvent
 	}
 
 	userID, username, ok := n.resolvePlayEventUser(ctx, ev)
+	n.metrics.PlayEvent(ok)
 	if !ok {
 		return
 	}
@@ -553,6 +633,7 @@ func (n *notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.Play
 	if recovered, after := n.resolveStalls.success(); recovered {
 		slog.Info("play event: user resolution recovered",
 			"after_consecutive_failures", after)
+		n.metrics.ResolutionRecovered()
 	}
 	// The account holder chooses the name and callers only log it.
 	return uid, textsafe.SanitizeSingleLine(uname), true
@@ -604,6 +685,7 @@ func (n *notifyAdapter) skipUnattributedPlayEvent(ev notify.PlayEvent, cause err
 			"absent_pairs", v.absentPairs,
 			"last_client", textsafe.SanitizeSingleLine(ev.ClientIdentifier),
 			"last_key", textsafe.SanitizeSingleLine(ev.RatingKey))
+		n.metrics.ResolutionStalled(string(v.cause))
 	}
 }
 
@@ -641,13 +723,13 @@ const (
 	// be read, so no client can be attributed whatever it is doing. The
 	// operator-actionable state, and the one the published alert's
 	// advice fits: a token that lost its rights, or Plex not answering.
-	causeSessionsUnreadable stallCause = "sessions_unreadable"
+	causeSessionsUnreadable stallCause = obs.StallSessionsUnreadable
 
 	// causeAllClientsAbsent: the list was read every time and several
 	// distinct (client, item) pairs in the run were missing from it. A
 	// readable list that carries none of them is the join failing, while
 	// one pair missing repeatedly is that one client or that one item.
-	causeAllClientsAbsent stallCause = "all_clients_absent"
+	causeAllClientsAbsent stallCause = obs.StallAllClientsAbsent
 )
 
 // resolveStallCounter tracks a run of unattributed play events so a

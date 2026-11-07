@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 )
 
@@ -61,18 +62,21 @@ type tokenStore interface {
 // safe for concurrent use.
 type Manager struct {
 	cache   tokenStore
+	metrics *obs.Metrics
 	shared  map[id]record       // keyed by typed userID
 	clients map[id]*plex.Client // cached per-user clients
 	admin   record
 	mu      sync.Mutex
 }
 
-// NewManager returns a Manager with empty shared-user and client maps.
-// The Init method (called by the composition root after the admin user
-// is resolved) seeds the admin identity.
-func NewManager(c tokenStore) *Manager {
+// NewManager returns a Manager with empty shared-user and client maps,
+// recording the shared-user count on metrics, which may be nil. The Init
+// method (called by the composition root after the admin user is resolved)
+// seeds the admin identity.
+func NewManager(c tokenStore, metrics *obs.Metrics) *Manager {
 	return &Manager{
 		cache:   c,
+		metrics: metrics,
 		shared:  make(map[id]record),
 		clients: make(map[id]*plex.Client),
 	}
@@ -111,6 +115,7 @@ func (m *Manager) LoadFromCache() {
 			m.shared[uid] = record{ID: uid, Token: plex.Token(token), Name: "user-" + uidStr}
 		}
 	}
+	m.metrics.SharedUsers(len(m.shared))
 }
 
 // ClientForUser returns a *plex.Client scoped to the given user's token,

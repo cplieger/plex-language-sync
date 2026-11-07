@@ -65,7 +65,7 @@ func TestHandlePlayEvent_sanitizesNotificationValuesInLogs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := capture.Default(t)
 			c := cache.New()
-			mgr := users.NewManager(c)
+			mgr := users.NewManager(c, nil)
 			mgr.Init(&plex.User{ID: "1", Name: "admin"})
 			adapter := &notifyAdapter{
 				cfg:    &config{triggerOnPlay: true},

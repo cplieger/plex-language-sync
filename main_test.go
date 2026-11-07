@@ -556,7 +556,7 @@ func newTestAdapter(t *testing.T, triggerOnPlay, seed bool) *notifyAdapter {
 	parsed, _ := url.Parse("http://example.test")
 	c := cache.New()
 	client := plexclient.NewFromHTTP(parsed, "test-token", plexclient.Options{})
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	return &notifyAdapter{
 		syncer: newTimelineSyncer(c, mgr, seed),
@@ -683,7 +683,7 @@ func (ps *playServer) audioOn(part int) int {
 func newPlayAdapter(t *testing.T, client *plex.Client) (*notifyAdapter, *cache.Cache) {
 	t.Helper()
 	c := cache.New()
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := tracksync.New(
 		tracksync.Config{UpdateLevel: tracksync.LevelShow, UpdateStrategy: tracksync.StrategyAll},
@@ -835,7 +835,7 @@ func TestNotifyAdapterGates_shortCircuitBeforeHTTP(t *testing.T) {
 
 	build := func(play, seed bool) *notifyAdapter {
 		c := cache.New()
-		mgr := users.NewManager(c)
+		mgr := users.NewManager(c, nil)
 		mgr.Init(&plex.User{ID: "1", Name: "admin"})
 		client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 		return &notifyAdapter{
@@ -886,7 +886,7 @@ func TestHandleTimeline_nonEpisodeNotMarked(t *testing.T) {
 	base, _ := url.Parse(srv.URL)
 
 	c := cache.New()
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
 	adapter := &notifyAdapter{
@@ -958,7 +958,7 @@ func TestHandleTimeline_ignoredEpisodeNotMarked(t *testing.T) {
 
 	c := cache.New()
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := newTimelineSyncer(c, mgr, true)
 	adapter := &notifyAdapter{
@@ -997,7 +997,7 @@ func TestHandleTimeline_genuineEpisodeMarkedAndDispatched(t *testing.T) {
 
 	c := cache.New()
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := newTimelineSyncer(c, mgr, true)
 	adapter := &notifyAdapter{
@@ -1033,7 +1033,7 @@ func TestHandleTimeline_alreadyProcessedSkipsRefetch(t *testing.T) {
 
 	c := cache.New()
 	client := plexclient.NewFromHTTP(base, "test-token", plexclient.Options{HTTP: srv.Client()})
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	syncer := newTimelineSyncer(c, mgr, true)
 	adapter := &notifyAdapter{
@@ -1071,7 +1071,7 @@ func TestTimelineSeedingOffFetchesNothing(t *testing.T) {
 	entries := []notify.TimelineEntry{{ItemID: "1", Type: 4, MetadataState: "created"}}
 	run := func(seed bool) int64 {
 		c := cache.New()
-		mgr := users.NewManager(c)
+		mgr := users.NewManager(c, nil)
 		mgr.Init(&plex.User{ID: "1", Name: "admin"})
 		adapter := &notifyAdapter{syncer: newTimelineSyncer(c, mgr, seed), cfg: &config{}, users: mgr, client: client, cache: c}
 		before := hits.Load()
@@ -1155,7 +1155,7 @@ func TestTimelineUpdatedSkipsViewedNoRecord(t *testing.T) {
 
 	c := cache.New()
 	c.SetUserTokens(map[string]string{"2": "token-bob"})
-	mgr := users.NewManager(c)
+	mgr := users.NewManager(c, nil)
 	mgr.Init(&plex.User{ID: "1", Name: "admin"})
 	mgr.LoadFromCache()
 	japanese := &streams.Stream{}

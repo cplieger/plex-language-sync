@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"golang.org/x/sync/singleflight"
@@ -75,6 +76,7 @@ type Scheduler struct {
 	loggedUnknownUsers sync.Map
 	userClient         userClientFunc
 	saveCache          cacheSaver
+	metrics            *obs.Metrics
 	cfg                Config
 	// workers bounds in-flight per-item work during a deep-analysis
 	// pass; zero (the default) means deepAnalysisConcurrency. Exists as
@@ -115,10 +117,12 @@ type Deps struct {
 	// SaveCache flushes the cache to disk. May be nil in tests that do not
 	// exercise the disk-flush path.
 	SaveCache cacheSaver
+	// Metrics records each pass; nil records nothing.
+	Metrics *obs.Metrics
 }
 
 // New constructs a Scheduler from cfg and deps.
-func New(cfg Config, deps Deps) *Scheduler {
+func New(cfg Config, deps *Deps) *Scheduler {
 	return &Scheduler{
 		cfg:        cfg,
 		plex:       deps.Plex,
@@ -127,6 +131,7 @@ func New(cfg Config, deps Deps) *Scheduler {
 		userClient: deps.UserClient,
 		sync:       deps.Sync,
 		saveCache:  deps.SaveCache,
+		metrics:    deps.Metrics,
 	}
 }
 
@@ -245,6 +250,7 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 	histComplete, unknownUsers := s.processRecentHistory(ctx, sinceUnix)
 	addedComplete := s.processRecentlyAdded(ctx, sinceUnix)
 	complete = histComplete && addedComplete && ctx.Err() == nil
+	s.metrics.DeepScanFinished(complete, time.Now())
 
 	slog.Info("deep analysis completed",
 		"since", time.Unix(sinceUnix, 0).UTC().Format(time.RFC3339),

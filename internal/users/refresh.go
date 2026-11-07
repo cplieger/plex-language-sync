@@ -67,6 +67,7 @@ func (m *Manager) refreshTokens(ctx context.Context, adminClient *plex.Client, m
 	}
 	m.shared = newShared
 	appliedCount := len(newShared)
+	m.metrics.SharedUsers(appliedCount)
 
 	tokensCopy := make(map[string]string, len(newShared))
 	for uid, info := range newShared {

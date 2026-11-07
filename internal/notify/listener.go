@@ -41,24 +41,15 @@ const wsReadLimitBytes = 1 << 20
 // healthy-but-processing-nothing.
 const persistentReconnectThreshold = 5
 
-// Handler receives decoded events from the Listener. Implementations
-// live in the composition root (main package) and typically fan out
-// per-event work to the sync subsystem.
-//
-// OnPlay is called for each PlaySessionStateNotification entry in a
-// "playing" notification, unfiltered; the caller applies its own
-// relevance policy (see IsRelevantPlayEvent). OnTimeline is called
-// once per notification with the full TimelineEntry slice so the
-// caller can apply its own per-entry relevance, dedup, or batching
-// policy.
-//
-// The Handler is invoked synchronously from the read loop; a slow
-// handler delays the next Read and can trigger the keepalive timeout.
-// Handlers that need to perform long work should hand it off to a
-// goroutine or worker pool.
+// Handler receives the Listener's events, synchronously from the read loop:
+// a slow handler delays the next read, so long work goes to a goroutine.
+// OnPlay gets each play-session entry unfiltered (see IsRelevantPlayEvent),
+// OnTimeline each notification's whole entry slice, and OnConnection true
+// after each handshake and false after each drop that Listen will retry.
 type Handler interface {
 	OnPlay(ctx context.Context, ev PlayEvent)
 	OnTimeline(ctx context.Context, entries []TimelineEntry)
+	OnConnection(ctx context.Context, connected bool)
 }
 
 // PlexClient is the subset of an HTTP-based Plex client the Listener
@@ -141,6 +132,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
+		h.OnConnection(ctx, false)
 		logDisconnect(ctx, err, backoff, stable, reconnects)
 
 		delay := time.NewTimer(backoff)
@@ -239,6 +231,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 	}()
 
 	slog.Info("websocket connected", "host", base.Host)
+	h.OnConnection(ctx, true)
 
 	// Limit WebSocket message size to prevent OOM from oversized messages.
 	conn.SetReadLimit(wsReadLimitBytes)

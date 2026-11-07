@@ -20,7 +20,7 @@ func passLog(t *testing.T, plx plexReader) []string {
 	var buf bytes.Buffer
 	h, _ := slogx.NewHandler(slogx.Options{Output: &buf, Level: slog.LevelInfo})
 	capture.SwapDefault(t, slog.New(h))
-	sched := New(Config{Enable: true}, Deps{
+	sched := New(Config{Enable: true}, &Deps{
 		Plex: plx, Cache: fakeapi.NewCache(), Stamp: testStamp(t),
 		UserClient: func(string) EpisodeReader { return nil }, Sync: &fakeSyncer{},
 	})

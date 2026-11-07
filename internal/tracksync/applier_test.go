@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/cplieger/langtag/v3"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/metrictest"
 	"github.com/cplieger/plexapi/v3"
 )
 
@@ -58,7 +60,7 @@ func applyFixture(t *testing.T, eps ...streams.Episode) (*applier, *fakeapi.Plex
 		plx.EpisodeByKey[ep.RatingKey] = &ep
 	}
 	c := fakeapi.NewCache()
-	a := newApplier(c, &fakeUsers{})
+	a := newApplier(c, &fakeUsers{}, nil)
 	a.now = func() time.Time { return time.Unix(500, 0) }
 	return a, plx, c
 }
@@ -746,4 +748,43 @@ func writtenParts(plx *fakeapi.Plex) []int {
 		}
 	}
 	return parts
+}
+
+func TestApplyCountsEachPutOnce(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		subErr                  error
+		name                    string
+		wantSubSet, wantSubFail float64
+	}{
+		{name: "both accepted", wantSubSet: 1},
+		{name: "subtitle refused", subErr: errors.New("refused"), wantSubFail: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ep := applyTarget("2001", 5001, 0, engAudioID, freSubID)
+			a, plx, _ := applyFixture(t, ep)
+			plx.SetSubtitleErr = tc.subErr
+			m := obs.New()
+			a.metrics = m
+
+			if _, err := a.applyLocked(t.Context(), plx, "alice", intentPlan(ep)); err != nil {
+				t.Fatalf("applyLocked: %v", err)
+			}
+			for _, c := range []struct {
+				kind, result string
+				want         float64
+			}{
+				{"audio", "set", 1},
+				{"audio", "failed", 0},
+				{"subtitle", "set", tc.wantSubSet},
+				{"subtitle", "failed", tc.wantSubFail},
+			} {
+				if got := metrictest.Value(t, m, "plex_language_sync_track_updates_total", c.kind, c.result); got != c.want {
+					t.Errorf("track_updates{%s,%s} = %v, want %v", c.kind, c.result, got, c.want)
+				}
+			}
+		})
+	}
 }

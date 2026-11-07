@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cplieger/go/envx"
 	"github.com/cplieger/go/slogx"
@@ -54,6 +55,7 @@ type config struct {
 	updateLevel       string // "show" or "season"
 	updateStrategy    string // "all" or "next"
 	caCertPath        string
+	metricsListenAddr string // empty: no metrics listener
 	ignoreLabels      []string
 	ignoreLibraries   []string
 	schedulerInterval time.Duration // deep-analysis cadence; 0 = disabled
@@ -95,6 +97,7 @@ func loadConfig() config {
 		subtitleTier:     loadSubtitleTier(),
 	}
 	cfg.schedulerInterval, cfg.schedulerEnabled = loadSchedulerInterval()
+	cfg.metricsListenAddr = loadMetricsListenAddr()
 
 	if v := os.Getenv("IGNORE_LABELS"); v != "" {
 		cfg.ignoreLabels = splitTrim(v)
@@ -157,7 +160,8 @@ func logConfig(cfg *config) {
 		"ignore_labels", cfg.ignoreLabels,
 		"ignore_libraries", cfg.ignoreLibraries,
 		"log_level", cfg.logLevel.String(),
-		"ca_cert_path", cfg.caCertPath)
+		"ca_cert_path", cfg.caCertPath,
+		"metrics_listen_addr", cfg.metricsListenAddr)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,4 +245,14 @@ func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 		interval = d
 	}
 	return interval, enabled
+}
+
+// loadMetricsListenAddr reads METRICS_LISTEN_ADDR, the opt-in address of the
+// /metrics listener; empty means no listener and no port. Invisible edge bytes
+// are trimmed, because an untrimmed " :9471" fails net.Listen on a host lookup
+// the operator cannot see.
+func loadMetricsListenAddr() string {
+	return strings.TrimFunc(os.Getenv("METRICS_LISTEN_ADDR"), func(r rune) bool {
+		return unicode.IsSpace(r) || !unicode.IsPrint(r)
+	})
 }

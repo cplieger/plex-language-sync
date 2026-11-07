@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,9 +31,20 @@ import (
 // tests can assert on the observed sequence without standing up a
 // full WebSocket server.
 type fakeHandler struct {
-	plays     []PlayEvent
-	timelines [][]TimelineEntry
-	mu        sync.Mutex
+	onConnection func(connected bool)
+	plays        []PlayEvent
+	timelines    [][]TimelineEntry
+	connections  []bool
+	mu           sync.Mutex
+}
+
+func (f *fakeHandler) OnConnection(_ context.Context, connected bool) {
+	f.mu.Lock()
+	f.connections = append(f.connections, connected)
+	f.mu.Unlock()
+	if f.onConnection != nil {
+		f.onConnection(connected)
+	}
 }
 
 func (f *fakeHandler) OnPlay(_ context.Context, ev PlayEvent) {
@@ -606,5 +618,40 @@ func TestConnectAndListen_PinnedCAHandshake(t *testing.T) {
 	}
 	if handshakeAt.IsZero() {
 		t.Error("handshakeAt is zero, want the post-handshake instant")
+	}
+}
+
+// Listen reports the handshake and every drop, so the handler can follow the
+// connection state and count the reconnect each drop leads to.
+func TestListen_ReportsConnectionState(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("server accept: %v", err)
+			return
+		}
+		c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	base, _ := url.Parse(srv.URL)
+	cfg := DefaultConfig()
+	cfg.MinBackoff, cfg.MaxBackoff = time.Millisecond, time.Millisecond
+	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	drops := 0
+	h := &fakeHandler{onConnection: func(connected bool) {
+		if !connected {
+			if drops++; drops == 2 {
+				cancel()
+			}
+		}
+	}}
+	l.Listen(ctx, h)
+
+	if want := []bool{true, false, true, false}; !slices.Equal(h.connections, want) {
+		t.Errorf("connection states = %v, want %v", h.connections, want)
 	}
 }
