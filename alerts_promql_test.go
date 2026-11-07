@@ -19,14 +19,13 @@ import (
 var logqlSuccessors = map[string][]string{
 	"PlexLanguageSyncDeepScanStalled":   {"PlexLanguageSyncDeepScanStalled"},
 	"PlexLanguageSyncResolutionStalled": {"PlexLanguageSyncResolutionStalled"},
-	"PlexLanguageSyncErrorLog": {
-		"PlexLanguageSyncWebSocketDown", "PlexLanguageSyncResolutionStalled", "PlexLanguageSyncCacheSaveFailed",
-	},
+	"PlexLanguageSyncErrorLog":          {"PlexLanguageSyncDown", "PlexLanguageSyncWebSocketDown"},
 }
 
-// promqlOnly are the metric alerts with no log form: a dead process, which
-// leaves no line, and conditions the log rules read only as ERROR lines.
-var promqlOnly = []string{"PlexLanguageSyncDown", "PlexLanguageSyncWebSocketDown", "PlexLanguageSyncCacheSaveFailed"}
+// promqlOnly are the metric alerts with no log form: a dead process or an
+// absent target leaves no line, and a cache save failing during a deep scan
+// logs only a WARN that no log rule reads.
+var promqlOnly = []string{"PlexLanguageSyncDown", "PlexLanguageSyncCacheSaveFailed"}
 
 var exposedType = regexp.MustCompile(`(?m)^# TYPE (\S+) (\S+)$`)
 

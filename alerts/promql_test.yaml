@@ -230,7 +230,7 @@ tests:
               cause: sessions_unreadable
             exp_annotations:
               summary: "plex-language-sync is attributing no playback to any user"
-              description: "No language choices are saved. Read the `cause` label: for `sessions_unreadable`, check PLEX_TOKEN admin rights and the server; for `all_clients_absent`, session matching is failing.\n"
+              description: "No language choices are saved. Read the `cause` label. For `sessions_unreadable`, check PLEX_TOKEN admin rights and the server. For `all_clients_absent`, session matching is failing.\n"
       - eval_time: 11h
         alertname: PlexLanguageSyncResolutionStalled
         exp_alerts: []

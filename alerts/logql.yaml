@@ -1,8 +1,11 @@
 # Recommended LogQL alert rules for plex-language-sync, for Loki's ruler.
 # Ship the container's logs to Loki and load this file into Loki's ruler.
 # The rules read INFO lines, so keep LOG_LEVEL at info or debug.
-# The deadman's 50h window fits the default 24h DEEP_SCAN_INTERVAL: for
-# another interval, set it to two intervals plus 2h; with the scan off, drop it.
+# This file is the alternative to alerts/promql.yaml: load one of the two, not
+# both. PlexLanguageSyncErrorLog exists only here. There, PlexLanguageSyncDown
+# and PlexLanguageSyncWebSocketDown cover its causes.
+# The deadman's 50h window fits the default 24h DEEP_SCAN_INTERVAL. For
+# another interval, set it to two intervals plus 2h. With the scan off, drop it.
 # Thresholds and severity labels are starting points. Change the container
 # selector to the label your log collector sets, such as job or service.
 groups:
@@ -46,7 +49,7 @@ groups:
         annotations:
           summary: "plex-language-sync is attributing no playback to any user"
           description: >
-            No language choices are saved. Read the `cause` field: for
-            `sessions_unreadable`, check PLEX_TOKEN admin rights and the server;
-            for `all_clients_absent`, session matching is failing. The alert
+            No language choices are saved. Read the `cause` field. For
+            `sessions_unreadable`, check PLEX_TOKEN admin rights and the server.
+            For `all_clients_absent`, session matching is failing. The alert
             holds 6h and does not track recovery.

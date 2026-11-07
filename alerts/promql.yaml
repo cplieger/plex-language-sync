@@ -2,8 +2,8 @@
 # Mimir or vmalert ruler. They need METRICS_LISTEN_ADDR set and a scrape job
 # named plex-language-sync. This file is the alternative to alerts/logql.yaml:
 # load one of the two, not both, or each fault pages twice.
-# PlexLanguageSyncErrorLog exists only in alerts/logql.yaml; here the
-# WebSocket, resolution and cache-save alerts cover its causes.
+# PlexLanguageSyncErrorLog exists only in alerts/logql.yaml. Here
+# PlexLanguageSyncDown and PlexLanguageSyncWebSocketDown cover its causes.
 # The deep scan alert reads DEEP_SCAN_INTERVAL from the metrics, so it needs no
 # editing and stays silent with the scan off. Thresholds and severity labels
 # are starting points.
@@ -59,9 +59,9 @@ groups:
         annotations:
           summary: "plex-language-sync is attributing no playback to any user"
           description: >
-            No language choices are saved. Read the `cause` label: for
-            `sessions_unreadable`, check PLEX_TOKEN admin rights and the server;
-            for `all_clients_absent`, session matching is failing.
+            No language choices are saved. Read the `cause` label. For
+            `sessions_unreadable`, check PLEX_TOKEN admin rights and the server.
+            For `all_clients_absent`, session matching is failing.
       - alert: PlexLanguageSyncCacheSaveFailed
         expr: increase(plex_language_sync_cache_save_failures_total[1h]) > 0
         for: 0m
