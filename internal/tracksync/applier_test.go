@@ -754,11 +754,16 @@ func TestApplyCountsEachPutOnce(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		subErr                  error
+		wantErr                 error
 		name                    string
 		wantSubSet, wantSubFail float64
+		subOff                  bool // the plan turns subtitles off
+		cancelSub               bool // the subtitle PUT ends the context and fails with it
 	}{
 		{name: "both accepted", wantSubSet: 1},
 		{name: "subtitle refused", subErr: errors.New("refused"), wantSubFail: 1},
+		{name: "subtitles turned off", subOff: true, wantSubSet: 1},
+		{name: "subtitle ended by the context", cancelSub: true, wantErr: context.Canceled},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -768,9 +773,20 @@ func TestApplyCountsEachPutOnce(t *testing.T) {
 			plx.SetSubtitleErr = tc.subErr
 			m := obs.New()
 			a.metrics = m
+			p := intentPlan(ep)
+			if tc.subOff {
+				p.ref.Subtitle = nil
+				p.pick = pickForIntent(p.ref, langtag.TierSameLanguage)
+			}
+			ctx, client := t.Context(), PlexReadWriter(plx)
+			if tc.cancelSub {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				client = &cancellingClient{Plex: plx, cancel: cancel, on: "subtitle", fail: true}
+			}
 
-			if _, err := a.applyLocked(t.Context(), plx, "alice", intentPlan(ep)); err != nil {
-				t.Fatalf("applyLocked: %v", err)
+			if _, err := a.applyLocked(ctx, client, "alice", p); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("applyLocked error = %v, want %v", err, tc.wantErr)
 			}
 			for _, c := range []struct {
 				kind, result string
