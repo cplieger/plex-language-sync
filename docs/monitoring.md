@@ -4,7 +4,7 @@ This page describes what plex-language-sync logs, how its healthcheck works, and
 
 ## Log lines
 
-plex-language-sync has no metrics endpoint and opens no port. Its state is in its log, written to standard error as `key=value` text in UTC.
+plex-language-sync opens no port unless `METRICS_LISTEN_ADDR` is set. It then serves `GET /metrics` on that address. Its state is also in its log, written to standard error as `key=value` text in UTC.
 
 - At start it logs `configuration loaded` with every setting, showing the token only as `configured`. Then come `connected to plex server` and `authenticated as admin user`.
 - Each play that sets or changes a choice logs `play event detected`, and each new or updated episode logs `library scan event detected`.
