@@ -712,6 +712,64 @@ func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 	})
 }
 
+// countingBeater counts liveness beats.
+type countingBeater struct{ n atomic.Int32 }
+
+func (b *countingBeater) Beat() { b.n.Add(1) }
+
+// beatSnapshotPlex records how many beats had landed when the pass first read
+// Plex.
+type beatSnapshotPlex struct {
+	*fakeapi.Plex
+	beats     *countingBeater
+	atHistory atomic.Int32
+}
+
+func (p *beatSnapshotPlex) History(ctx context.Context, since int64) ([]plex.HistoryItem, error) {
+	p.atHistory.Store(p.beats.n.Load())
+	return p.Plex.History(ctx, since)
+}
+
+// The deep-scan loop beats when it starts and as each pass starts and ends, so
+// a pass that never returns stops the beats; a disabled loop never beats.
+func TestRun_BeatsItsLivenessAroundEachPass(t *testing.T) {
+	t.Parallel()
+	newSched := func(cfg Config, beats *countingBeater) (*Scheduler, *beatSnapshotPlex) {
+		plx := &beatSnapshotPlex{Plex: &fakeapi.Plex{}, beats: beats}
+		return New(cfg, &Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t),
+			UserClient: func(_ string) EpisodeReader { return plx },
+			Sync:       &fakeSyncer{},
+			Liveness:   beats,
+		}), plx
+	}
+	t.Run("enabled", func(t *testing.T) {
+		t.Parallel()
+		beats := &countingBeater{}
+		sched, plx := newSched(Config{Enable: true, Interval: 24 * time.Hour}, beats)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // pre-cancelled on purpose: Run returns after the initial pass
+		sched.Run(ctx)
+		if got := plx.atHistory.Load(); got != 2 {
+			t.Errorf("beats before the pass read Plex = %d, want 2 (loop start and pass start)", got)
+		}
+		if got := beats.n.Load(); got != 3 {
+			t.Errorf("beats after one pass = %d, want 3 (loop start, pass start, pass end)", got)
+		}
+	})
+	t.Run("disabled", func(t *testing.T) {
+		t.Parallel()
+		beats := &countingBeater{}
+		sched, _ := newSched(Config{Enable: false, Interval: 24 * time.Hour}, beats)
+		sched.Run(t.Context())
+		if got := beats.n.Load(); got != 0 {
+			t.Errorf("a disabled deep scan beat %d times, want 0", got)
+		}
+	})
+}
+
 // ---------------------------------------------------------------------------
 // deep-analysis fetch-error branches — WARN keys
 // ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ import (
 // full WebSocket server.
 type fakeHandler struct {
 	onConnection func(connected bool)
+	onPlay       func()
 	plays        []PlayEvent
 	timelines    [][]TimelineEntry
 	connections  []bool
@@ -49,8 +50,11 @@ func (f *fakeHandler) OnConnection(_ context.Context, connected bool) {
 
 func (f *fakeHandler) OnPlay(_ context.Context, ev PlayEvent) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.plays = append(f.plays, ev)
+	f.mu.Unlock()
+	if f.onPlay != nil {
+		f.onPlay()
+	}
 }
 
 func (f *fakeHandler) OnTimeline(_ context.Context, entries []TimelineEntry) {

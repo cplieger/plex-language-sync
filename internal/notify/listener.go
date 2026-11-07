@@ -67,25 +67,50 @@ type PlexClient interface {
 	BaseTransport() *http.Transport
 }
 
+// Loop is one of Listen's two loops' liveness entry: Beat records progress
+// and Park marks the loop idle by design. Only one of the loops runs at a
+// time, so each parks its entry when it hands over to the other.
+type Loop interface {
+	Beat()
+	Park()
+}
+
+// noLoop is the Loop of a Config that names none.
+type noLoop struct{}
+
+func (noLoop) Beat() {}
+func (noLoop) Park() {}
+
 // Listener dials Plex's /:/websockets/notifications endpoint, decodes
 // the JSON envelope, and delivers events to a Handler with an outer
 // reconnect loop and stable-connection backoff reset.
 type Listener struct {
-	client PlexClient
-	cfg    Config
+	client    PlexClient
+	read      Loop
+	reconnect Loop
+	cfg       Config
 }
 
 // NewListener builds a Listener from a Plex client and a Config.
 // Production callers pass DefaultConfig(); tests pass a shrunk Config
 // so the reconnect-loop assertions run quickly.
 func NewListener(client PlexClient, cfg Config) *Listener {
-	return &Listener{client: client, cfg: cfg}
+	l := &Listener{client: client, cfg: cfg, read: cfg.ReadLoop, reconnect: cfg.ReconnectLoop}
+	if l.read == nil {
+		l.read = noLoop{}
+	}
+	if l.reconnect == nil {
+		l.reconnect = noLoop{}
+	}
+	return l
 }
 
 // Listen runs the reconnect loop: dial the WebSocket, decode and
 // dispatch messages until a read error or the context is cancelled,
-// then wait for a bounded backoff and reconnect. Returns when the
-// supplied context is cancelled.
+// then wait for a bounded backoff and reconnect. It beats ReconnectLoop
+// around each attempt and ReadLoop at the handshake and after each read,
+// and parks whichever loop is not running. Returns when the supplied
+// context is cancelled.
 func (l *Listener) Listen(ctx context.Context, h Handler) {
 	defer slog.Info("websocket listener stopped")
 
@@ -108,7 +133,10 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 				"attempt", reconnects,
 				"backoff", backoff.String())
 		}
+		l.reconnect.Beat()
 		connected, handshakeAt, err := l.connectAndListen(ctx, h)
+		l.reconnect.Beat()
+		l.read.Park()
 		if ctx.Err() != nil {
 			return
 		}
@@ -227,6 +255,8 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 	}()
 
 	slog.Info("websocket connected", "host", base.Host)
+	l.read.Beat()
+	l.reconnect.Park()
 	h.OnConnection(ctx, true)
 
 	// Limit WebSocket message size to prevent OOM from oversized messages.
@@ -253,6 +283,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		if readErr != nil {
 			return true, handshakeAt, wrapReadError(readErr)
 		}
+		l.read.Beat()
 		var notif notification
 		if jsonErr := json.Unmarshal(message, &notif); jsonErr != nil {
 			slog.Debug("invalid websocket message", "error", jsonErr)

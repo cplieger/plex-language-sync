@@ -72,7 +72,7 @@ const shutdownWaitBudget = 10 * time.Second
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
-		health.RunProbe(health.DefaultPath)
+		health.RunProbe(health.DefaultPath, probeOptions()...)
 	}
 	os.Exit(run())
 }
@@ -101,6 +101,15 @@ func run() int {
 
 	marker := health.NewMarker(health.DefaultPath)
 	marker.Set(false)
+	wsCfg := notify.DefaultConfig()
+	live := newLiveness(marker, leasesFor(&cfg, wsCfg))
+	wsCfg.ReadLoop, wsCfg.ReconnectLoop = live.websocket, live.reconnect
+	tickerDone := make(chan struct{})
+	go func() {
+		defer close(tickerDone)
+		live.run(ctx, livenessTick)
+	}()
+	defer func() { cancel(); <-tickerDone }()
 
 	// NewClient warns (via the shared library) when the URL is plain http
 	// to a non-local host — the X-Plex-Token would transit unencrypted.
@@ -127,9 +136,9 @@ func run() int {
 	// restart policy; a fatal failure (bad token, wrong server, or a TLS/cert
 	// misconfiguration) exits non-zero. Blocks until connected, fatal, or a
 	// shutdown signal.
-	identity, admin, err := connectAndResolveAdmin(ctx, client, marker)
+	identity, admin, err := connectAndResolveAdmin(ctx, client, live)
 	if err != nil {
-		marker.Set(false) // clear any degraded-healthy marker before exiting
+		live.drain() // clear any degraded-healthy marker before exiting
 		if ctx.Err() != nil {
 			slog.Info("shutdown requested during startup", "cause", context.Cause(ctx))
 			return 0
@@ -144,7 +153,7 @@ func run() int {
 	c := cache.New()
 	c.SetEncryptionKey(encKey)
 	persist := &persister{cache: c, dir: cacheDir, metrics: metrics}
-	if code, ok := checkCacheDir(ctx, marker); !ok {
+	if code, ok := checkCacheDir(ctx, live.drain); !ok {
 		return code
 	}
 	if err := c.Load(cacheDir); err != nil {
@@ -162,21 +171,15 @@ func run() int {
 	um.Init(admin)
 	um.LoadFromCache()
 
-	// Connection verified and admin resolved, cache + user manager
-	// initialized: the app can serve. marker.Set(true) is idempotent — the
-	// connect loop already set it if the initial connection was degraded;
-	// setting it here also covers the connected-on-first-try path. Marked
-	// BEFORE the plex.tv shared-user refresh so container liveness is not
-	// gated on that secondary dependency: gating on the refresh would delay
-	// healthy up to ~75s (DefaultRefreshConfig) on a plex.tv outage and risk a
-	// Docker unhealthy/restart that cannot fix plex.tv. The periodic RefreshLoop
-	// keeps retrying.
-	marker.Set(true)
-	defer saveOnShutdown(marker, persist.save)
+	// The app can serve. Starting before the plex.tv user refresh, ~75s of
+	// retries on a plex.tv outage (DefaultRefreshConfig), keeps that outage
+	// from failing a probe that a restart cannot fix.
+	live.start()
+	defer saveOnShutdown(live.drain, persist.save)
 
 	// Synchronous initial refresh with bounded exponential backoff. See
-	// internal/users/refresh.go for the retry semantics. Runs after the
-	// health marker is set so a plex.tv outage never gates liveness.
+	// internal/users/refresh.go for the retry semantics. Runs after
+	// live.start so a plex.tv outage never gates liveness.
 	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
 	// Compose the subsystems from the concrete internal/* packages. Each
@@ -232,6 +235,7 @@ func run() int {
 			Sync:       syncer,
 			SaveCache:  persist.save,
 			Metrics:    metrics,
+			Liveness:   live.deepScan,
 		},
 	)
 
@@ -255,7 +259,7 @@ func run() int {
 	defer waitForBackgroundLoops(&wg, refreshDone, schedDone)
 
 	// WebSocket listener (blocks until context cancelled).
-	notify.NewListener(client, notify.DefaultConfig()).Listen(ctx, &notifyAdapter{
+	notify.NewListener(client, wsCfg).Listen(ctx, &notifyAdapter{
 		syncer:        syncer,
 		cfg:           &cfg,
 		users:         um,
@@ -331,12 +335,12 @@ func (p *persister) save() error {
 	return err
 }
 
-// saveOnShutdown flags the container unhealthy, so Docker stops passing its
-// probe while the slow save runs, then saves. A failed save here loses the
-// profiles and tokens learned since the last one, so it is an ERROR, where a
-// mid-run failure the next pass retries is a WARN.
-func saveOnShutdown(marker *health.Marker, save func() error) {
-	marker.Set(false)
+// saveOnShutdown drains liveness, so Docker stops passing its probe while the
+// slow save runs, then saves. A failed save here loses the profiles and tokens
+// learned since the last one, so it is an ERROR, where a mid-run failure the
+// next pass retries is a WARN.
+func saveOnShutdown(drain func(), save func() error) {
+	drain()
 	if err := save(); err != nil {
 		slog.Error("cache save on shutdown failed, profiles may be lost",
 			"path", cacheDir, "error", err)
@@ -357,13 +361,14 @@ func syncerConfig(cfg *config, policy *ignore.Policy) tracksync.Config {
 }
 
 // checkCacheDir runs the startup writability check on the cache directory and
-// reports whether startup may continue; when it may not, code is the exit code.
-func checkCacheDir(ctx context.Context, marker *health.Marker) (code int, ok bool) {
+// reports whether startup may continue; when it may not, it calls drain and
+// code is the exit code.
+func checkCacheDir(ctx context.Context, drain func()) (code int, ok bool) {
 	err := cache.CheckWritable(ctx, cacheDir)
 	if err == nil {
 		return 0, true
 	}
-	marker.Set(false)
+	drain()
 	if ctx.Err() != nil {
 		slog.Info("shutdown requested during startup", "cause", context.Cause(ctx))
 		return 0, false
@@ -430,14 +435,16 @@ const (
 
 // connectAndResolveAdmin verifies the Plex connection and resolves the admin
 // user, retrying transient failures with capped exponential backoff. On the
-// first transient failure it marks the container healthy (a degraded start),
-// then keeps retrying until Plex answers. A fatal error (bad token / 4xx, a
-// wrong-server 404, or a TLS/cert misconfiguration) returns immediately so the
-// caller can exit non-zero. Returns ctx.Err() when shutdown is signalled
-// mid-retry.
-func connectAndResolveAdmin(ctx context.Context, client *plex.Client, marker *health.Marker) (*plex.ServerIdentity, *plex.User, error) {
+// first transient failure it starts live (a degraded start), then keeps
+// retrying until Plex answers, beating live's reconnect entry on each attempt
+// and parking it on return. A fatal error (bad token / 4xx, a wrong-server
+// 404, or a TLS/cert misconfiguration) returns immediately so the caller can
+// exit non-zero. Returns ctx.Err() when shutdown is signalled mid-retry.
+func connectAndResolveAdmin(ctx context.Context, client *plex.Client, live *liveness) (*plex.ServerIdentity, *plex.User, error) {
+	defer live.reconnect.Park()
 	degraded := false
 	for attempt := 0; ; attempt++ {
+		live.reconnect.Beat()
 		identity, admin, err := connectOnce(ctx, client)
 		if err == nil {
 			if degraded {
@@ -454,11 +461,10 @@ func connectAndResolveAdmin(ctx context.Context, client *plex.Client, marker *he
 		if degraded {
 			slog.Warn("plex still unreachable; retrying", "error", err)
 		} else {
-			// First transient failure: mark healthy so the restart policy does
+			// First transient failure: start healthy so the restart policy does
 			// not crash-loop the container while Plex is unreachable, then keep
-			// retrying. Recovery needs no counterpart flip — the marker is
-			// already set and stays set.
-			marker.Set(true)
+			// retrying.
+			live.start()
 			degraded = true
 			slog.Warn("initial plex connection failed; starting in degraded state and retrying", "error", err)
 		}

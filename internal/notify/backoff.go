@@ -6,6 +6,11 @@ import "time"
 // DefaultConfig(); tests shrink durations so assertions run fast without
 // mutating package globals.
 type Config struct {
+	// ReadLoop and ReconnectLoop receive each loop's liveness beats; nil
+	// receives none.
+	ReadLoop      Loop
+	ReconnectLoop Loop
+
 	// MinBackoff is the initial delay and the floor nextBackoff clamps to.
 	MinBackoff time.Duration
 

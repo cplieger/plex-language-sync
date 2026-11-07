@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/cache"
@@ -265,7 +264,7 @@ func TestCacheSaveFailuresCountedOnBothPaths(t *testing.T) {
 		t.Errorf("cache save failures = %v after a failed deep-scan save, want 1", got)
 	}
 
-	saveOnShutdown(health.NewMarker(filepath.Join(t.TempDir(), "healthy")), p.save)
+	saveOnShutdown(func() {}, p.save)
 	if got := metrictest.Value(t, m, family); got != 2 {
 		t.Errorf("cache save failures = %v after a failed shutdown save, want 2", got)
 	}

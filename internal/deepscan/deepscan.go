@@ -76,6 +76,7 @@ type Scheduler struct {
 	loggedUnknownUsers sync.Map
 	userClient         userClientFunc
 	saveCache          cacheSaver
+	live               beater
 	metrics            *obs.Metrics
 	cfg                Config
 	// workers bounds in-flight per-item work during a deep-analysis
@@ -119,11 +120,14 @@ type Deps struct {
 	SaveCache cacheSaver
 	// Metrics records each pass; nil records nothing.
 	Metrics *obs.Metrics
+	// Liveness is beaten when Run starts and as each pass starts and ends;
+	// nil receives no beats.
+	Liveness beater
 }
 
 // New constructs a Scheduler from cfg and deps.
 func New(cfg Config, deps *Deps) *Scheduler {
-	return &Scheduler{
+	s := &Scheduler{
 		cfg:        cfg,
 		plex:       deps.Plex,
 		cache:      deps.Cache,
@@ -131,8 +135,13 @@ func New(cfg Config, deps *Deps) *Scheduler {
 		userClient: deps.UserClient,
 		sync:       deps.Sync,
 		saveCache:  deps.SaveCache,
+		live:       deps.Liveness,
 		metrics:    deps.Metrics,
 	}
+	if s.live == nil {
+		s.live = noBeat{}
+	}
+	return s
 }
 
 // Run is the outer scheduler loop: it runs a deep-analysis pass at
@@ -149,6 +158,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 
 	slog.Info("scheduler enabled", "interval", s.cfg.Interval.String())
+	s.live.Beat()
 
 	// Run immediately when never run before or the last run is older than
 	// one interval, so a container restarting more often than the interval
@@ -206,6 +216,7 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 // runs exactly once per singleflight key; overlapping callers share
 // its completion via dedup.Do.
 func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
+	s.live.Beat()
 	complete := false
 	defer func() {
 		// Record the run ONLY when this pass fully covered its look-back
@@ -226,6 +237,7 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 				slog.Warn("cache save failed", "error", err)
 			}
 		}
+		s.live.Beat()
 	}()
 
 	// Look back to the previous completed run so no window is missed when

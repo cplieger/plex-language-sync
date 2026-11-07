@@ -54,6 +54,16 @@ type syncer interface {
 	SeedsNewEpisodes() bool
 }
 
+// beater is the deep-scan loop's liveness entry.
+type beater interface {
+	Beat()
+}
+
+// noBeat is the beater of Deps that name none.
+type noBeat struct{}
+
+func (noBeat) Beat() {}
+
 // cacheSaver flushes the cache to disk at the end of a tick. Separate from
 // runLedger (which excludes file-system concerns), so the pass can trigger a
 // flush without the ledger's consumers knowing about the persistence path.
