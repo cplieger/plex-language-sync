@@ -1150,6 +1150,31 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	}
 }
 
+// A user with no per-user client stays unknown until the process restarts, so
+// its WARN is logged once per process while every pass still counts it. Not
+// parallel: it swaps the process-global default logger.
+func TestUnknownUserLoggedOncePerProcessCountedPerPass(t *testing.T) {
+	plx := &fakeapi.Plex{HistoryItems: []plex.HistoryItem{
+		{AccountID: 7, RatingKey: "300", Type: plex.TypeEpisode},
+		{AccountID: 7, RatingKey: "301", Type: plex.TypeEpisode},
+	}}
+	sched := New(Config{Enable: true}, Deps{
+		Plex: plx, Cache: fakeapi.NewCache(), Stamp: testStamp(t),
+		UserClient: func(string) EpisodeReader { return nil }, Sync: &fakeSyncer{},
+	})
+	rec := capture.Default(t)
+	sched.deepAnalysisCore(t.Context())
+	sched.deepAnalysisCore(t.Context())
+
+	if got := rec.CountExact("scheduler: no per-user client, skipping history item"); got != 1 {
+		t.Errorf("unknown user logged %d times over two passes, want 1", got)
+	}
+	got := rec.AttrValuesExact("deep analysis completed", "unknown_users")
+	if !slices.Equal(got, []string{"1", "1"}) {
+		t.Errorf("deep analysis completed unknown_users = %q, want [1 1]", got)
+	}
+}
+
 // TestDeepAnalysisCore_SaveCacheErrorWarns pins the deferred cache-flush error
 // branch: a failing saveCache still records the last-run stamp and logs the
 // "cache save failed" WARN rather than swallowing the error. Companion to

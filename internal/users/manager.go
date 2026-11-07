@@ -126,9 +126,7 @@ func (m *Manager) LoadFromCache() {
 // corrupts the admin's own selection and still drops the intended user's
 // preference.
 //
-// Silent on the nil path: callers own the "skipping" log and already
-// de-spam it (the scheduler history path guards one WARN per unknown user
-// per pass; handlePlayEvent WARNs on the naturally rate-limited play path).
+// Silent on the nil path: callers own the "skipping" log and its rate.
 //
 // userID is a plain string so consumers need not import this package for
 // the ID type.
