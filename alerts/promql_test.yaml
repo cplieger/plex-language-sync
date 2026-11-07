@@ -46,8 +46,8 @@ tests:
         alertname: PlexLanguageSyncDeepScanStalled
         exp_alerts: []
 
-  # A process younger than the window is not stalled yet, whatever the gauge
-  # reads: it is 0 until the first complete pass of this process.
+  # With no complete pass ever recorded the gauge reads 0, so a process younger
+  # than the window is not stalled yet.
   - interval: 10m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
@@ -60,6 +60,32 @@ tests:
       - eval_time: 60h
         alertname: PlexLanguageSyncDeepScanStalled
         exp_alerts: []
+
+  # A container restarted every 40h whose passes never complete: the gauge
+  # holds the recorded pass at 2h across restarts, so the alert fires at 54h
+  # although the process is 14h old.
+  - interval: 10m
+    input_series:
+      - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
+        values: 7200x400
+      - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
+        values: 86400x400
+      - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
+        values: 0x239 144000x239
+    alert_rule_test:
+      - eval_time: 51h
+        alertname: PlexLanguageSyncDeepScanStalled
+        exp_alerts: []
+      - eval_time: 54h
+        alertname: PlexLanguageSyncDeepScanStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: plex-language-sync
+              instance: a
+            exp_annotations:
+              summary: "no complete plex-language-sync deep scan in two intervals"
+              description: "No deep scan has covered its whole window for two scan intervals plus 2h. Missed episodes then get no tracks. Read the `deep analysis completed` lines with `complete=false`.\n"
 
   # DEEP_SCAN_INTERVAL=6h: the window is 14h, not a fixed 50h.
   - interval: 10m

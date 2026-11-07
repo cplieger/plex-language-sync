@@ -56,7 +56,7 @@ func New() *Metrics {
 		wsConnected:  measure.NewGauge("websocket_connected", "1 while the Plex WebSocket notification stream is connected, else 0."),
 		wsReconnects: measure.NewCounter("websocket_reconnects_total", "Reconnect attempts after the Plex WebSocket stream dropped or failed to connect."),
 		scanLastSuccess: measure.NewGauge("deep_scan_last_success_timestamp_seconds",
-			"Unix time the last complete deep scan finished; 0 until one completes in this process."),
+			"Unix time the last complete deep scan finished, read from the last-run record at startup; 0 when none was ever recorded."),
 		scanInterval: measure.NewGauge("deep_scan_interval_seconds", "DEEP_SCAN_INTERVAL in seconds; 0 when the deep scan is off."),
 		scanRuns: measure.NewLabeledCounter("deep_scan_runs_total",
 			"Deep scans finished, by result: complete covered its whole window, incomplete stopped early.", []string{"result"}),
@@ -126,6 +126,14 @@ func (m *Metrics) DeepScanFinished(complete bool, at time.Time) {
 	}
 	m.scanLastSuccess.Set(float64(at.Unix()))
 	m.scanRuns.Inc("complete")
+}
+
+// DeepScanSeeded records at, a complete scan an earlier process finished, as
+// the last complete scan without counting a run.
+func (m *Metrics) DeepScanSeeded(at time.Time) {
+	if m != nil {
+		m.scanLastSuccess.Set(float64(at.Unix()))
+	}
 }
 
 // ResolutionStalled raises the stall gauge for cause, one of the Stall

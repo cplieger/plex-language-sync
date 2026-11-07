@@ -26,8 +26,11 @@ groups:
           time() - plex_language_sync_deep_scan_last_success_timestamp_seconds
             > 2 * plex_language_sync_deep_scan_interval_seconds + 7200
           and plex_language_sync_deep_scan_interval_seconds > 0
-          and time() - process_start_time_seconds
-            > 2 * plex_language_sync_deep_scan_interval_seconds + 7200
+          and (
+            plex_language_sync_deep_scan_last_success_timestamp_seconds > 0
+            or time() - process_start_time_seconds
+              > 2 * plex_language_sync_deep_scan_interval_seconds + 7200
+          )
         for: 1h
         labels:
           severity: warning

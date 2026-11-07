@@ -1890,3 +1890,35 @@ func TestDeepScanMetricsMoveOnlyOnACompletePass(t *testing.T) {
 		t.Errorf("complete runs = %v, want 1", got)
 	}
 }
+
+// TestRunSeedsLastSuccessFromTheStamp runs the startup pass under a cancelled
+// context, so it cannot complete: the gauge can only hold the stamp's time.
+func TestRunSeedsLastSuccessFromTheStamp(t *testing.T) {
+	t.Parallel()
+	const lastSuccess = "plex_language_sync_deep_scan_last_success_timestamp_seconds"
+	run := func(st *scheduler.Stamp) *obs.Metrics {
+		m := obs.New()
+		plx := &fakeapi.Plex{}
+		sched := New(Config{Enable: true, Interval: 24 * time.Hour}, &Deps{
+			Plex: plx, Cache: fakeapi.NewCache(), Stamp: st,
+			UserClient: func(string) EpisodeReader { return plx }, Sync: &fakeSyncer{}, Metrics: m,
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		sched.Run(ctx)
+		return m
+	}
+	for _, age := range []time.Duration{time.Hour, 72 * time.Hour} {
+		at := time.Now().Add(-age).Truncate(time.Second)
+		if got := metrictest.Value(t, run(stampAt(t, at)), lastSuccess); got != float64(at.Unix()) {
+			t.Errorf("a record %v old seeded the last complete scan at %v, want %d", age, got, at.Unix())
+		}
+	}
+	m := run(testStamp(t))
+	if got := metrictest.Value(t, m, lastSuccess); got != 0 {
+		t.Errorf("no record seeded the last complete scan at %v, want 0", got)
+	}
+	if got := metrictest.Value(t, m, "plex_language_sync_deep_scan_runs_total", "complete"); got != 0 {
+		t.Errorf("seeding counted %v complete runs, want 0", got)
+	}
+}

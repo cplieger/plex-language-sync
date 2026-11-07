@@ -150,6 +150,12 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 	slog.Info("scheduler enabled", "interval", s.cfg.Interval.String())
 
+	// The stamp records only complete passes, so a restart keeps the deadman's
+	// clock running instead of resetting it to process start.
+	if rec, known := s.stamp.Last(); known {
+		s.metrics.DeepScanSeeded(rec.Time)
+	}
+
 	// Run immediately when never run before or the last run is older than
 	// one interval, so a container restarting more often than the interval
 	// is never starved of a safety-net pass, while one that ran recently
