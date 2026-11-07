@@ -85,6 +85,7 @@ Settings are environment variables. The app reads them once at start, so restart
 | `IGNORE_LIBRARIES` | Comma-separated library names to leave out | _(unset)_ |
 | `PLEX_CA_CERT_PATH` | Certificate authority file for an `https://` Plex address with a self-signed or private certificate | _(unset)_ |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. `debug` shows why each event was skipped | `info` |
+| `METRICS_LISTEN_ADDR` | Address for Prometheus metrics at `/metrics` and a health check at `/healthz`, such as `:9471`. Unset opens no port | _(unset)_ |
 
 Labels and library names match exactly, with case counted. Audio never switches to another language, whatever the tier. [Configuration](docs/configuration.md) explains the subtitle tier, https setup and the files kept in `/config`.
 
@@ -92,18 +93,21 @@ Labels and library names match exactly, with case counted. Audio never switches 
 | --- | --- |
 | `/config` | Learned languages, each user's choices, the tracks the app set, the shared users' encrypted tokens and the deep-scan schedule. Keep it across updates. |
 
-plex-language-sync opens no port.
+plex-language-sync opens no port unless you set `METRICS_LISTEN_ADDR`, which serves `/metrics` and `/healthz` on that address.
 
 ## Security
 
-plex-language-sync listens on no port, and connects out only to your Plex server and plex.tv. It never logs your Plex token or writes it to `/config`. The shared users' tokens are kept encrypted in `/config/tokens.json`, so protect that folder. A plain `http://` address to another machine sends the token unencrypted, and the app logs a warning at start when you use one. The image runs as a non-root user on a distroless base, which has no shell. [Security](docs/hardening.md) has a hardened compose setup.
+plex-language-sync listens on no port by default, and connects out only to your Plex server and plex.tv. With `METRICS_LISTEN_ADDR` set, it serves counts and health states there with no login, never a token or a user name. Publish that port only to your monitoring network.
+
+plex-language-sync never logs your Plex token or writes it to `/config`. The shared users' tokens are kept encrypted in `/config/tokens.json`, so protect that folder. A plain `http://` address to another machine sends the token unencrypted, and the app logs a warning at start when you use one. The image runs as a non-root user on a distroless base, which has no shell. [Security](docs/hardening.md) has a hardened compose setup.
 
 ## Troubleshooting
 
-The healthcheck checks a file the app writes once it reaches Plex, or once it starts retrying because Plex is unreachable. It retries every 1 to 30 seconds and does not restart while Plex boots. A setting Plex rejects stops the app before it writes the file, so the container restarts and never turns healthy. A lost connection later never makes it unhealthy, because the app reconnects on its own.
+The healthcheck reads a file the app keeps fresh once it reaches Plex, or once it starts retrying an unreachable Plex, so the container does not restart in a loop while Plex boots. A setting Plex rejects stops the app first, so the container restarts and never turns healthy. It turns unhealthy when the WebSocket listener, the reconnect loop or the deep scan stops making progress, never because Plex is unreachable. [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) has the limits.
 
-- The container restarts in a loop with `cannot establish initial plex connection`. This means Plex rejected the token, the address reaches another server, or an `https://` certificate failed. Check `.env`, or set `PLEX_CA_CERT_PATH` for your own certificate.
+- The container restarts in a loop with `cannot establish initial plex connection`. Plex rejected the token, the address reaches another server, or an `https://` certificate failed. Check `.env`, or set `PLEX_CA_CERT_PATH` for your own certificate.
 - The log says `required environment variable is missing or unreadable`. `PLEX_URL` or `PLEX_TOKEN` did not reach the container. Check `.env`, then restart.
+- The container exits with `cannot bind the metrics listener`. Set `METRICS_LISTEN_ADDR` to a free port, such as `:9471`.
 - The log keeps saying `plex still unreachable; retrying`. Use Plex's network address, not `localhost`, and check that Plex is running.
 - A user you shared the server with is not followed, and the log says `failed to refresh shared user tokens`. The container cannot reach plex.tv. Give it a network with internet access.
 - The container restarts in a loop with `cache directory is not writable`, or the log says `cache save on shutdown failed`. The container user cannot write to `/config`. Run the `chown` from the quick start. The app checks this once it reaches Plex, before it loads anything from `/config`.
@@ -111,13 +115,13 @@ The healthcheck checks a file the app writes once it reaches Plex, or once it st
 
 ## Monitoring
 
-plex-language-sync writes text logs and has no metrics endpoint. Three Loki alert rules ship in [`alerts/logql.yaml`](alerts/logql.yaml). [Monitoring and alerts](docs/monitoring.md) lists them, describes the log lines, and shows how to load them.
+plex-language-sync serves Prometheus metrics when you set `METRICS_LISTEN_ADDR`, and opens a port only then. Five alert rules for them ship in [`alerts/promql.yaml`](alerts/promql.yaml). Without a metric store, load the three Loki rules in [`alerts/logql.yaml`](alerts/logql.yaml) instead, with `LOG_LEVEL` at `info`. Load one file, not both. The image has a Docker healthcheck, and [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what it proves and who is told. [Monitoring and alerts](docs/monitoring.md) lists the metrics, the log lines and the rules.
 
 ## Documentation
 
 - [How plex-language-sync works](docs/how-it-works.md) explains how tracks are matched and chosen, for anyone asking why a show did not follow.
 - [Configuration](docs/configuration.md) covers subtitle matching tiers, leaving shows out, https and the files in `/config`.
-- [Monitoring and alerts](docs/monitoring.md) covers the log lines, the healthcheck and the alert rules.
+- [Monitoring and alerts](docs/monitoring.md) covers the metrics, the log lines, both rule files and who tells you the app stopped.
 - [Security](docs/hardening.md) covers token handling, a hardened compose setup and what the image contains.
 
 ## Credits

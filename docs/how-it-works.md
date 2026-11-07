@@ -56,4 +56,8 @@ To know who is watching, it matches each playback notification with the server's
 
 ## Design
 
-plex-language-sync is one Go program. Its only third-party runtime libraries are [`coder/websocket`](https://github.com/coder/websocket) and `golang.org/x/sync`. The rest are the project's own support modules. It has no settings file and no web page, sends no messages of its own, and opens no network port.
+plex-language-sync is one Go program. Its only third-party runtime libraries are [`coder/websocket`](https://github.com/coder/websocket) and `golang.org/x/sync`. The rest are the project's own support modules. It has no settings file and no web page, and sends no messages of its own. It opens no network port unless `METRICS_LISTEN_ADDR` is set.
+
+## The healthcheck
+
+The Docker healthcheck reads a file in `/tmp`, and one timer in the app writes it. The WebSocket listener, the reconnect loop and the deep scan each record their progress, and the timer updates the file every 10 seconds from all three. A loop that goes quiet for longer than its limit turns the container unhealthy, while the other loops keep working. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives each limit and what each check answers.
