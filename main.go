@@ -89,11 +89,9 @@ func run() int {
 	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
 	seedDeepScan(metrics, stamp, &cfg)
 
-	marker := health.NewMarker(health.DefaultPath)
-	marker.Set(false)
 	wsCfg := notify.DefaultConfig()
-	live := newLiveness(marker, leasesFor(&cfg, wsCfg))
-	wsCfg.ReadLoop, wsCfg.ReconnectLoop = live.websocket, live.reconnect
+	live := newLiveness(health.DefaultPath, leasesFor(&cfg, wsCfg))
+	wsCfg, deepScanLoop := live.wire(wsCfg)
 
 	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
 	if err != nil {
@@ -180,8 +178,7 @@ func run() int {
 	defer saveOnShutdown(live.drain, persist.save)
 
 	// Synchronous initial refresh with bounded exponential backoff. See
-	// internal/users/refresh.go for the retry semantics. Runs after
-	// live.start so a plex.tv outage never gates liveness.
+	// internal/users/refresh.go for the retry semantics.
 	um.InitialRefreshWithRetry(ctx, client, identity.MachineIdentifier, users.DefaultRefreshConfig())
 
 	// Compose the subsystems from the concrete internal/* packages. Each
@@ -237,7 +234,7 @@ func run() int {
 			Sync:       syncer,
 			SaveCache:  persist.save,
 			Metrics:    metrics,
-			Liveness:   live.deepScan,
+			Liveness:   deepScanLoop,
 		},
 	)
 

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/cache"
@@ -148,7 +147,7 @@ func TestServeMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	live := newLiveness(health.NewMarker(filepath.Join(t.TempDir(), "healthy")), defaultLeases())
+	live := newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
 	done := serveMetrics(ctx, ln, obs.New(), live)
 	t.Cleanup(func() { cancel(); <-done })
 	url := "http://" + ln.Addr().String() + "/metrics"

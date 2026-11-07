@@ -18,8 +18,8 @@ const livenessTick = 10 * time.Second
 // tick passes and only a stopped ticker fails it.
 var markerLease = health.Lease{Interval: livenessTick, Cycles: 3}
 
-// deepScanPassAllowance is the longest one deep-scan pass may run, the two
-// hours the deep scan alerts allow on top of two intervals.
+// deepScanPassAllowance is the slack the deep-scan lease adds to two
+// intervals, the same 2h the deep scan alerts add; nothing bounds a pass.
 const deepScanPassAllowance = 2 * time.Hour
 
 // connectAttemptBudget is the longest one connect attempt may take: the
@@ -71,6 +71,11 @@ type loopEntry struct {
 	parked bool
 }
 
+var (
+	_ notify.Loop   = (*loopEntry)(nil)
+	_ health.Signal = (*loopEntry)(nil)
+)
+
 func newLoopEntry(name, reason string, lease time.Duration) *loopEntry {
 	return &loopEntry{name: name, reason: reason, lease: lease, parked: true}
 }
@@ -106,26 +111,26 @@ type liveness struct {
 	websocket *loopEntry
 	reconnect *loopEntry
 	deepScan  *loopEntry
-	// written beats on every marker write, so its lease is the probe's
-	// deadline on the marker's age.
-	written *loopEntry
 	// stale holds the loops already reported stale, so each stall logs once.
 	stale map[*loopEntry]bool
+	path  string
 	mu    sync.Mutex
 	// serving is atomic so /healthz never waits on l.mu, which a marker write
 	// holds.
 	serving atomic.Bool
 }
 
-// newLiveness returns a liveness writing marker, every entry parked and the
-// app not yet serving.
-func newLiveness(marker *health.Marker, leases loopLeases) *liveness {
+// newLiveness returns a liveness writing the marker at path, the marker
+// cleared, every entry parked and the app not yet serving.
+func newLiveness(path string, leases loopLeases) *liveness {
+	marker := health.NewMarker(path)
+	marker.Set(false)
 	return &liveness{
 		latch:     health.NewLatch(marker),
+		path:      path,
 		websocket: newLoopEntry("websocket", "the Plex WebSocket listener stopped making progress", leases.websocket),
 		reconnect: newLoopEntry("reconnect", "the Plex reconnect loop stopped making progress", leases.reconnect),
 		deepScan:  newLoopEntry("deep_scan", "the deep scan stopped making progress", leases.deepScan),
-		written:   newLoopEntry("ticker", "the app stopped updating its health state", markerLease.Duration()),
 		stale:     map[*loopEntry]bool{},
 	}
 }
@@ -134,20 +139,37 @@ func (l *liveness) loops() []*loopEntry {
 	return []*loopEntry{l.websocket, l.reconnect, l.deepScan}
 }
 
+// wire returns ws with the WebSocket listener's two loops beating their
+// entries, and the entry the deep scan beats.
+func (l *liveness) wire(ws notify.Config) (notify.Config, *loopEntry) {
+	ws.ReadLoop, ws.ReconnectLoop = l.websocket, l.reconnect
+	return ws, l.deepScan
+}
+
 // signalFunc adapts a func to health.Signal.
 type signalFunc func() bool
 
+var _ health.Signal = signalFunc(nil)
+
 func (f signalFunc) Healthy() bool { return f() }
 
+// markerRefreshed is the probe's own verdict on the marker, failing only on a
+// marker that is there but stale or unreadable. Absence is left to the other
+// checks, which name its cause.
+func (l *liveness) markerRefreshed() bool {
+	s := health.Inspect(l.path, probeOptions()...).State
+	return s != health.MarkerStale && s != health.MarkerUnreadable
+}
+
 // checks are /healthz's: one per loop, plus the two other conditions the
-// probe fails on, the app not serving and a marker no longer written, so the
-// endpoint and the probe give one verdict.
+// probe fails on, the app not serving and a marker the ticker no longer
+// refreshes, so the endpoint and the probe give one verdict.
 func (l *liveness) checks() []health.Check {
 	cs := []health.Check{{Signal: signalFunc(l.serving.Load), Reason: "the app is starting or shutting down"}}
 	for _, e := range l.loops() {
 		cs = append(cs, health.Check{Signal: e, Reason: e.reason})
 	}
-	return append(cs, health.Check{Signal: l.written, Reason: l.written.reason})
+	return append(cs, health.Check{Signal: signalFunc(l.markerRefreshed), Reason: "the app stopped updating its health state"})
 }
 
 // start marks the app able to serve, so from now on the marker follows the
@@ -198,5 +220,4 @@ func (l *liveness) updateLocked() {
 		healthy = healthy && ok
 	}
 	l.latch.Set(healthy)
-	l.written.Beat()
 }

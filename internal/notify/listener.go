@@ -85,24 +85,22 @@ func (noLoop) Park() {}
 // the JSON envelope, and delivers events to a Handler with an outer
 // reconnect loop and stable-connection backoff reset.
 type Listener struct {
-	client    PlexClient
-	read      Loop
-	reconnect Loop
-	cfg       Config
+	client PlexClient
+	cfg    Config
 }
 
 // NewListener builds a Listener from a Plex client and a Config.
-// Production callers pass DefaultConfig(); tests pass a shrunk Config
-// so the reconnect-loop assertions run quickly.
+// Production callers pass DefaultConfig() with ReadLoop and ReconnectLoop
+// set; tests pass a shrunk Config so the reconnect-loop assertions run
+// quickly.
 func NewListener(client PlexClient, cfg Config) *Listener {
-	l := &Listener{client: client, cfg: cfg, read: cfg.ReadLoop, reconnect: cfg.ReconnectLoop}
-	if l.read == nil {
-		l.read = noLoop{}
+	if cfg.ReadLoop == nil {
+		cfg.ReadLoop = noLoop{}
 	}
-	if l.reconnect == nil {
-		l.reconnect = noLoop{}
+	if cfg.ReconnectLoop == nil {
+		cfg.ReconnectLoop = noLoop{}
 	}
-	return l
+	return &Listener{client: client, cfg: cfg}
 }
 
 // Listen runs the reconnect loop: dial the WebSocket, decode and
@@ -133,10 +131,10 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 				"attempt", reconnects,
 				"backoff", backoff.String())
 		}
-		l.reconnect.Beat()
+		l.cfg.ReconnectLoop.Beat()
 		connected, handshakeAt, err := l.connectAndListen(ctx, h)
-		l.reconnect.Beat()
-		l.read.Park()
+		l.cfg.ReconnectLoop.Beat()
+		l.cfg.ReadLoop.Park()
 		if ctx.Err() != nil {
 			return
 		}
@@ -255,8 +253,8 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 	}()
 
 	slog.Info("websocket connected", "host", base.Host)
-	l.read.Beat()
-	l.reconnect.Park()
+	l.cfg.ReadLoop.Beat()
+	l.cfg.ReconnectLoop.Park()
 	h.OnConnection(ctx, true)
 
 	// Limit WebSocket message size to prevent OOM from oversized messages.
@@ -283,7 +281,7 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		if readErr != nil {
 			return true, handshakeAt, wrapReadError(readErr)
 		}
-		l.read.Beat()
+		l.cfg.ReadLoop.Beat()
 		var notif notification
 		if jsonErr := json.Unmarshal(message, &notif); jsonErr != nil {
 			slog.Debug("invalid websocket message", "error", jsonErr)

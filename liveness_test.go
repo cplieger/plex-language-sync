@@ -81,6 +81,33 @@ func TestLeasesFor(t *testing.T) {
 	}
 }
 
+// Each loop's receiver from wire arms that loop's entry and no other, so no
+// loop runs on another loop's lease.
+func TestLivenessWireGivesEachLoopItsOwnEntry(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		beat func(ws notify.Config, deepScan *loopEntry)
+		name string
+	}{
+		{func(ws notify.Config, _ *loopEntry) { ws.ReadLoop.Beat() }, "websocket"},
+		{func(ws notify.Config, _ *loopEntry) { ws.ReconnectLoop.Beat() }, "reconnect"},
+		{func(_ notify.Config, deepScan *loopEntry) { deepScan.Beat() }, "deep_scan"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			live := newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
+			ws, deepScan := live.wire(notify.DefaultConfig())
+			tt.beat(ws, deepScan)
+			for _, e := range live.loops() {
+				if armed := !e.isParked(); armed != (e.name == tt.name) {
+					t.Errorf("after the %s receiver beat, %s entry armed = %v, want %v", tt.name, e.name, armed, e.name == tt.name)
+				}
+			}
+		})
+	}
+}
+
 // Each loop wedged in turn while the others keep beating: the probe passes
 // until that loop's lease runs out, fails within the ticker's lease after it,
 // and the log names the loop.
@@ -90,7 +117,7 @@ func TestLivenessWedgedLoopTurnsTheProbeUnhealthy(t *testing.T) {
 			rec := capture.Default(t)
 			synctest.Test(t, func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "healthy")
-				live := newLiveness(health.NewMarker(path), defaultLeases())
+				live := newLiveness(path, defaultLeases())
 				var wedged *loopEntry
 				var others []*loopEntry
 				for _, e := range live.loops() {
@@ -136,7 +163,7 @@ func TestLivenessScanOffSilentDeepScanStaysHealthy(t *testing.T) {
 	cfg.schedulerInterval, cfg.schedulerEnabled = loadSchedulerInterval()
 	synctest.Test(t, func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "healthy")
-		live := newLiveness(health.NewMarker(path), leasesFor(&cfg, notify.DefaultConfig()))
+		live := newLiveness(path, leasesFor(&cfg, notify.DefaultConfig()))
 		for _, e := range live.loops() {
 			e.Beat()
 		}
@@ -160,7 +187,7 @@ func TestLivenessScanOffSilentDeepScanStaysHealthy(t *testing.T) {
 func TestLivenessParkedLoopIsNoFault(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "healthy")
-		live := newLiveness(health.NewMarker(path), defaultLeases())
+		live := newLiveness(path, defaultLeases())
 		live.reconnect.Beat()
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -181,7 +208,7 @@ func TestLivenessParkedLoopIsNoFault(t *testing.T) {
 func TestLivenessStartAndDrain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "healthy")
-		live := newLiveness(health.NewMarker(path), defaultLeases())
+		live := newLiveness(path, defaultLeases())
 		for _, e := range live.loops() {
 			e.Beat()
 		}
@@ -218,7 +245,7 @@ func TestLivenessStartAndDrain(t *testing.T) {
 // time, which a synctest clock does not move.
 func TestLivenessStoppedTickerTurnsTheProbeUnhealthy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "healthy")
-	live := newLiveness(health.NewMarker(path), defaultLeases())
+	live := newLiveness(path, defaultLeases())
 	for _, e := range live.loops() {
 		e.Beat()
 	}
@@ -264,7 +291,7 @@ func TestConnectAndResolveAdminUnreachablePlexBeatsTheReconnectLoop(t *testing.T
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "healthy")
-	live := newLiveness(health.NewMarker(path), defaultLeases())
+	live := newLiveness(path, defaultLeases())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	errc := make(chan error, 1)

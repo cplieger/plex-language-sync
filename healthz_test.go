@@ -12,7 +12,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/obs"
 )
@@ -48,7 +47,7 @@ func getHealthz(t *testing.T, h http.Handler, method string) healthz {
 
 func TestHealthzRoute(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		live := newLiveness(health.NewMarker(filepath.Join(t.TempDir(), "healthy")), defaultLeases())
+		live := newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
 		h := newListenerMux(obs.New(), live)
 
 		got := getHealthz(t, h, http.MethodGet)
@@ -107,7 +106,7 @@ func agree(t *testing.T, when string, h http.Handler, path string, reasons ...st
 func newAgreement(t *testing.T) (live *liveness, h http.Handler, path string, stop context.CancelFunc) {
 	t.Helper()
 	path = filepath.Join(t.TempDir(), "healthy")
-	live = newLiveness(health.NewMarker(path), defaultLeases())
+	live = newLiveness(path, defaultLeases())
 	for _, e := range live.loops() {
 		e.Beat()
 	}
@@ -187,6 +186,31 @@ func TestHealthzAgreesWithTheProbe(t *testing.T) {
 			time.Sleep(markerLease.Duration() + time.Second)
 			synctest.Wait()
 			agree(t, "one marker lease after the ticker stopped", h, path, reasonTicker)
+		})
+	})
+
+	// A marker path os.Stat cannot read fails every refresh and the probe,
+	// with the ticker still running.
+	t.Run("marker unreadable", func(t *testing.T) {
+		capture.Default(t)
+		synctest.Test(t, func(t *testing.T) {
+			live, h, path, _ := newAgreement(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go beatEvery(ctx, live.loops()...)
+			live.start()
+			synctest.Wait()
+			agree(t, "marker written", h, path)
+
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Base(path), path); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(livenessTick)
+			synctest.Wait()
+			agree(t, "one tick after the marker became a symlink loop", h, path, reasonTicker)
 		})
 	})
 }

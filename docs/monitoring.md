@@ -13,7 +13,7 @@ This page describes the metrics, log lines and alert rules of plex-language-sync
 
 ## Metrics
 
-Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET /metrics` and `GET /healthz` there. Unset, it opens no port. An address the app cannot listen on stops the container at start with `cannot bind the metrics listener`. Neither route has a login, so keep the port on your network. No label carries a user name, a show or a token, because every label takes its value from a fixed list. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it.
+Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET /metrics` and `GET /healthz` there. Unset, it opens no port. An address the app cannot listen on stops the container at start with `cannot bind the metrics listener`. Neither route has a login, so keep the port on your network. No label carries a user name, a show or a token, because every label takes its value from a fixed list.
 
 | Series | Type | Labels | Meaning |
 | --- | --- | --- | --- |
@@ -28,7 +28,7 @@ Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET
 | `plex_language_sync_cache_save_failures_total` | counter | none | Failed saves of what the app learned to `/config` |
 | `plex_language_sync_shared_users` | gauge | none | Shared Plex users the app follows, besides the admin |
 
-The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. plex-language-sync bundles no dashboard. These queries answer the common questions in Grafana:
+The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. plex-language-sync bundles no dashboard. These queries answer the common questions in Grafana:
 
 - `sum by (kind) (increase(plex_language_sync_track_updates_total{result="set"}[1d]))` shows how many tracks the app set in the last day.
 - `(time() - plex_language_sync_deep_scan_last_success_timestamp_seconds) / 3600` shows the hours since the last complete deep scan.
@@ -69,7 +69,7 @@ Each rule's description in its file says what to check first when it fires. Note
 
 - `PlexLanguageSyncDeepScanStalled` fires on silence. A stalled scan means episodes Plex added during a missed real-time event get no tracks, and recorded choices are no longer applied again to recent history.
 - Only a complete pass counts. A pass that stops early, because Plex failed to answer or the circuit breaker tripped, logs `complete=false` and leaves its window to the next pass.
-- The window is two intervals plus 2 hours, so one missed pass never fires it. A container that restarts more often than the time left in its period never gets to run the pass, and the window catches that too.
+- The window is two intervals plus 2 hours, so one missed pass never fires it. A container that restarts during every pass never completes one, and the window catches that too.
 - In `alerts/promql.yaml` the rule reads `DEEP_SCAN_INTERVAL` from the metrics, so it needs no editing and stays silent with the scan off. It keeps its clock across restarts, because the app reads the time of its last complete pass from `/config` at start.
 - Until a first complete pass is recorded, the metric rule counts from the process start. So on a new install whose first pass never completes, a container that restarts more often than two intervals plus 2 hours keeps the metric rule silent. The log rule still fires.
 - In `alerts/logql.yaml` the window is a fixed 50 hours, which fits the default `24h` interval. If you changed `DEEP_SCAN_INTERVAL`, set the window to two intervals plus 2 hours. With the scan `off`, `disabled` or `0`, drop the rule, because it would fire forever.
@@ -97,7 +97,9 @@ Thresholds, windows and the `severity` labels are starting points. In `alerts/lo
 
 A loop that misses its limit makes the app unhealthy, and `/healthz` names that loop in `reasons`, for example `the deep scan stopped making progress`. Plex being unreachable never makes the app unhealthy, because each reconnect attempt counts as progress. The outage shows on `/metrics` as `plex_language_sync_websocket_connected` at 0, and in the log.
 
-**Docker health.** The image checks itself every 30 seconds with `/plex-language-sync health`, which reads the health file `/tmp/.healthy`. The app touches that file every 10 seconds while the checks above pass, and removes it when one fails. The check fails when the file is missing or older than 30 seconds. Docker marks the container unhealthy after 3 failures, and allows 15 seconds after a start. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. `/healthz` gives the same verdict as this check.
+**Docker health.** The image checks itself every 30 seconds with `/plex-language-sync health`, which reads the health file `/tmp/.healthy`. The app touches that file every 10 seconds while the checks above pass, and removes it when one fails. The check fails when the file is missing or older than 30 seconds.
+
+Docker marks the container unhealthy after 3 failures, and allows 15 seconds after a start. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. `/healthz` gives the same verdict as the image's check.
 
 **Who is told.**
 

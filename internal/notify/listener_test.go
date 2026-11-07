@@ -202,7 +202,8 @@ func (f *fakePlexClient) RedirectPolicy() func(*http.Request, []*http.Request) e
 func (*fakePlexClient) BaseTransport() *http.Transport { return nil }
 
 // TestNewListener_UsesProvidedConfig confirms the Config shrinkage
-// tests can pass without mutating globals.
+// tests can pass without mutating globals, and that a Config naming no
+// loops gets receivers a beat cannot panic on.
 func TestNewListener_UsesProvidedConfig(t *testing.T) {
 	t.Parallel()
 	base, _ := url.Parse("http://plex.example:32400")
@@ -215,8 +216,10 @@ func TestNewListener_UsesProvidedConfig(t *testing.T) {
 	if l == nil {
 		t.Fatal("NewListener returned nil")
 	}
-	if l.cfg != cfg {
-		t.Errorf("listener cfg = %+v, want %+v", l.cfg, cfg)
+	want := cfg
+	want.ReadLoop, want.ReconnectLoop = noLoop{}, noLoop{}
+	if l.cfg != want {
+		t.Errorf("listener cfg = %+v, want %+v", l.cfg, want)
 	}
 }
 
