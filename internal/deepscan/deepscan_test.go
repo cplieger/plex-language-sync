@@ -1152,9 +1152,8 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	}
 }
 
-// A user with no per-user client stays unknown until the process restarts, so
-// its WARN is logged once per process while every pass still counts it. Not
-// parallel: it swaps the process-global default logger.
+// A user with no per-user client is logged once per process while every pass
+// still counts it. Not parallel: it swaps the process-global default logger.
 func TestUnknownUserLoggedOncePerProcessCountedPerPass(t *testing.T) {
 	plx := &fakeapi.Plex{HistoryItems: []plex.HistoryItem{
 		{AccountID: 7, RatingKey: "300", Type: plex.TypeEpisode},

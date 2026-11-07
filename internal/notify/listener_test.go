@@ -260,21 +260,12 @@ func TestTimelineActionAlwaysReturnsValidAction(t *testing.T) {
 	})
 }
 
-// TestConnectAndListen_SlowDialNotStable is the regression guard for the
-// stability-timing fix: connection stability must be measured from
-// handshake SUCCESS, not from before the dial. A slow-but-successful
-// dial followed by a short real uptime previously inflated the elapsed
-// time with dial latency and was falsely classified "stable", which
-// resets the backoff and zeros the persistent-reconnect counter that
-// drives the sole health ERROR.
-//
-// The server delays the websocket Accept (slow handshake), then closes
-// immediately so the client's read returns almost at once (near-zero
-// real uptime). StableThreshold sits between the dial delay and the
-// uptime: time-from-handshake is BELOW it (correctly not stable), while
-// time-from-dial-start would be ABOVE it (the old bug). Asserting the
-// connection is NOT stable under the production formula pins the fix and
-// fails against the pre-fix `time.Since(connectStart)` code.
+// TestConnectAndListen_SlowDialNotStable measures stability from handshake
+// success, not from before the dial: a slow dial followed by a short uptime
+// must not read as stable, which would reset the backoff and zero the
+// persistent-reconnect counter. The server stalls the Accept, then closes at
+// once. StableThreshold sits between the dial delay and the uptime, so only a
+// clock started at the dial would call the connection stable.
 func TestConnectAndListen_SlowDialNotStable(t *testing.T) {
 	t.Parallel()
 
@@ -434,15 +425,11 @@ func TestWrapReadError(t *testing.T) {
 }
 
 // TestLogDisconnect_LevelAndEscalation pins the two level behaviors in
-// logDisconnect: server_close
-// disconnects log at INFO while every other reason logs at WARN, and a
-// single ERROR ("websocket reconnecting persistently") escalates once
-// consecutive reconnects reach persistentReconnectThreshold. The
-// file-marker health never reflects WebSocket state, so this ERROR is the
-// only alertable signal that the container is healthy-but-processing-
-// nothing; a regression flipping the level branch or the threshold
-// comparison would otherwise leave the suite green. Serial (no t.Parallel):
-// logDisconnect logs through the process-global slog.Default().
+// logDisconnect: server_close disconnects log at INFO while every other
+// reason logs at WARN, and an ERROR ("websocket reconnecting persistently")
+// is logged on each attempt once consecutive reconnects reach
+// persistentReconnectThreshold. Serial (no t.Parallel): logDisconnect logs
+// through the process-global slog.Default().
 func TestLogDisconnect_LevelAndEscalation(t *testing.T) {
 	var buf bytes.Buffer
 	capture.SwapDefault(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))

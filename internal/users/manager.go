@@ -118,23 +118,12 @@ func (m *Manager) LoadFromCache() {
 	m.metrics.SharedUsers(len(m.shared))
 }
 
-// ClientForUser returns a *plex.Client scoped to the given user's token,
-// derived from adminClient via ForToken (a pure same-server derivation, no
-// disk I/O, cannot fail). Derived clients are cached per user until the
-// token rotates.
-//
-// Returns the admin client when userID matches admin. Returns nil (fail
-// closed) when no per-user identity is available — the user is
-// unknown/departed, or holds an empty token. The caller must skip the
-// operation rather than write under the admin token: a per-user stream PUT
-// is per-user-scoped on the server, so writing under the admin token
-// corrupts the admin's own selection and still drops the intended user's
-// preference.
-//
-// Silent on the nil path: callers own the "skipping" log and its rate.
-//
-// userID is a plain string so consumers need not import this package for
-// the ID type.
+// ClientForUser returns a *plex.Client scoped to userID's token, derived from
+// adminClient and cached until the token rotates, or adminClient itself for
+// the admin. It returns nil (fail closed) for an unknown user or an empty
+// token, and logs nothing: the caller skips the write and owns the skip log,
+// because a stream PUT under the admin token overwrites the admin's own
+// selection and still drops the user's.
 func (m *Manager) ClientForUser(userID string, adminClient *plex.Client) *plex.Client {
 	uid := id(userID)
 

@@ -33,19 +33,18 @@ const wsReadLimitBytes = 1 << 20
 
 // persistentReconnectThreshold is the number of consecutive non-stable
 // reconnect attempts after which Listen escalates from the per-cycle
-// Warn line to a single ERROR. By this depth the backoff has reached
-// MaxBackoff (default 30s) and the outage is clearly sustained (Plex
-// unreachable, token revoked, network partition) rather than a transient
-// blip. The file-marker health intentionally never reflects WebSocket
-// state, so this ERROR is the only alertable signal that the container is
-// healthy-but-processing-nothing.
+// Warn line to an ERROR on each further attempt. By this depth the backoff
+// has reached MaxBackoff (default 30s) and the outage is clearly sustained
+// (Plex unreachable, token revoked, network partition) rather than a
+// transient blip.
 const persistentReconnectThreshold = 5
 
 // Handler receives the Listener's events, synchronously from the read loop:
 // a slow handler delays the next read, so long work goes to a goroutine.
 // OnPlay gets each play-session entry unfiltered (see IsRelevantPlayEvent),
 // OnTimeline each notification's whole entry slice, and OnConnection true
-// after each handshake and false after each drop that Listen will retry.
+// after each handshake and false after each drop or failed dial that Listen
+// will retry.
 type Handler interface {
 	OnPlay(ctx context.Context, ev PlayEvent)
 	OnTimeline(ctx context.Context, entries []TimelineEntry)
@@ -118,7 +117,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		// from before the dial, so a slow-but-successful dial followed by
 		// a short real uptime is not falsely classified stable (which
 		// would reset backoff and zero the persistent-reconnect counter
-		// that drives the sole health ERROR). Avoids the "accept
+		// that drives the persistent-reconnect ERROR). Avoids the "accept
 		// handshake then immediately close" flap hammering Plex at
 		// MinBackoff indefinitely.
 		stable := connected && time.Since(handshakeAt) > stableThreshold
@@ -163,13 +162,10 @@ func (l *Listener) backoffBounds() (minBackoff, maxBackoff time.Duration) {
 }
 
 // logDisconnect emits the per-cycle disconnect log at the level the
-// disconnect reason warrants and escalates to a single ERROR once
-// consecutive reconnects pile up past the threshold. Clean server-close
-// is expected info-level; dial/read errors stay warnings. A sustained
-// outage leaves the file-marker health green while zero events are
-// processed, so the escalation is the only alertable signal that the
-// container is healthy-but-processing-nothing; the shipped error-log alert
-// counts that ERROR.
+// disconnect reason warrants and escalates to an ERROR on each further
+// attempt once consecutive reconnects reach the threshold. Clean
+// server-close is expected info-level; dial/read errors stay warnings. The
+// shipped error-log alert counts that ERROR.
 func logDisconnect(ctx context.Context, err error, backoff time.Duration, stable bool, reconnects int) {
 	level := slog.LevelWarn
 	reason := classifyError(err)

@@ -301,8 +301,8 @@ func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics) (done <-
 	return stopped
 }
 
-// persister is the one path that saves the cache, used by the deep scan and at
-// shutdown, so every failed save is counted.
+// persister is the runtime save path, used by the deep scan and at shutdown,
+// so each of those failed saves is counted.
 type persister struct {
 	cache   *cache.Cache
 	metrics *obs.Metrics

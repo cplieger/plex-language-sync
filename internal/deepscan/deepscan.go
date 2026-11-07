@@ -72,7 +72,7 @@ type Scheduler struct {
 	stamp *scheduler.Stamp
 	dedup singleflight.Group
 	// loggedUnknownUsers holds the userIDs whose missing per-user client was
-	// already logged: such a user stays unknown until the next restart.
+	// already logged, once per process.
 	loggedUnknownUsers sync.Map
 	userClient         userClientFunc
 	saveCache          cacheSaver
@@ -192,7 +192,7 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 	// singleflight.Do returns shared=true to EVERY caller that received
 	// this result once a duplicate joined — including the goroutine
 	// that actually executed the callback (Do returns c.dups>0 to the
-	// winner, not only to the losers). Guarding the "skipping" alert on
+	// winner, not only to the losers). Guarding the skip WARN on
 	// `shared` alone therefore makes the winner that DID the work also
 	// log the skip under concurrent Run. Track execution with a local
 	// flag set inside the callback: only the winner runs the callback,

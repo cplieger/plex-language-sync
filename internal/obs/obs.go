@@ -66,7 +66,7 @@ func New() *Metrics {
 			"Play events handled, by outcome: attributed to a user, or skipped as unattributable.", []string{"outcome"}),
 		trackUpdates: measure.NewLabeledCounter("track_updates_total",
 			"Stream selection writes to Plex, by kind (audio, subtitle) and result (set, failed).", []string{"kind", "result"}),
-		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config."),
+		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config by the deep scan or at shutdown."),
 		sharedUsers:       measure.NewGauge("shared_users", "Shared Plex users the app currently follows, besides the admin."),
 	}
 	m.reg.MustRegister(m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanRuns,
