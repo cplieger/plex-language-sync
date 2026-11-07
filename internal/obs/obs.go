@@ -7,7 +7,6 @@
 package obs
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -89,9 +88,6 @@ func New() *Metrics {
 
 // Handler serves the metrics page, Go runtime and process families included.
 func (m *Metrics) Handler() http.Handler { return m.reg.Handler() }
-
-// Gather reads every family as structured values.
-func (m *Metrics) Gather(ctx context.Context) ([]measure.Family, error) { return m.reg.Gather(ctx) }
 
 // WebSocketConnected records whether the notification stream is connected.
 func (m *Metrics) WebSocketConnected(connected bool) {
