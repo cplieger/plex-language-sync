@@ -265,7 +265,7 @@ func TestCheckWritable_rejectsReadOnlyDir(t *testing.T) {
 func stubProbe(t *testing.T, res filesafe.ProbeResult) {
 	t.Helper()
 	prev := probeWritable
-	probeWritable = func(context.Context, string, ...filesafe.Option) (filesafe.ProbeResult, error) {
+	probeWritable = func(context.Context, string, ...filesafe.WriteOption) (filesafe.ProbeResult, error) {
 		return res, nil
 	}
 	t.Cleanup(func() { probeWritable = prev })
@@ -273,7 +273,7 @@ func stubProbe(t *testing.T, res filesafe.ProbeResult) {
 
 func TestCheckWritable_teardownFailurePassesWithWarn(t *testing.T) {
 	stubProbe(t, filesafe.ProbeResult{
-		Dir: "/config", Name: ".probe", Stage: filesafe.ProbeStageRemove,
+		Dir: "/config", Name: ".probe", Phase: filesafe.ProbePhaseRemove,
 		Err: fs.ErrPermission, Leaked: true,
 	})
 	var err error
@@ -288,7 +288,7 @@ func TestCheckWritable_teardownFailurePassesWithWarn(t *testing.T) {
 
 func TestCheckWritable_modeNotStoredIsReachable(t *testing.T) {
 	stubProbe(t, filesafe.ProbeResult{
-		Dir: "/config", Stage: filesafe.ProbeStageCreate,
+		Dir: "/config", Phase: filesafe.ProbePhaseCreate,
 		Err: fmt.Errorf("%w: asked 0600, stored 0660", filesafe.ErrModeNotStored),
 	})
 	err := CheckWritable(t.Context(), "/config")

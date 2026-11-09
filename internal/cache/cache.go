@@ -450,11 +450,11 @@ func CheckWritable(ctx context.Context, dir string) error {
 		return err
 	}
 	if !res.Writable() {
-		return fmt.Errorf("%s: %s: %w", res.Dir, res.Stage, res.Err)
+		return fmt.Errorf("%s: %s: %w", res.Dir, res.Phase, res.Err)
 	}
 	if !res.OK() {
 		slog.Warn("cache: directory accepts writes but the writability probe's cleanup failed",
-			"dir", res.Dir, "stage", res.Stage.String(), "leaked", res.Leaked, "error", res.Err)
+			"dir", res.Dir, "stage", res.Phase.String(), "leaked", res.Leaked, "error", res.Err)
 	}
 	return nil
 }

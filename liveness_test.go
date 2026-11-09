@@ -22,8 +22,13 @@ func defaultLeases() loopLeases {
 	return leasesFor(&config{schedulerEnabled: true, schedulerInterval: 24 * time.Hour}, notify.DefaultConfig())
 }
 
-// probe is the image's health subcommand's verdict on the marker at path.
-func probe(path string) int { return health.ProbeCheck(path, probeOptions()...) }
+// probe is the exit code the image's health subcommand gives the marker at path.
+func probe(path string) int {
+	if health.Inspect(path, probeOptions()...).Healthy() {
+		return 0
+	}
+	return 1
+}
 
 // beatEvery beats each entry every minute until ctx ends, standing in for
 // loops that keep working.
