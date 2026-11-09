@@ -76,10 +76,10 @@ func TestHandlePlayEvent_sanitizesNotificationValuesInLogs(t *testing.T) {
 
 			adapter.OnPlay(t.Context(), notify.PlayEvent{State: "playing", RatingKey: hostile, ClientIdentifier: "mac-A"})
 
-			if !rec.HasAttr(tt.wantMsg, "key", textsafe.SanitizeSingleLine(hostile)) {
+			if !rec.HasAttr(capture.Message(tt.wantMsg), "key", textsafe.SanitizeSingleLine(hostile)) {
 				t.Fatalf("no %q record carrying the sanitized rating key; got %v", tt.wantMsg, rec.Messages())
 			}
-			if !rec.HasAttr(tt.wantMsg, "user", "bob level=ERROR  evil") {
+			if !rec.HasAttr(capture.Message(tt.wantMsg), "user", "bob level=ERROR  evil") {
 				t.Errorf("%q did not carry the session user name sanitized to one line", tt.wantMsg)
 			}
 			assertNoUnsafeRunes(t, rec)

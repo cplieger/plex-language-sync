@@ -310,14 +310,13 @@ func newListenerMux(m *obs.Metrics, live *liveness) *http.ServeMux {
 // serveMetrics serves newListenerMux on ln until ctx ends; done closes once
 // the server has shut down.
 func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics, live *liveness) (done <-chan struct{}) {
-	srv := httpserver.New(newListenerMux(m, live),
-		httpserver.WithReadTimeout(10*time.Second),
-		httpserver.WithWriteTimeout(30*time.Second),
-		httpserver.WithSlogErrorLog(slog.LevelWarn))
+	srv := httpserver.New(newListenerMux(m, live), httpserver.WithSlogErrorLog(slog.LevelWarn))
+	srv.ReadTimeout = 10 * time.Second
+	srv.WriteTimeout = 30 * time.Second
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := httpserver.Run(ctx, srv, ln, nil); err != nil {
+		if err := httpserver.Run(ctx, srv, ln); err != nil {
 			slog.Warn("metrics listener stopped", "error", err)
 		}
 	}()

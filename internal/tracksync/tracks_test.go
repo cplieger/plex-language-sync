@@ -520,7 +520,7 @@ func TestLogSubstitution_sanitizesLanguageFields(t *testing.T) {
 
 	want := textsafe.SanitizeSingleLine(hostile)
 	for _, key := range []string{"from", "to", "from_tag", "to_tag"} {
-		if !rec.HasAttr("track language", key, want) {
+		if !rec.HasAttr("track language", capture.AttrName(key), want) {
 			t.Errorf("%s was not logged as %q; a stream's language comes from the media file and reached the log raw: %v", key, want, rec.Records())
 		}
 	}

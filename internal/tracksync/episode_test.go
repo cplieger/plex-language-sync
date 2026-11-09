@@ -724,7 +724,7 @@ func TestSeedLogsEachSource(t *testing.T) {
 			l.seed(t, &e2)
 
 			for key, want := range tc.attrs {
-				if !rec.HasAttr(tc.msg, key, want) {
+				if !rec.HasAttr(capture.Message(tc.msg), capture.AttrName(key), want) {
 					t.Errorf("%q with %s=%q not logged: %v", tc.msg, key, want, rec.Records())
 				}
 			}
@@ -753,7 +753,7 @@ func TestSeedProfileSanitizesLanguageFieldsInLog(t *testing.T) {
 
 	for key, raw := range map[string]string{"audio_lang": hostileAudio, "subtitle_lang": hostileSub} {
 		want := textsafe.SanitizeSingleLine(raw)
-		if !rec.HasAttr("language profile applied", key, want) {
+		if !rec.HasAttr("language profile applied", capture.AttrName(key), want) {
 			t.Errorf("%s was not logged as %q; a learned language comes from the media file and reached the log raw: %v", key, want, rec.Records())
 		}
 	}

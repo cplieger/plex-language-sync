@@ -20,7 +20,7 @@ func TestCacheLogsSanitizeLanguageCodes(t *testing.T) {
 		rec := capture.Default(t)
 		New().LearnLanguageProfile("1", streams.LanguageChoice{Audio: hostile, Subtitle: hostile})
 		for _, key := range []string{"audio_lang", "subtitle_lang"} {
-			if !rec.HasAttr("language profile updated", key, want) {
+			if !rec.HasAttr("language profile updated", capture.AttrName(key), want) {
 				t.Errorf("%s was not logged as %q; a language code comes from the media file: %v", key, want, rec.Records())
 			}
 		}
@@ -53,7 +53,7 @@ func TestCacheLogsSanitizePlexIdentifiers(t *testing.T) {
 		rec := capture.Default(t)
 		New().RecordIntent(hostile, hostile, streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "jpn"}}, streams.Anchor{}, 1))
 		for _, key := range []string{"user", "show_key"} {
-			if !rec.HasAttr("intent recorded", key, want) {
+			if !rec.HasAttr("intent recorded", capture.AttrName(key), want) {
 				t.Errorf("%s was not logged as %q: %v", key, want, rec.Records())
 			}
 		}

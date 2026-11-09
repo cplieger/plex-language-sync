@@ -25,7 +25,7 @@ func TestLogConnected_sanitizesPlexValues(t *testing.T) {
 		{"authenticated as admin user", "name"},
 		{"authenticated as admin user", "id"},
 	} {
-		if !rec.HasAttr(c.msg, c.key, want) {
+		if !rec.HasAttr(capture.Message(c.msg), capture.AttrName(c.key), want) {
 			t.Errorf("%q %s was not logged as %q; a value read from Plex reached the log raw: %v", c.msg, c.key, want, rec.Records())
 		}
 	}
