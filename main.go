@@ -15,8 +15,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,6 +29,7 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/textsafe"
@@ -523,9 +522,11 @@ func startupBackoff(attempt int) time.Duration {
 // error is a configuration or authentication problem that will not resolve
 // without operator action (so run() should exit) rather than a transient
 // connectivity failure (so run() should start degraded and keep retrying). A
-// Plex status the library's IsTransient does not report (a bad token or other
-// 4xx), a 404 (wrong server), and TLS/certificate errors are fatal;
-// dial/DNS/timeout errors and transient statuses are not.
+// Plex status the library's IsTransient does not report (a bad token, another
+// 4xx, or a 5xx whose answer repeats, such as 501), a 404 (wrong server), and a
+// TLS failure httpclient.CauseOf names (a certificate, a fatal alert or a
+// plain-HTTP answer) are fatal; dial/DNS/timeout errors and transient statuses
+// are not.
 func isFatalStartupError(err error) bool {
 	if statusErr, ok := errors.AsType[*plex.HTTPStatusError](err); ok {
 		return !statusErr.IsTransient()
@@ -534,17 +535,10 @@ func isFatalStartupError(err error) bool {
 	if errors.Is(err, plex.ErrNotFound) {
 		return true
 	}
-	// TLS/certificate misconfiguration (e.g. a self-signed cert without
-	// PLEX_CA_CERT_PATH): will not recover without a config change.
-	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-		return true
-	}
-	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
-		return true
-	}
-	// Transport errors (connection refused, DNS failure, timeout): Plex is
-	// unreachable now but may come back.
-	return false
+	// TLS misconfiguration (e.g. a self-signed cert without PLEX_CA_CERT_PATH)
+	// will not recover without a config change; other transport errors
+	// (connection refused, DNS failure, timeout) may come back.
+	return httpclient.CauseOf(err) == httpclient.CauseTLS
 }
 
 // ---------------------------------------------------------------------------
