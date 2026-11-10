@@ -14,8 +14,8 @@ github.com/cplieger/go/jsonx v1.0.0 h1:tk8DmKIHoMBVvNbFJ7a0IFNPo8vdLy4g9BOBj3HoE
 github.com/cplieger/go/jsonx v1.0.0/go.mod h1:ank2TTHUDI/GrTBZ/KAwU72ECOdrCCDDYqlRSuR/+BQ=
 github.com/cplieger/go/keylock v1.0.0 h1:yrfzZfKzAFZwUIU/cQd3hunrVxbc2BV6MBb6FnblePY=
 github.com/cplieger/go/keylock v1.0.0/go.mod h1:wV/zGnEWTzeH0tpTtcbpo62AGZSTfP+NC8QA3UwZbX4=
-github.com/cplieger/go/measure v1.0.0 h1:NCjNOSWrNxRR3JleOEYV9b9awh8/H33m/eg2DuO/SJg=
-github.com/cplieger/go/measure v1.0.0/go.mod h1:KY7f8SnaQkwhMKsmKIe+eIyYW7z0Xe6vE9AF02fMubw=
+github.com/cplieger/go/measure v1.1.0-dev.1 h1:Jd76Bd4nJqoJAAhe2Y0oYV/rSCSuxPxJQyyD1QKzsxg=
+github.com/cplieger/go/measure v1.1.0-dev.1/go.mod h1:KY7f8SnaQkwhMKsmKIe+eIyYW7z0Xe6vE9AF02fMubw=
 github.com/cplieger/go/pathinside v1.0.0 h1:6AkF/TcxRRaYX11jd3sqwcsPuRBVUcML53bogUQ4YGk=
 github.com/cplieger/go/pathinside v1.0.0/go.mod h1:+Fj6L8z2GUfDFi/uvAzoxF1iIADDf83g4fMbrvelDUY=
 github.com/cplieger/go/scheduler v1.0.0 h1:9hfHmwGHDeV3CenwffaNrOVQ/l9i5XiEz5U4RspoApw=
@@ -28,8 +28,8 @@ github.com/cplieger/go/xmlx v1.0.0 h1:a/Nkx3BifSykDOCDz7sdCXjgQHq53XieMp+jMB0pk6
 github.com/cplieger/go/xmlx v1.0.0/go.mod h1:trImI1H9TuogwyGZHYJt1f1fskANBuZSR3A+LPdEdVY=
 github.com/cplieger/langtag/v3 v3.2.0-dev.2 h1:q8F9SQtqjDv+rg0oLw67rL/SBS/mou1ePntIp0sFy2c=
 github.com/cplieger/langtag/v3 v3.2.0-dev.2/go.mod h1:sERgdV7EpbfsxddXAe3RbfG0ryvtR2MohbuCdql68RM=
-github.com/cplieger/plexapi/v3 v3.0.0-dev.12 h1:t5JKHU/0bGIaTBwsG1J+nLE7rEWSga6AUVfP0r6DWWM=
-github.com/cplieger/plexapi/v3 v3.0.0-dev.12/go.mod h1:I6RdirJuf0fkxSEeEBbKP7eM4oZHwAwjv6IYDjjRlkg=
+github.com/cplieger/plexapi/v3 v3.0.0-dev.13 h1:Hxk2GXkaTj6z5iHQZVRkyzQWQDnA2xF743nJXC2lpo8=
+github.com/cplieger/plexapi/v3 v3.0.0-dev.13/go.mod h1:hhNq1Ll1KTFL+6PztmrB4EI7PzDZYJeoLfhbT1bB+QY=
 go.yaml.in/yaml/v4 v4.0.0 h1:/LG1pNO84Z4l603j/xMn69CcS5OYhMQ/f7l2LoQUGuw=
 go.yaml.in/yaml/v4 v4.0.0/go.mod h1:aZqd9kCMsGL7AuUv/m/PvWLdg5sjJsZ4oHDEnfPPfY0=
 golang.org/x/sync v0.25.0 h1:dJnifr0nMV8/SBnBvdo4eSGGnrc3O4FFx6IqvtLcmRs=

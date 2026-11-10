@@ -11,12 +11,12 @@ require (
 	github.com/cplieger/go/httpserver v1.1.0-dev.1
 	github.com/cplieger/go/jsonx v1.0.0
 	github.com/cplieger/go/keylock v1.0.0
-	github.com/cplieger/go/measure v1.0.0
+	github.com/cplieger/go/measure v1.1.0-dev.1
 	github.com/cplieger/go/scheduler v1.0.0
 	github.com/cplieger/go/slogx v1.0.0
 	github.com/cplieger/go/textsafe v1.0.0
 	github.com/cplieger/langtag/v3 v3.2.0-dev.2
-	github.com/cplieger/plexapi/v3 v3.0.0-dev.12
+	github.com/cplieger/plexapi/v3 v3.0.0-dev.13
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/sync v0.25.0
 	pgregory.net/rapid v1.3.0
