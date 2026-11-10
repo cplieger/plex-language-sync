@@ -132,9 +132,8 @@ func run() int {
 	// Establish the initial Plex connection and resolve the admin user. A
 	// transient failure (Plex down or unreachable at boot) marks the container
 	// healthy-degraded and keeps retrying rather than crash-looping under the
-	// restart policy; a fatal failure (bad token, wrong server, or a TLS/cert
-	// misconfiguration) exits non-zero. Blocks until connected, fatal, or a
-	// shutdown signal.
+	// restart policy; an error isFatalStartupError calls fatal exits non-zero.
+	// Blocks until connected, fatal, or a shutdown signal.
 	identity, admin, err := connectAndResolveAdmin(ctx, client, live)
 	if err != nil {
 		live.drain() // clear any degraded-healthy marker before exiting
@@ -429,7 +428,7 @@ func waitForBackgroundLoops(wg *sync.WaitGroup, refreshDone, schedDone <-chan st
 // initial connect until it succeeds, rather than serving in a reduced mode.
 // This keeps a Plex-down-at-boot from crash-looping the container under the
 // restart policy (the old behaviour was os.Exit(1) on the first failure).
-// A fatal config/auth error still exits fast so the misconfiguration is loud.
+// A fatal error (isFatalStartupError) still exits fast so the operator sees it.
 
 const (
 	startupBaseBackoff = 1 * time.Second
@@ -440,9 +439,8 @@ const (
 // user, retrying transient failures with capped exponential backoff. On the
 // first transient failure it starts live (a degraded start), then keeps
 // retrying until Plex answers, beating live's reconnect entry on each attempt
-// and parking it on return. A fatal error (bad token / 4xx, a wrong-server
-// 404, or a TLS/cert misconfiguration) returns immediately so the caller can
-// exit non-zero. Returns ctx.Err() when shutdown is signalled mid-retry.
+// and parking it on return. An error isFatalStartupError calls fatal returns
+// immediately so the caller can exit non-zero. Returns ctx.Err() when shutdown is signalled mid-retry.
 func connectAndResolveAdmin(ctx context.Context, client *plex.Client, live *liveness) (*plex.ServerIdentity, *plex.User, error) {
 	defer live.reconnect.Park()
 	degraded := false
