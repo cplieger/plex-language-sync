@@ -15,8 +15,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,6 +29,7 @@ import (
 
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/scheduler"
 	"github.com/cplieger/go/textsafe"
@@ -133,9 +132,8 @@ func run() int {
 	// Establish the initial Plex connection and resolve the admin user. A
 	// transient failure (Plex down or unreachable at boot) marks the container
 	// healthy-degraded and keeps retrying rather than crash-looping under the
-	// restart policy; a fatal failure (bad token, wrong server, or a TLS/cert
-	// misconfiguration) exits non-zero. Blocks until connected, fatal, or a
-	// shutdown signal.
+	// restart policy; an error isFatalStartupError calls fatal exits non-zero.
+	// Blocks until connected, fatal, or a shutdown signal.
 	identity, admin, err := connectAndResolveAdmin(ctx, client, live)
 	if err != nil {
 		live.drain() // clear any degraded-healthy marker before exiting
@@ -430,7 +428,7 @@ func waitForBackgroundLoops(wg *sync.WaitGroup, refreshDone, schedDone <-chan st
 // initial connect until it succeeds, rather than serving in a reduced mode.
 // This keeps a Plex-down-at-boot from crash-looping the container under the
 // restart policy (the old behaviour was os.Exit(1) on the first failure).
-// A fatal config/auth error still exits fast so the misconfiguration is loud.
+// A fatal error (isFatalStartupError) still exits fast so the operator sees it.
 
 const (
 	startupBaseBackoff = 1 * time.Second
@@ -441,9 +439,8 @@ const (
 // user, retrying transient failures with capped exponential backoff. On the
 // first transient failure it starts live (a degraded start), then keeps
 // retrying until Plex answers, beating live's reconnect entry on each attempt
-// and parking it on return. A fatal error (bad token / 4xx, a wrong-server
-// 404, or a TLS/cert misconfiguration) returns immediately so the caller can
-// exit non-zero. Returns ctx.Err() when shutdown is signalled mid-retry.
+// and parking it on return. An error isFatalStartupError calls fatal returns
+// immediately so the caller can exit non-zero. Returns ctx.Err() when shutdown is signalled mid-retry.
 func connectAndResolveAdmin(ctx context.Context, client *plex.Client, live *liveness) (*plex.ServerIdentity, *plex.User, error) {
 	defer live.reconnect.Park()
 	degraded := false
@@ -523,9 +520,11 @@ func startupBackoff(attempt int) time.Duration {
 // error is a configuration or authentication problem that will not resolve
 // without operator action (so run() should exit) rather than a transient
 // connectivity failure (so run() should start degraded and keep retrying). A
-// Plex status the library's IsTransient does not report (a bad token or other
-// 4xx), a 404 (wrong server), and TLS/certificate errors are fatal;
-// dial/DNS/timeout errors and transient statuses are not.
+// Plex status the library's IsTransient does not report (a bad token, another
+// 4xx, or a 5xx whose answer repeats, such as 501), a 404 (wrong server), and a
+// TLS failure httpclient.CauseOf names (a certificate, a fatal alert or a
+// plain-HTTP answer) are fatal; dial/DNS/timeout errors and transient statuses
+// are not.
 func isFatalStartupError(err error) bool {
 	if statusErr, ok := errors.AsType[*plex.HTTPStatusError](err); ok {
 		return !statusErr.IsTransient()
@@ -534,17 +533,10 @@ func isFatalStartupError(err error) bool {
 	if errors.Is(err, plex.ErrNotFound) {
 		return true
 	}
-	// TLS/certificate misconfiguration (e.g. a self-signed cert without
-	// PLEX_CA_CERT_PATH): will not recover without a config change.
-	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-		return true
-	}
-	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
-		return true
-	}
-	// Transport errors (connection refused, DNS failure, timeout): Plex is
-	// unreachable now but may come back.
-	return false
+	// TLS misconfiguration (e.g. a self-signed cert without PLEX_CA_CERT_PATH)
+	// will not recover without a config change; other transport errors
+	// (connection refused, DNS failure, timeout) may come back.
+	return httpclient.CauseOf(err) == httpclient.CauseTLS
 }
 
 // ---------------------------------------------------------------------------
