@@ -105,7 +105,7 @@ plex-language-sync never logs your Plex token or writes it to `/config`. The sha
 
 When Plex is unreachable at start, the app keeps retrying instead of exiting, so the container does not restart in a loop while Plex boots. Its healthcheck passes while it retries, so a tool that restarts unhealthy containers leaves it running. A setting Plex rejects stops the app first, so the container restarts and never turns healthy. The container turns unhealthy when the WebSocket listener, the reconnect loop or the deep scan stops making progress, never because Plex is unreachable. [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) has the limits.
 
-- The container restarts in a loop with `cannot establish initial plex connection`. Plex rejected the token, the address reaches another server, or an `https://` certificate failed. Check `.env`, or set `PLEX_CA_CERT_PATH` for your own certificate.
+- The container restarts in a loop with `cannot establish initial plex connection`. Plex rejected the token or answered a server error that repeats (such as 501), the address reaches another server, or an `https://` connection failed TLS (a certificate the app cannot verify, or a server that does not answer TLS there). Check `.env`, or set `PLEX_CA_CERT_PATH` for your own certificate.
 - The log says `required environment variable is missing or unreadable`. `PLEX_URL` or `PLEX_TOKEN` did not reach the container. Check `.env`, then restart.
 - The container exits with `cannot bind the metrics listener`. Set `METRICS_LISTEN_ADDR` to a free port, such as `:9471`.
 - The log keeps saying `plex still unreachable; retrying`. Use Plex's network address, not `localhost`, and check that Plex is running.

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -1657,16 +1659,17 @@ func TestIsFatalStartupError(t *testing.T) {
 		{"other 4xx is fatal", &plex.HTTPStatusError{Code: 400, Status: "400 Bad Request", Method: "GET", Path: "/"}, true},
 		{"503 is transient", &plex.HTTPStatusError{Code: 503, Status: "503 Service Unavailable", Method: "GET", Path: "/"}, false},
 		{"500 is transient", &plex.HTTPStatusError{Code: 500, Status: "500 Internal Server Error", Method: "GET", Path: "/"}, false},
+		{"a repeating 501 is fatal", &plex.HTTPStatusError{Code: 501, Status: "501 Not Implemented", Method: "GET", Path: "/"}, true},
 		{"429 rate limited is transient", &plex.HTTPStatusError{Code: 429, Status: "429 Too Many Requests", Method: "GET", Path: "/"}, false},
 		{"408 request timeout is transient", &plex.HTTPStatusError{Code: 408, Status: "408 Request Timeout", Method: "GET", Path: "/"}, false},
 		{"not found (wrong server) is fatal", fmt.Errorf("connecting to plex server: %w", plex.ErrNotFound), true},
 		{"unknown CA is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: x509.UnknownAuthorityError{}}), true},
 		{"cert verification error is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: &tls.CertificateVerificationError{Err: errors.New("x509: certificate has expired or is not yet valid")}}), true},
-		{"hostname mismatch is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: x509.HostnameError{Certificate: &x509.Certificate{}, Host: "plex"}}), true},
-		{"expired certificate is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: x509.CertificateInvalidError{Cert: &x509.Certificate{}, Reason: x509.Expired}}), true},
+		{"a peer that does not speak TLS is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}}), true},
+		{"a fatal TLS alert is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: &net.OpError{Op: "remote error", Err: errors.New("tls: certificate required")}}), true},
 		{"plain HTTP answer to https is fatal", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: http.ErrSchemeMismatch}), true},
-		{"connection refused is transient", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "http://127.0.0.1:1/", Err: errors.New("connect: connection refused")}), false},
-		{"dns failure is transient", errors.New("connecting to plex server: dial tcp: lookup plex: no such host"), false},
+		{"connection refused is transient", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "http://127.0.0.1:1/", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}), false},
+		{"dns failure is transient", fmt.Errorf("connecting to plex server: %w", &url.Error{Op: "Get", URL: "https://plex:32400/", Err: &net.DNSError{Err: "no such host", Name: "plex", IsNotFound: true}}), false},
 		{"wrapped 401 is fatal", fmt.Errorf("resolving admin user: %w", &plex.HTTPStatusError{Code: 401, Status: "401 Unauthorized", Method: "GET", Path: "/myplex/account"}), true},
 		{"nil is not fatal", nil, false},
 	}
@@ -1680,7 +1683,7 @@ func TestIsFatalStartupError(t *testing.T) {
 }
 
 func TestIsFatalStartupErrorFollowsIsTransient(t *testing.T) {
-	for _, code := range []int{408, 429, 500, 503, 401} {
+	for _, code := range []int{408, 429, 500, 501, 503, 511, 401} {
 		statusErr := &plex.HTTPStatusError{Code: code, Method: "GET", Path: "/"}
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			if got, want := isFatalStartupError(statusErr), !statusErr.IsTransient(); got != want {
