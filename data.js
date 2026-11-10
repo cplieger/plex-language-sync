@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793745577053,
-  "repoUrl": "https://github.com/cplieger/plex-language-sync",
+  "lastUpdate": 1794350011008,
+  "repoUrl": "https://github.com/cplieger/ci",
   "entries": {
     "Benchmark": [
       {
@@ -1774,6 +1774,154 @@ window.BENCHMARK_DATA = {
             "name": "BenchmarkMatchAudio1000",
             "value": 635841.5,
             "range": "± 14456.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Christopher Plieger",
+            "username": "cplieger",
+            "email": "917744+cplieger@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "f40d4941f84982c89b2289176113db1edfb4bffe",
+          "message": "feat: publish each bundled Grafana dashboard, not only the first (#1032)\n\n## Release note\n\nA repository can now ship more than one Grafana dashboard. Beside `grafana-dashboard.json`, each root `grafana-dashboard-<suffix>.json` is checked on every pull request and published with the release as `ghcr.io/<owner>/<repo>/dashboard-<suffix>:<version>`. The suffix is lowercase letters and digits joined by single hyphens, and any other `grafana-dashboard-*.json` fails the check and the release with an error naming the file. A repository with one dashboard sees no change.",
+          "timestamp": "2026-11-10T21:51:58Z",
+          "url": "https://github.com/cplieger/ci/commit/f40d4941f84982c89b2289176113db1edfb4bffe"
+        },
+        "date": 1794350010868,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "BenchmarkBestByScore10 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore10 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore10",
+            "value": 345.55,
+            "range": "± 5.2",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore100 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore100 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore100",
+            "value": 2800,
+            "range": "± 16",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore1000 - B/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore1000 - allocs/op",
+            "value": 0,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkBestByScore1000",
+            "value": 27301.5,
+            "range": "± 401",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio10 - B/op",
+            "value": 3404,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio10 - allocs/op",
+            "value": 53,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio10",
+            "value": 13506,
+            "range": "± 144",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio100 - B/op",
+            "value": 31844,
+            "range": "± 0",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio100 - allocs/op",
+            "value": 422,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio100",
+            "value": 120060,
+            "range": "± 2054.5",
+            "unit": "ns/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio1000 - B/op",
+            "value": 304725,
+            "range": "± 0.5",
+            "unit": "B/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio1000 - allocs/op",
+            "value": 4031,
+            "range": "± 0",
+            "unit": "allocs/op",
+            "extra": "10 samples, median"
+          },
+          {
+            "name": "BenchmarkMatchAudio1000",
+            "value": 1186207,
+            "range": "± 26838.5",
             "unit": "ns/op",
             "extra": "10 samples, median"
           }
