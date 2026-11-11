@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/scheduler"
