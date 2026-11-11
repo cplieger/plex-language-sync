@@ -28,8 +28,8 @@ github.com/cplieger/go/xmlx v1.1.0 h1:Ip7BgP+wU9BiILAXjgRAvJ248PE3vZO6Fjz6HR2L52
 github.com/cplieger/go/xmlx v1.1.0/go.mod h1:+v9nz0FHuS+mikhqg+n/U1/qBrUxLOjO61iJp3HLFAw=
 github.com/cplieger/langtag/v3 v3.2.0-dev.3 h1:M/+7UG4GV2NeDLe2Frc8Se/AmNmg0SqsCedVXFJ3MPE=
 github.com/cplieger/langtag/v3 v3.2.0-dev.3/go.mod h1:LnW2uXqaqUVWNZ3gnLhWhdjSfipA/87DuPHcyyNsNFc=
-github.com/cplieger/plexapi/v3 v3.0.0-dev.16 h1:fRAyGYIX65bJU6//4S65vfVe4rQWa+HkN+HtvOuY7cI=
-github.com/cplieger/plexapi/v3 v3.0.0-dev.16/go.mod h1:v0dRL/45QXRSTiMUXyR1wHrNdN01q42yQkoN64Ny0Ls=
+github.com/cplieger/plexapi/v3 v3.0.0-dev.17 h1:ob/rBxF0aCBT1Y6Gtpn/k9nbF7ThZt9kAwC92/yX8SA=
+github.com/cplieger/plexapi/v3 v3.0.0-dev.17/go.mod h1:2d4J18Hbp7VudAZYdZQ51pNQKC3ua2GoS5RescucGEc=
 go.yaml.in/yaml/v4 v4.0.0 h1:/LG1pNO84Z4l603j/xMn69CcS5OYhMQ/f7l2LoQUGuw=
 go.yaml.in/yaml/v4 v4.0.0/go.mod h1:aZqd9kCMsGL7AuUv/m/PvWLdg5sjJsZ4oHDEnfPPfY0=
 golang.org/x/sync v0.25.0 h1:dJnifr0nMV8/SBnBvdo4eSGGnrc3O4FFx6IqvtLcmRs=
