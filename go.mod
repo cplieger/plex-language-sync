@@ -5,16 +5,16 @@ go 1.27.4
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/cplieger/go/envx v1.1.0-dev.2
-	github.com/cplieger/go/filesafe v1.1.0-dev.1
-	github.com/cplieger/go/health v1.1.0-dev.4
-	github.com/cplieger/go/httpclient v1.2.0-dev.1
-	github.com/cplieger/go/httpserver v1.2.0-dev.4
-	github.com/cplieger/go/jsonx v1.1.0-dev.1
-	github.com/cplieger/go/keylock v1.1.0-dev.1
-	github.com/cplieger/go/measure v1.2.0-dev.2
-	github.com/cplieger/go/scheduler v1.1.0-dev.1
-	github.com/cplieger/go/slogx v1.1.0-dev.1
-	github.com/cplieger/go/textsafe v1.1.0-dev.1
+	github.com/cplieger/go/filesafe v1.1.0
+	github.com/cplieger/go/health v1.1.0
+	github.com/cplieger/go/httpclient v1.2.0
+	github.com/cplieger/go/httpserver v1.2.0
+	github.com/cplieger/go/jsonx v1.1.0
+	github.com/cplieger/go/keylock v1.1.0
+	github.com/cplieger/go/measure v1.2.0
+	github.com/cplieger/go/scheduler v1.1.0
+	github.com/cplieger/go/slogx v1.1.0
+	github.com/cplieger/go/textsafe v1.1.0
 	github.com/cplieger/langtag/v3 v3.2.0-dev.3
 	github.com/cplieger/plexapi/v3 v3.0.0-dev.16
 	go.yaml.in/yaml/v4 v4.0.0
@@ -23,7 +23,7 @@ require (
 )
 
 require (
-	github.com/cplieger/go/pathinside v1.1.0-dev.1 // indirect
-	github.com/cplieger/go/xmlx v1.1.0-dev.1 // indirect
+	github.com/cplieger/go/pathinside v1.1.0 // indirect
+	github.com/cplieger/go/xmlx v1.1.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 )
