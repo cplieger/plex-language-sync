@@ -1,17 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/go/health"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 	"github.com/cplieger/plex-language-sync/internal/plex"
@@ -22,12 +24,36 @@ func defaultLeases() loopLeases {
 	return leasesFor(&config{schedulerEnabled: true, schedulerInterval: 24 * time.Hour}, notify.DefaultConfig())
 }
 
-// probe is the exit code the image's health subcommand gives the marker at path.
-func probe(path string) int {
-	if health.Inspect(path, probeOptions()...).Healthy() {
+// healthProbeEnv names the marker path when probe runs this test binary as
+// the health subcommand.
+const healthProbeEnv = "PLEX_LANGUAGE_SYNC_TEST_HEALTH_MARKER"
+
+// TestHealthSubcommandProcess is the health subcommand when probe runs this
+// binary with healthProbeEnv set, and does nothing otherwise.
+func TestHealthSubcommandProcess(t *testing.T) {
+	if path := os.Getenv(healthProbeEnv); path != "" {
+		runHealthProbe(path)
+	}
+}
+
+// probe is the exit code of the image's health subcommand on the marker at
+// path, run in a process of its own as Docker runs it. The subcommand measures
+// the marker's age on the wall clock, which a synctest bubble does not move.
+func probe(t testing.TB, path string) int {
+	t.Helper()
+	var stderr bytes.Buffer
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHealthSubcommandProcess$", "-test.count=1")
+	cmd.Env = append(os.Environ(), healthProbeEnv+"="+path)
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
 		return 0
 	}
-	return 1
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && strings.HasPrefix(stderr.String(), "unhealthy: ") {
+		return exitErr.ExitCode()
+	}
+	t.Fatalf("health subcommand: %v, stderr %q", err, stderr.String())
+	return -1
 }
 
 // beatEvery beats each entry every minute until ctx ends, standing in for
@@ -51,6 +77,19 @@ func (e *loopEntry) isParked() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.parked
+}
+
+// The image's healthcheck reads the marker the app writes, in a folder a
+// read-only root filesystem leaves writable, and fails it 30 seconds after
+// the last refresh.
+func TestHealthMarker(t *testing.T) {
+	t.Parallel()
+	if want := "/dev/shm/plex-language-sync.healthy"; healthMarkerPath != want {
+		t.Errorf("health marker = %q, want %q", healthMarkerPath, want)
+	}
+	if d := markerLease.Duration(); d != 30*time.Second {
+		t.Errorf("marker lease = %v, want 30s", d)
+	}
 }
 
 func TestLeasesFor(t *testing.T) {
@@ -144,12 +183,12 @@ func TestLivenessWedgedLoopTurnsTheProbeUnhealthy(t *testing.T) {
 
 				time.Sleep(wedged.lease - livenessTick)
 				synctest.Wait()
-				if got := probe(path); got != 0 {
+				if got := probe(t, path); got != 0 {
 					t.Fatalf("probe before the %s lease ran out = %d, want 0", name, got)
 				}
 				time.Sleep(livenessTick + markerLease.Duration())
 				synctest.Wait()
-				if got := probe(path); got != 1 {
+				if got := probe(t, path); got != 1 {
 					t.Errorf("probe one ticker lease after the %s lease ran out = %d, want 1", name, got)
 				}
 			})
@@ -180,7 +219,7 @@ func TestLivenessScanOffSilentDeepScanStaysHealthy(t *testing.T) {
 
 		time.Sleep(100 * time.Hour)
 		synctest.Wait()
-		if got := probe(path); got != 0 {
+		if got := probe(t, path); got != 0 {
 			t.Errorf("probe after 100h of a silent deep scan with the scan off = %d, want 0", got)
 		}
 	})
@@ -202,7 +241,7 @@ func TestLivenessParkedLoopIsNoFault(t *testing.T) {
 
 		time.Sleep(100 * time.Hour)
 		synctest.Wait()
-		if got := probe(path); got != 0 {
+		if got := probe(t, path); got != 0 {
 			t.Errorf("probe after a 100h outage with only the reconnect loop beating = %d, want 0", got)
 		}
 	})
@@ -223,15 +262,15 @@ func TestLivenessStartAndDrain(t *testing.T) {
 
 		time.Sleep(time.Minute)
 		synctest.Wait()
-		if got := probe(path); got != 1 {
+		if got := probe(t, path); got != 1 {
 			t.Errorf("probe before start = %d, want 1", got)
 		}
 		live.start()
-		if got := probe(path); got != 0 {
+		if got := probe(t, path); got != 0 {
 			t.Errorf("probe right after start = %d, want 0", got)
 		}
 		live.drain()
-		if got := probe(path); got != 1 {
+		if got := probe(t, path); got != 1 {
 			t.Errorf("probe right after the drain = %d, want 1", got)
 		}
 		for _, e := range live.loops() {
@@ -239,7 +278,7 @@ func TestLivenessStartAndDrain(t *testing.T) {
 		}
 		time.Sleep(time.Minute)
 		synctest.Wait()
-		if got := probe(path); got != 1 {
+		if got := probe(t, path); got != 1 {
 			t.Errorf("probe a minute after the drain = %d, want 1 (a tick must not restore it)", got)
 		}
 	})
@@ -266,7 +305,7 @@ func TestLivenessStoppedTickerTurnsTheProbeUnhealthy(t *testing.T) {
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	for deadline := time.Now().Add(5 * time.Second); probe(path) != 0; time.Sleep(5 * time.Millisecond) {
+	for deadline := time.Now().Add(5 * time.Second); probe(t, path) != 0; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("a running ticker did not refresh an hour-old marker within 5s")
 		}
@@ -278,7 +317,7 @@ func TestLivenessStoppedTickerTurnsTheProbeUnhealthy(t *testing.T) {
 	if err := os.Chtimes(path, aged, aged); err != nil {
 		t.Fatal(err)
 	}
-	if got := probe(path); got != 1 {
+	if got := probe(t, path); got != 1 {
 		t.Errorf("probe on a marker older than its lease after the ticker stopped = %d, want 1", got)
 	}
 }
@@ -305,7 +344,7 @@ func TestConnectAndResolveAdminUnreachablePlexBeatsTheReconnectLoop(t *testing.T
 		errc <- err
 	}()
 
-	for deadline := time.Now().Add(10 * time.Second); probe(path) != 0; time.Sleep(10 * time.Millisecond) {
+	for deadline := time.Now().Add(10 * time.Second); probe(t, path) != 0; time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatal("an unreachable Plex did not start the app degraded within 10s")
 		}

@@ -34,7 +34,7 @@ var exposedType = regexp.MustCompile(`(?m)^# TYPE (\S+) (\S+)$`)
 func exportedSeries(t *testing.T) []string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	obs.New().Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody))
+	obs.New("test").Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody))
 	body, err := io.ReadAll(rec.Result().Body)
 	if err != nil {
 		t.Fatal(err)

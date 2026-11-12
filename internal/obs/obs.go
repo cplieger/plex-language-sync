@@ -8,6 +8,7 @@ package obs
 
 import (
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/go/measure"
@@ -40,16 +41,23 @@ type Metrics struct {
 	wsReconnects      *measure.Counter
 	scanLastSuccess   *measure.Gauge
 	scanInterval      *measure.Gauge
+	scanDeadline      *measure.Gauge
 	scanRuns          *measure.LabeledCounter
 	resolutionStalled *measure.LabeledGauge
 	playEvents        *measure.LabeledCounter
 	trackUpdates      *measure.LabeledCounter
 	cacheSaveFailures *measure.Counter
 	sharedUsers       *measure.Gauge
+	// scanGap is how long a complete scan may follow the last one, set by
+	// DeepScanDue; 0 keeps the deadline at 0.
+	scanGap atomic.Int64
 }
 
 // New builds and registers every instrument, with each labelled series at 0.
-func New() *Metrics {
+// version is the release this process runs, the build_info label.
+func New(version string) *Metrics {
+	buildInfo := measure.NewLabeledGauge("build_info",
+		"Always 1; the version label is the release this process runs.", []string{"version"})
 	m := &Metrics{
 		reg:          measure.NewRegistry("plex_language_sync"),
 		wsConnected:  measure.NewGauge("websocket_connected", "1 while the Plex WebSocket notification stream is connected, else 0."),
@@ -57,6 +65,8 @@ func New() *Metrics {
 		scanLastSuccess: measure.NewGauge("deep_scan_last_success_timestamp_seconds",
 			"Unix time the last complete deep scan finished, read from the last-run record at startup; 0 when none was ever recorded."),
 		scanInterval: measure.NewGauge("deep_scan_interval_seconds", "DEEP_SCAN_INTERVAL in seconds; 0 when the deep scan is off."),
+		scanDeadline: measure.NewGauge("deep_scan_deadline_timestamp_seconds",
+			"Unix time by which the next complete deep scan is due; 0 while the deep scan is off."),
 		scanRuns: measure.NewLabeledCounter("deep_scan_runs_total",
 			"Deep scans finished, by result: complete covered its whole window, incomplete stopped early.", []string{"result"}),
 		resolutionStalled: measure.NewLabeledGauge("user_resolution_stalled",
@@ -68,8 +78,9 @@ func New() *Metrics {
 		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config by the deep scan or at shutdown."),
 		sharedUsers:       measure.NewGauge("shared_users", "Shared Plex users the app currently follows, besides the admin."),
 	}
-	m.reg.MustRegister(m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanRuns,
+	m.reg.MustRegister(buildInfo, m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanDeadline, m.scanRuns,
 		m.resolutionStalled, m.playEvents, m.trackUpdates, m.cacheSaveFailures, m.sharedUsers)
+	buildInfo.Set(1, version)
 	for _, r := range []string{"complete", "incomplete"} {
 		m.scanRuns.Add(0, r)
 	}
@@ -111,7 +122,7 @@ func (m *Metrics) DeepScanInterval(d time.Duration) {
 }
 
 // DeepScanFinished counts one pass and, when it was complete, records at as
-// the last complete scan.
+// the last complete scan and dates the deadline one gap after it.
 func (m *Metrics) DeepScanFinished(complete bool, at time.Time) {
 	if m == nil {
 		return
@@ -122,6 +133,24 @@ func (m *Metrics) DeepScanFinished(complete bool, at time.Time) {
 	}
 	m.scanLastSuccess.Set(float64(at.Unix()))
 	m.scanRuns.Inc("complete")
+	m.dueAfter(at)
+}
+
+// DeepScanDue keeps gap, how long a complete scan may follow the last one,
+// and dates the deadline one gap after from, the last complete scan or the
+// start. A non-positive gap, the scan off, leaves the deadline at 0.
+func (m *Metrics) DeepScanDue(gap time.Duration, from time.Time) {
+	if m == nil || gap <= 0 {
+		return
+	}
+	m.scanGap.Store(int64(gap))
+	m.dueAfter(from)
+}
+
+func (m *Metrics) dueAfter(last time.Time) {
+	if gap := time.Duration(m.scanGap.Load()); gap > 0 {
+		m.scanDeadline.Set(float64(last.Add(gap).Unix()))
+	}
 }
 
 // DeepScanSeeded records at, a complete scan an earlier process finished, as

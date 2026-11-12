@@ -35,11 +35,9 @@ The image runs without root and needs no extra privileges, so it also runs with 
       - ALL
     security_opt:
       - no-new-privileges:true
-    tmpfs:
-      - "/tmp:size=1m,mode=1777,noexec,nosuid,nodev"
 ```
 
-The `tmpfs` line is needed with `read_only`, because the healthcheck marker lives in `/tmp`.
+With `read_only: true`, plex-language-sync writes to two places. What it learns goes to the `/config` mount. The health file goes to `/dev/shm`, which stays writable under a read-only root, so no tmpfs is needed. If `/dev/shm` cannot be written, as under `ipc: none`, the healthcheck passes and the startup log says so, while `/healthz` on the metrics listener still gives the true answer.
 
 ## What the image contains
 

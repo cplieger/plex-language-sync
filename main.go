@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,7 +27,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/scheduler"
@@ -59,6 +58,10 @@ const cacheDir = "/config"
 // cache.
 const lastRunStampName = ".plex-language-sync-last-run"
 
+// version is the release this binary is, stamped by the Dockerfile's
+// BUILD_VERSION build argument; an unstamped build reports "dev".
+var version = "dev"
+
 // shutdownWaitBudget bounds how long run() waits for background loops
 // (user-token refresh + scheduler) to join before persisting the cache
 // on shutdown. If the budget is exceeded the cache is saved anyway — a
@@ -71,7 +74,7 @@ const shutdownWaitBudget = 10 * time.Second
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
-		health.RunProbe(health.DefaultPath, probeOptions()...)
+		runHealthProbe(healthMarkerPath)
 	}
 	os.Exit(run())
 }
@@ -83,24 +86,25 @@ func run() int {
 	cfg := loadConfig()
 	logConfig(&cfg)
 
-	metrics := obs.New()
+	metrics := obs.New(version)
 	metrics.DeepScanInterval(cfg.schedulerInterval)
-	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
-	seedDeepScan(metrics, stamp, &cfg)
-
 	wsCfg := notify.DefaultConfig()
-	live := newLiveness(health.DefaultPath, leasesFor(&cfg, wsCfg))
+	leases := leasesFor(&cfg, wsCfg)
+	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
+	seedDeepScan(metrics, stamp, leases.deepScan, time.Now())
+
+	live := newLiveness(healthMarkerPath, leases)
 	wsCfg, deepScanLoop := live.wire(wsCfg)
 
-	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
+	ms, err := listenMetrics(ctx, cfg.metricsListenAddr, metrics, live)
 	if err != nil {
 		slog.Error("cannot bind the metrics listener", "error", err)
 		return 1
 	}
-	if ln != nil {
-		done := serveMetrics(ctx, ln, metrics, live)
+	if addr := ms.Addr(); addr != nil {
+		done := serveMetrics(ctx, ms)
 		defer func() { cancel(); <-done }()
-		slog.Info("metrics listener started", "addr", ln.Addr().String())
+		slog.Info("metrics listener started", "addr", addr.String())
 	}
 
 	tickerDone := make(chan struct{})
@@ -271,50 +275,47 @@ func run() int {
 	return 0
 }
 
-// seedDeepScan sets the last complete scan from stamp before /metrics serves,
-// so no scrape after a restart reads 0; deepscan.Deps.Stamp owns what the
-// stamp holds.
-func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, cfg *config) {
-	if !cfg.schedulerEnabled || cfg.schedulerInterval <= 0 {
+// seedDeepScan sets the last complete scan from stamp, and the deadline one
+// gap after it or after start, before /metrics serves, so no scrape after a
+// restart reads 0; deepscan.Deps.Stamp owns what the stamp holds. gap is the
+// deep-scan lease, 0 with the scan off.
+func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, gap time.Duration, start time.Time) {
+	if gap <= 0 {
 		return
 	}
+	from := start
 	if rec, known := stamp.Last(); known {
 		m.DeepScanSeeded(rec.Time)
+		from = rec.Time
 	}
+	m.DeepScanDue(gap, from)
 }
 
-// bindMetrics binds the opt-in metrics listener before any work, so a bad
+// listenMetrics binds the opt-in metrics listener before any work, so a bad
 // address stops the container at once instead of leaving it running with no
-// page. An empty addr binds nothing.
-func bindMetrics(ctx context.Context, addr string) (net.Listener, error) {
-	if addr == "" {
-		return nil, nil
-	}
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+// page. An empty addr opens nothing.
+func listenMetrics(ctx context.Context, addr string, m *obs.Metrics, live *liveness) (*httpserver.MetricsServer, error) {
+	ms, err := httpserver.ListenMetrics(ctx, addr,
+		httpserver.MetricsHandlers{Metrics: m.Handler(), Healthz: newHealthz(live)},
+		httpserver.WithSlogErrorLog(slog.LevelWarn))
 	if err != nil {
-		return nil, fmt.Errorf("METRICS_LISTEN_ADDR %q: %w", addr, err)
+		return nil, fmt.Errorf("METRICS_LISTEN_ADDR: %w", err)
 	}
-	return ln, nil
+	return ms, nil
 }
 
-// newListenerMux routes the opt-in listener: GET /metrics and GET /healthz.
-func newListenerMux(m *obs.Metrics, live *liveness) *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", m.Handler())
-	mux.Handle("GET /healthz", health.CheckHandler(live.checks()...))
-	return mux
+// newHealthz is the listener's GET /healthz.
+func newHealthz(live *liveness) http.Handler {
+	return health.CheckHandler(live.checks()...)
 }
 
-// serveMetrics serves newListenerMux on ln until ctx ends; done closes once
-// the server has shut down.
-func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics, live *liveness) (done <-chan struct{}) {
-	srv := httpserver.New(newListenerMux(m, live), httpserver.WithSlogErrorLog(slog.LevelWarn))
-	srv.ReadTimeout = 10 * time.Second
-	srv.WriteTimeout = 30 * time.Second
+// serveMetrics serves ms until ctx ends; done closes once the server has shut
+// down.
+func serveMetrics(ctx context.Context, ms *httpserver.MetricsServer) (done <-chan struct{}) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := httpserver.Run(ctx, srv, ln); err != nil {
+		if err := ms.Serve(ctx); err != nil {
 			slog.Warn("metrics listener stopped", "error", err)
 		}
 	}()

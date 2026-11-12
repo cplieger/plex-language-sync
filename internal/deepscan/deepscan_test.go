@@ -1921,7 +1921,7 @@ func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 
 func TestDeepScanMetricsMoveOnlyOnACompletePass(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	newSched := func(plx plexReader) *Scheduler {
 		return New(Config{Enable: true}, &Deps{
 			Plex: plx, Cache: fakeapi.NewCache(), Stamp: testStamp(t),
