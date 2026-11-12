@@ -88,11 +88,12 @@ func run() int {
 
 	metrics := obs.New(version)
 	metrics.DeepScanInterval(cfg.schedulerInterval)
-	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
-	seedDeepScan(metrics, stamp, &cfg)
-
 	wsCfg := notify.DefaultConfig()
-	live := newLiveness(healthMarkerPath, leasesFor(&cfg, wsCfg))
+	leases := leasesFor(&cfg, wsCfg)
+	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
+	seedDeepScan(metrics, stamp, leases.deepScan, time.Now())
+
+	live := newLiveness(healthMarkerPath, leases)
 	wsCfg, deepScanLoop := live.wire(wsCfg)
 
 	ms, err := listenMetrics(ctx, cfg.metricsListenAddr, metrics, live)
@@ -274,16 +275,20 @@ func run() int {
 	return 0
 }
 
-// seedDeepScan sets the last complete scan from stamp before /metrics serves,
-// so no scrape after a restart reads 0; deepscan.Deps.Stamp owns what the
-// stamp holds.
-func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, cfg *config) {
-	if !cfg.schedulerEnabled || cfg.schedulerInterval <= 0 {
+// seedDeepScan sets the last complete scan from stamp, and the deadline one
+// gap after it or after start, before /metrics serves, so no scrape after a
+// restart reads 0; deepscan.Deps.Stamp owns what the stamp holds. gap is the
+// deep-scan lease, 0 with the scan off.
+func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, gap time.Duration, start time.Time) {
+	if gap <= 0 {
 		return
 	}
+	from := start
 	if rec, known := stamp.Last(); known {
 		m.DeepScanSeeded(rec.Time)
+		from = rec.Time
 	}
+	m.DeepScanDue(gap, from)
 }
 
 // listenMetrics binds the opt-in metrics listener before any work, so a bad

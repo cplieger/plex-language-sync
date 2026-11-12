@@ -179,16 +179,25 @@ func stampAt(t *testing.T, at time.Time) *scheduler.Stamp {
 func TestSeedDeepScanFromTheStamp(t *testing.T) {
 	t.Parallel()
 	const lastSuccess = "plex_language_sync_deep_scan_last_success_timestamp_seconds"
+	const deadline = "plex_language_sync_deep_scan_deadline_timestamp_seconds"
 	const runs = "plex_language_sync_deep_scan_runs_total"
-	enabled := &config{schedulerEnabled: true, schedulerInterval: 24 * time.Hour}
+	// The default 24h interval: two intervals plus the 2h a pass may take.
+	gap := defaultLeases().deepScan
+	if gap != 50*time.Hour {
+		t.Fatalf("default deep-scan gap = %v, want 50h", gap)
+	}
+	start := time.Now().Truncate(time.Second)
 	for _, age := range []time.Duration{time.Hour, 72 * time.Hour} {
 		t.Run(age.String()+" old", func(t *testing.T) {
 			t.Parallel()
-			at := time.Now().Add(-age).Truncate(time.Second)
+			at := start.Add(-age)
 			m := obs.New("test")
-			seedDeepScan(m, stampAt(t, at), enabled)
+			seedDeepScan(m, stampAt(t, at), gap, start)
 			if got := metrictest.Value(t, m, lastSuccess); got != float64(at.Unix()) {
 				t.Errorf("the last complete scan = %v, want the record's %d", got, at.Unix())
+			}
+			if got, want := metrictest.Value(t, m, deadline), float64(at.Add(gap).Unix()); got != want {
+				t.Errorf("the deadline = %v, want %v, 50h after the record", got, want)
 			}
 			for _, outcome := range []string{"complete", "incomplete"} {
 				if got := metrictest.Value(t, m, runs, outcome); got != 0 {
@@ -200,17 +209,23 @@ func TestSeedDeepScanFromTheStamp(t *testing.T) {
 	t.Run("no record", func(t *testing.T) {
 		t.Parallel()
 		m := obs.New("test")
-		seedDeepScan(m, scheduler.NewStamp(filepath.Join(t.TempDir(), "last-run")), enabled)
+		seedDeepScan(m, scheduler.NewStamp(filepath.Join(t.TempDir(), "last-run")), gap, start)
 		if got := metrictest.Value(t, m, lastSuccess); got != 0 {
 			t.Errorf("the last complete scan = %v with no record, want 0", got)
+		}
+		if got, want := metrictest.Value(t, m, deadline), float64(start.Add(gap).Unix()); got != want {
+			t.Errorf("the deadline with no record = %v, want %v, 50h after the start", got, want)
 		}
 	})
 	t.Run("scan off", func(t *testing.T) {
 		t.Parallel()
 		m := obs.New("test")
-		seedDeepScan(m, stampAt(t, time.Now().Add(-time.Hour)), &config{})
+		seedDeepScan(m, stampAt(t, start.Add(-time.Hour)), 0, start)
 		if got := metrictest.Value(t, m, lastSuccess); got != 0 {
 			t.Errorf("the last complete scan = %v with the scan off, want 0", got)
+		}
+		if got := metrictest.Value(t, m, deadline); got != 0 {
+			t.Errorf("the deadline with the scan off = %v, want 0", got)
 		}
 	})
 }
