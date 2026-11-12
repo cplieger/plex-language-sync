@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpclient"
 	"github.com/cplieger/go/httpserver"
 	"github.com/cplieger/go/scheduler"
@@ -71,7 +71,7 @@ const shutdownWaitBudget = 10 * time.Second
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "health" {
-		health.RunProbe(health.DefaultPath, probeOptions()...)
+		runHealthProbe(healthMarkerPath)
 	}
 	os.Exit(run())
 }
@@ -89,7 +89,7 @@ func run() int {
 	seedDeepScan(metrics, stamp, &cfg)
 
 	wsCfg := notify.DefaultConfig()
-	live := newLiveness(health.DefaultPath, leasesFor(&cfg, wsCfg))
+	live := newLiveness(healthMarkerPath, leasesFor(&cfg, wsCfg))
 	wsCfg, deepScanLoop := live.wire(wsCfg)
 
 	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)

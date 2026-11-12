@@ -7,16 +7,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/go/health"
+	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/plex-language-sync/internal/notify"
 )
 
-// livenessTick is how often the ticker reads the loops and rewrites the marker.
+// livenessTick is how often the ticker reads the loops and sets the verdict.
 const livenessTick = 10 * time.Second
 
-// markerLease is the probe's deadline on the marker: three ticks, so a late
-// tick passes and only a stopped ticker fails it.
+// markerLease is how old the last healthy verdict may get, for the health
+// subcommand and /healthz alike: three ticks, so a late tick passes and only a
+// stopped ticker fails it.
 var markerLease = health.Lease{Interval: livenessTick, Cycles: 3}
+
+// healthMarkerPath is the file the verdict is mirrored to for the health
+// subcommand.
+var healthMarkerPath = health.MarkerPath("plex-language-sync")
 
 // deepScanPassAllowance is the slack the deep-scan lease adds to two
 // intervals, the same 2h the deep scan alerts add; nothing bounds a pass.
@@ -27,10 +32,10 @@ const deepScanPassAllowance = 2 * time.Hour
 // two-minute request timeout.
 const connectAttemptBudget = 5 * time.Minute
 
-// probeOptions are the health subcommand's: the marker must be no older than
-// markerLease.
-func probeOptions() []health.ProbeOption {
-	return []health.ProbeOption{health.WithMaxAge(markerLease.Duration())}
+// runHealthProbe is the health subcommand: it exits 0 while the marker at path
+// is no older than markerLease, or cannot be written, and 1 otherwise.
+func runHealthProbe(path string) {
+	health.RunProbe(path, health.WithMaxAge(markerLease.Duration()))
 }
 
 // loopLeases holds each loop's lease; a zero lease is not checked.
@@ -103,31 +108,28 @@ func (e *loopEntry) Healthy() bool {
 	return e.parked || e.lease <= 0 || time.Since(e.last) <= e.lease
 }
 
-// liveness is the one owner of the health marker. Each loop beats its own
-// entry and one ticker writes the marker from all of them, so a wedged loop
+// liveness is the one owner of the health verdict. Each loop beats its own
+// entry and one ticker sets the verdict from all of them, so a wedged loop
 // turns the container unhealthy while the others keep working.
 type liveness struct {
-	latch     *health.Latch
+	status    *health.Status
 	websocket *loopEntry
 	reconnect *loopEntry
 	deepScan  *loopEntry
 	// stale holds the loops already reported stale, so each stall logs once.
 	stale map[*loopEntry]bool
-	path  string
 	mu    sync.Mutex
 	// serving is atomic so /healthz never waits on l.mu, which a marker write
 	// holds.
 	serving atomic.Bool
 }
 
-// newLiveness returns a liveness writing the marker at path, the marker
-// cleared, every entry parked and the app not yet serving.
+// newLiveness returns a liveness mirroring its verdict to the marker at path,
+// unhealthy, with every entry parked and the app not yet serving. Build it in
+// the long-running process only: it removes the marker another process left.
 func newLiveness(path string, leases loopLeases) *liveness {
-	marker := health.NewMarker(path)
-	marker.Set(false)
 	return &liveness{
-		latch:     health.NewLatch(marker),
-		path:      path,
+		status:    health.NewStatus(health.WithMarker(path)),
 		websocket: newLoopEntry("websocket", "the Plex WebSocket listener stopped making progress", leases.websocket),
 		reconnect: newLoopEntry("reconnect", "the Plex reconnect loop stopped making progress", leases.reconnect),
 		deepScan:  newLoopEntry("deep_scan", "the deep scan stopped making progress", leases.deepScan),
@@ -146,16 +148,9 @@ func (l *liveness) wire(ws notify.Config) (notify.Config, *loopEntry) {
 	return ws, l.deepScan
 }
 
-// signalFunc adapts a func to health.Signal.
-type signalFunc func() bool
-
-var _ health.Signal = signalFunc(nil)
-
-func (f signalFunc) Healthy() bool { return f() }
-
-// markerRefreshed is the probe's verdict on the marker while every other
-// check passes; when one fails, that check names the cause.
-func (l *liveness) markerRefreshed() bool {
+// verdictRefreshed fails once the ticker stops setting the verdict while
+// every other check passes; when one fails, that check names the cause.
+func (l *liveness) verdictRefreshed() bool {
 	if !l.serving.Load() {
 		return true
 	}
@@ -164,21 +159,21 @@ func (l *liveness) markerRefreshed() bool {
 			return true
 		}
 	}
-	return health.Inspect(l.path, probeOptions()...).Healthy()
+	return l.status.Healthy() && l.status.Fresh(markerLease.Duration()).Healthy()
 }
 
 // checks are /healthz's: one per loop, plus the two other conditions the
-// probe fails on, the app not serving and a marker the ticker no longer
+// probe fails on, the app not serving and a verdict the ticker no longer
 // refreshes, so the endpoint and the probe give one verdict.
 func (l *liveness) checks() []health.Check {
-	cs := []health.Check{{Signal: signalFunc(l.serving.Load), Reason: "the app is starting or shutting down"}}
+	cs := []health.Check{{Signal: health.SignalFunc(l.serving.Load), Reason: "the app is starting or shutting down"}}
 	for _, e := range l.loops() {
 		cs = append(cs, health.Check{Signal: e, Reason: e.reason})
 	}
-	return append(cs, health.Check{Signal: signalFunc(l.markerRefreshed), Reason: "the app stopped updating its health state"})
+	return append(cs, health.Check{Signal: health.SignalFunc(l.verdictRefreshed), Reason: "the app stopped updating its health state"})
 }
 
-// start marks the app able to serve, so from now on the marker follows the
+// start marks the app able to serve, so from now on the verdict follows the
 // loops. Calling it again changes nothing.
 func (l *liveness) start() {
 	l.mu.Lock()
@@ -187,16 +182,16 @@ func (l *liveness) start() {
 	l.updateLocked()
 }
 
-// drain turns the marker unhealthy for good, at shutdown or a fatal exit.
+// drain turns the verdict unhealthy for good, at shutdown or a fatal exit.
 func (l *liveness) drain() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.serving.Store(false)
-	l.latch.BeginDrain()
+	l.status.BeginDrain()
 }
 
-// run is the ticker: it rewrites the marker at once and then every tick,
-// until ctx ends.
+// run is the ticker: it sets the verdict at once and then every tick, until
+// ctx ends.
 func (l *liveness) run(ctx context.Context, every time.Duration) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
@@ -212,7 +207,7 @@ func (l *liveness) run(ctx context.Context, every time.Duration) {
 	}
 }
 
-// updateLocked writes the marker healthy only while the app serves and every
+// updateLocked sets the verdict healthy only while the app serves and every
 // loop is inside its lease, and logs each loop that has just gone stale.
 // Caller holds l.mu.
 func (l *liveness) updateLocked() {
@@ -225,5 +220,5 @@ func (l *liveness) updateLocked() {
 		l.stale[e] = !ok
 		healthy = healthy && ok
 	}
-	l.latch.Set(healthy)
+	l.status.Set(healthy)
 }

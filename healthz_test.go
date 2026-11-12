@@ -25,6 +25,25 @@ const (
 	reasonTicker    = "the app stopped updating its health state"
 )
 
+// markerTime is the marker's modification time, the time of its last write.
+func markerTime(t *testing.T, path string) time.Time {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.ModTime()
+}
+
+// backdate dates the marker age before written, its last write.
+func backdate(t *testing.T, path string, written time.Time, age time.Duration) {
+	t.Helper()
+	at := written.Add(-age)
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // healthz is one answer of the listener's GET /healthz.
 type healthz struct {
 	Status  string   `json:"status"`
@@ -81,7 +100,7 @@ func TestHealthzRoute(t *testing.T) {
 // verdicts reads /healthz and the health subcommand at one instant.
 func verdicts(t *testing.T, h http.Handler, path string) (healthz, int) {
 	t.Helper()
-	return getHealthz(t, h, http.MethodGet), probe(path)
+	return getHealthz(t, h, http.MethodGet), probe(t, path)
 }
 
 // agree fails unless /healthz and the probe give the same verdict, and
@@ -177,67 +196,59 @@ func TestHealthzAgreesWithTheProbe(t *testing.T) {
 
 			stop()
 			synctest.Wait()
-			// The marker's age is its file time, which the bubble's clock does
-			// not move: date the last write at the bubble's now.
-			now := time.Now()
-			if err := os.Chtimes(path, now, now); err != nil {
-				t.Fatal(err)
+			stopped, written := time.Now(), markerTime(t, path)
+			for _, step := range []struct {
+				when    string
+				reasons []string
+				age     time.Duration
+			}{
+				{"a tick inside the marker lease after the ticker stopped", nil, markerLease.Duration() - livenessTick},
+				{"a tick past the marker lease after the ticker stopped", []string{reasonTicker}, markerLease.Duration() + livenessTick},
+			} {
+				time.Sleep(step.age - time.Since(stopped))
+				synctest.Wait()
+				// The bubble moves /healthz's clock only: age the file by as much.
+				// A tick of margin covers the probe process's own start-up.
+				backdate(t, path, written, step.age)
+				agree(t, step.when, h, path, step.reasons...)
 			}
-			time.Sleep(markerLease.Duration() + time.Second)
-			synctest.Wait()
-			agree(t, "one marker lease after the ticker stopped", h, path, reasonTicker)
 		})
 	})
 
-	// A marker path os.Stat cannot read fails every refresh and the probe,
-	// with the ticker still running.
-	t.Run("marker unreadable", func(t *testing.T) {
-		capture.Default(t)
-		synctest.Test(t, func(t *testing.T) {
-			live, h, path, _ := newAgreement(t)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			go beatEvery(ctx, live.loops()...)
-			live.start()
-			synctest.Wait()
-			agree(t, "marker written", h, path)
+	// A symlink planted at the marker path after the start fails every
+	// refresh. The marker is never followed: the probe reads degraded mode and
+	// /healthz keeps the verdict in memory, so a restart is not asked for, and
+	// the failed write is logged once.
+	for name, target := range map[string]func(path string) string{
+		"marker unreadable":                      filepath.Base,
+		"marker absent while the app is healthy": func(path string) string { return filepath.Join(filepath.Dir(path), "missing", "x") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := capture.Default(t)
+			synctest.Test(t, func(t *testing.T) {
+				live, h, path, _ := newAgreement(t)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				go beatEvery(ctx, live.loops()...)
+				live.start()
+				synctest.Wait()
+				agree(t, "marker written", h, path)
 
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target(path), path); err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(3 * livenessTick)
+				synctest.Wait()
+				agree(t, "three ticks after a symlink took the marker's place", h, path)
+			})
+			if n := rec.CountExact("failed to create health marker"); n != 1 {
+				t.Errorf("logged the failed marker write %d times, want once; got %v", n, rec.Messages())
 			}
-			if err := os.Symlink(filepath.Base(path), path); err != nil {
-				t.Fatal(err)
-			}
-			time.Sleep(livenessTick)
-			synctest.Wait()
-			agree(t, "one tick after the marker became a symlink loop", h, path, reasonTicker)
 		})
-	})
-
-	// A dangling symlink at the marker path reads as absent, and every
-	// refresh fails to create the file through it.
-	t.Run("marker absent while the app is healthy", func(t *testing.T) {
-		capture.Default(t)
-		synctest.Test(t, func(t *testing.T) {
-			live, h, path, _ := newAgreement(t)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			go beatEvery(ctx, live.loops()...)
-			live.start()
-			synctest.Wait()
-			agree(t, "marker written", h, path)
-
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(filepath.Join(filepath.Dir(path), "missing", "x"), path); err != nil {
-				t.Fatal(err)
-			}
-			time.Sleep(livenessTick)
-			synctest.Wait()
-			agree(t, "one tick after the marker became a dangling symlink", h, path, reasonTicker)
-		})
-	})
+	}
 
 	t.Run("ticker stopped while the marker is absent", func(t *testing.T) {
 		capture.Default(t)
