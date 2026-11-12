@@ -51,56 +51,60 @@ type healthz struct {
 	code    int
 }
 
-func getHealthz(t *testing.T, h http.Handler, method string) healthz {
+func getHealthz(t *testing.T, h http.Handler) healthz {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, "/healthz", http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", http.NoBody))
 	got := healthz{code: rec.Code}
-	if method == http.MethodGet {
-		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-			t.Fatalf("GET /healthz body %q: %v", rec.Body.String(), err)
-		}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET /healthz body %q: %v", rec.Body.String(), err)
 	}
 	return got
 }
 
+// TestHealthzRoute reads /healthz on the served listener. Not parallel: the
+// liveness logs its verdict changes through the default logger.
 func TestHealthzRoute(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		live := newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
-		h := newListenerMux(obs.New(), live)
+	live := newTestLiveness(t)
+	base, _ := serveTestMetrics(t, obs.New(), live)
+	url := base + "/healthz"
 
-		got := getHealthz(t, h, http.MethodGet)
-		if got.code != http.StatusServiceUnavailable || got.Status != "unhealthy" || !slices.Equal(got.Reasons, []string{reasonServing}) {
-			t.Errorf("GET /healthz before start = %d %+v, want 503 unhealthy [%q]", got.code, got, reasonServing)
+	read := func(when string) healthz {
+		code, body, _ := get(t, http.MethodGet, url)
+		got := healthz{code: code}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatalf("GET /healthz %s, body %q: %v", when, body, err)
 		}
+		return got
+	}
+	if got := read("before start"); got.code != http.StatusServiceUnavailable || got.Status != "unhealthy" || !slices.Equal(got.Reasons, []string{reasonServing}) {
+		t.Errorf("GET /healthz before start = %d %+v, want 503 unhealthy [%q]", got.code, got, reasonServing)
+	}
 
-		live.start()
-		got = getHealthz(t, h, http.MethodGet)
-		if got.code != http.StatusOK || got.Status != "ok" || got.Reasons != nil {
-			t.Errorf("GET /healthz once serving = %d %+v, want 200 ok with no reasons", got.code, got)
+	live.start()
+	if got := read("once serving"); got.code != http.StatusOK || got.Status != "ok" || got.Reasons != nil {
+		t.Errorf("GET /healthz once serving = %d %+v, want 200 ok with no reasons", got.code, got)
+	}
+	_, _, header := get(t, http.MethodGet, url)
+	for name, want := range map[string]string{
+		"Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+	} {
+		if v := header.Get(name); v != want {
+			t.Errorf("GET /healthz %s = %q, want %q", name, v, want)
 		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", http.NoBody))
-		for header, want := range map[string]string{
-			"Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-		} {
-			if v := rec.Header().Get(header); v != want {
-				t.Errorf("GET /healthz %s = %q, want %q", header, v, want)
-			}
-		}
-		if got := getHealthz(t, h, http.MethodHead); got.code != http.StatusOK {
-			t.Errorf("HEAD /healthz = %d, want 200", got.code)
-		}
-		if got := getHealthz(t, h, http.MethodPost); got.code != http.StatusMethodNotAllowed {
-			t.Errorf("POST /healthz = %d, want 405", got.code)
-		}
-	})
+	}
+	if code, _, _ := get(t, http.MethodHead, url); code != http.StatusOK {
+		t.Errorf("HEAD /healthz = %d, want 200", code)
+	}
+	if code, _, _ := get(t, http.MethodPost, url); code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /healthz = %d, want 405", code)
+	}
 }
 
 // verdicts reads /healthz and the health subcommand at one instant.
 func verdicts(t *testing.T, h http.Handler, path string) (healthz, int) {
 	t.Helper()
-	return getHealthz(t, h, http.MethodGet), probe(t, path)
+	return getHealthz(t, h), probe(t, path)
 }
 
 // agree fails unless /healthz and the probe give the same verdict, and
@@ -120,8 +124,8 @@ func agree(t *testing.T, when string, h http.Handler, path string, reasons ...st
 	}
 }
 
-// newAgreement wires a liveness, its ticker and the listener's mux, every
-// loop beaten once; stop ends the ticker.
+// newAgreement wires a liveness, its ticker and the listener's /healthz
+// handler, every loop beaten once; stop ends the ticker.
 func newAgreement(t *testing.T) (live *liveness, h http.Handler, path string, stop context.CancelFunc) {
 	t.Helper()
 	path = filepath.Join(t.TempDir(), "healthy")
@@ -132,7 +136,7 @@ func newAgreement(t *testing.T) (live *liveness, h http.Handler, path string, st
 	ctx, stop := context.WithCancel(t.Context())
 	t.Cleanup(stop)
 	go live.run(ctx, livenessTick)
-	return live, newListenerMux(obs.New(), live), path, stop
+	return live, newHealthz(live), path, stop
 }
 
 func TestHealthzAgreesWithTheProbe(t *testing.T) {

@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -92,15 +91,15 @@ func run() int {
 	live := newLiveness(healthMarkerPath, leasesFor(&cfg, wsCfg))
 	wsCfg, deepScanLoop := live.wire(wsCfg)
 
-	ln, err := bindMetrics(ctx, cfg.metricsListenAddr)
+	ms, err := listenMetrics(ctx, cfg.metricsListenAddr, metrics, live)
 	if err != nil {
 		slog.Error("cannot bind the metrics listener", "error", err)
 		return 1
 	}
-	if ln != nil {
-		done := serveMetrics(ctx, ln, metrics, live)
+	if addr := ms.Addr(); addr != nil {
+		done := serveMetrics(ctx, ms)
 		defer func() { cancel(); <-done }()
-		slog.Info("metrics listener started", "addr", ln.Addr().String())
+		slog.Info("metrics listener started", "addr", addr.String())
 	}
 
 	tickerDone := make(chan struct{})
@@ -283,38 +282,31 @@ func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, cfg *config) {
 	}
 }
 
-// bindMetrics binds the opt-in metrics listener before any work, so a bad
+// listenMetrics binds the opt-in metrics listener before any work, so a bad
 // address stops the container at once instead of leaving it running with no
-// page. An empty addr binds nothing.
-func bindMetrics(ctx context.Context, addr string) (net.Listener, error) {
-	if addr == "" {
-		return nil, nil
-	}
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+// page. An empty addr opens nothing.
+func listenMetrics(ctx context.Context, addr string, m *obs.Metrics, live *liveness) (*httpserver.MetricsServer, error) {
+	ms, err := httpserver.ListenMetrics(ctx, addr,
+		httpserver.MetricsHandlers{Metrics: m.Handler(), Healthz: newHealthz(live)},
+		httpserver.WithSlogErrorLog(slog.LevelWarn))
 	if err != nil {
-		return nil, fmt.Errorf("METRICS_LISTEN_ADDR %q: %w", addr, err)
+		return nil, fmt.Errorf("METRICS_LISTEN_ADDR: %w", err)
 	}
-	return ln, nil
+	return ms, nil
 }
 
-// newListenerMux routes the opt-in listener: GET /metrics and GET /healthz.
-func newListenerMux(m *obs.Metrics, live *liveness) *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", m.Handler())
-	mux.Handle("GET /healthz", health.CheckHandler(live.checks()...))
-	return mux
+// newHealthz is the listener's GET /healthz.
+func newHealthz(live *liveness) http.Handler {
+	return health.CheckHandler(live.checks()...)
 }
 
-// serveMetrics serves newListenerMux on ln until ctx ends; done closes once
-// the server has shut down.
-func serveMetrics(ctx context.Context, ln net.Listener, m *obs.Metrics, live *liveness) (done <-chan struct{}) {
-	srv := httpserver.New(newListenerMux(m, live), httpserver.WithSlogErrorLog(slog.LevelWarn))
-	srv.ReadTimeout = 10 * time.Second
-	srv.WriteTimeout = 30 * time.Second
+// serveMetrics serves ms until ctx ends; done closes once the server has shut
+// down.
+func serveMetrics(ctx context.Context, ms *httpserver.MetricsServer) (done <-chan struct{}) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := httpserver.Run(ctx, srv, ln); err != nil {
+		if err := ms.Serve(ctx); err != nil {
 			slog.Warn("metrics listener stopped", "error", err)
 		}
 	}()

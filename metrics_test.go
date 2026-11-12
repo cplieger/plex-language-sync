@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,23 +43,23 @@ func TestLoadMetricsListenAddr(t *testing.T) {
 }
 
 // Not parallel at the top: one case sets the environment.
-func TestBindMetrics(t *testing.T) {
+func TestListenMetrics(t *testing.T) {
 	t.Run("unset binds nothing", func(t *testing.T) {
 		t.Parallel()
-		ln, err := bindMetrics(t.Context(), "")
-		if ln != nil || err != nil {
-			t.Errorf("bindMetrics(\"\") = %v, %v; want no listener and no error", ln, err)
+		ms, err := listenMetrics(t.Context(), "", obs.New(), newTestLiveness(t))
+		if err != nil || ms.Addr() != nil {
+			t.Errorf("listenMetrics(\"\") = %v, %v; want no listener and no error", ms.Addr(), err)
 		}
 	})
 	t.Run("a trimmed address binds", func(t *testing.T) {
 		t.Setenv("METRICS_LISTEN_ADDR", " 127.0.0.1:0\t")
-		ln, err := bindMetrics(t.Context(), loadMetricsListenAddr())
+		ms, err := listenMetrics(t.Context(), loadMetricsListenAddr(), obs.New(), newTestLiveness(t))
 		if err != nil {
-			t.Fatalf("bindMetrics: %v", err)
+			t.Fatalf("listenMetrics: %v", err)
 		}
-		defer ln.Close()
-		if host, _, _ := net.SplitHostPort(ln.Addr().String()); host != "127.0.0.1" {
-			t.Errorf("bound %s, want 127.0.0.1", ln.Addr())
+		defer ms.Close()
+		if host, _, _ := net.SplitHostPort(ms.Addr().String()); host != "127.0.0.1" {
+			t.Errorf("bound %s, want 127.0.0.1", ms.Addr())
 		}
 	})
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
@@ -67,15 +70,87 @@ func TestBindMetrics(t *testing.T) {
 	for _, addr := range []string{"not an address", taken.Addr().String()} {
 		t.Run(addr, func(t *testing.T) {
 			t.Parallel()
-			ln, err := bindMetrics(t.Context(), addr)
+			ms, err := listenMetrics(t.Context(), addr, obs.New(), newTestLiveness(t))
 			if err == nil {
-				ln.Close()
-				t.Fatalf("bindMetrics(%q) bound %s, want an error", addr, ln.Addr())
+				ms.Close()
+				t.Fatalf("listenMetrics(%q) bound %s, want an error", addr, ms.Addr())
 			}
 			if !strings.Contains(err.Error(), "METRICS_LISTEN_ADDR") {
 				t.Errorf("error %q does not name METRICS_LISTEN_ADDR", err)
 			}
 		})
+	}
+}
+
+// newTestLiveness is a liveness with its marker in a test folder.
+func newTestLiveness(t *testing.T) *liveness {
+	t.Helper()
+	return newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
+}
+
+// serveTestMetrics serves the metrics listener on a free loopback port and
+// returns its base URL; stop shuts it down and waits, and runs at cleanup.
+func serveTestMetrics(t *testing.T, m *obs.Metrics, live *liveness) (base string, stop func()) {
+	t.Helper()
+	ms, err := listenMetrics(t.Context(), "127.0.0.1:0", m, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := serveMetrics(ctx, ms)
+	stop = sync.OnceFunc(func() { cancel(); <-done })
+	t.Cleanup(stop)
+	return "http://" + ms.Addr().String(), stop
+}
+
+// get sends method to url and returns the status and body.
+func get(t *testing.T, method, url string) (code int, body []byte, header http.Header) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, url, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("%s %s: read body: %v", method, url, err)
+	}
+	return resp.StatusCode, body, resp.Header
+}
+
+// Scrapes and probes log at Debug, any other request at INFO, so a scrape
+// every few seconds adds no INFO line. Not parallel: it reads the default
+// logger.
+func TestServeMetricsLogsStraysButNotScrapes(t *testing.T) {
+	rec := capture.Default(t)
+	base, stop := serveTestMetrics(t, obs.New(), newTestLiveness(t))
+	for _, path := range []string{"/metrics", "/healthz", "/stray"} {
+		get(t, http.MethodGet, base+path)
+	}
+	// The shutdown waits for every handler, so each access line is written.
+	stop()
+
+	lines := map[slog.Level][]string{}
+	for _, r := range rec.Records() {
+		if r.Message != "http" {
+			continue
+		}
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "path" {
+				lines[r.Level] = append(lines[r.Level], a.Value.String())
+			}
+			return true
+		})
+	}
+	if got, want := lines[slog.LevelDebug], []string{"/metrics", "/healthz"}; !slices.Equal(got, want) {
+		t.Errorf("Debug access lines = %q, want %q", got, want)
+	}
+	if got, want := lines[slog.LevelInfo], []string{"/stray"}; !slices.Equal(got, want) {
+		t.Errorf("INFO access lines = %q, want %q", got, want)
 	}
 }
 
@@ -142,50 +217,25 @@ func TestSeedDeepScanFromTheStamp(t *testing.T) {
 
 func TestServeMetrics(t *testing.T) {
 	t.Parallel()
-	ln, err := bindMetrics(t.Context(), "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	live := newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
-	done := serveMetrics(ctx, ln, obs.New(), live)
-	t.Cleanup(func() { cancel(); <-done })
-	url := "http://" + ln.Addr().String() + "/metrics"
+	base, _ := serveTestMetrics(t, obs.New(), newTestLiveness(t))
 
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+ln.Addr().String()+"/healthz", http.NoBody)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	if code, _, _ := get(t, http.MethodGet, base+"/healthz"); code != http.StatusServiceUnavailable {
+		t.Errorf("GET /healthz before the app serves = %d, want 503", code)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("GET /healthz before the app serves = %d, want 503", resp.StatusCode)
-	}
-
-	req, _ = http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /metrics = %d, want 200", resp.StatusCode)
+	code, body, _ := get(t, http.MethodGet, base+"/metrics")
+	if code != http.StatusOK {
+		t.Errorf("GET /metrics = %d, want 200", code)
 	}
 	for _, family := range []string{"plex_language_sync_websocket_connected", "process_start_time_seconds"} {
 		if !strings.Contains(string(body), "# TYPE "+family+" ") {
 			t.Errorf("/metrics carries no %s family", family)
 		}
 	}
-
-	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, url, http.NoBody)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	if code, _, _ := get(t, http.MethodPost, base+"/metrics"); code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /metrics = %d, want 405", code)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Errorf("POST /metrics = %d, want 405", resp.StatusCode)
+	if code, _, _ := get(t, http.MethodGet, base+"/"); code != http.StatusNotFound {
+		t.Errorf("GET / = %d, want 404: the listener serves only /metrics and /healthz", code)
 	}
 }
 
