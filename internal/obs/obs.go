@@ -49,7 +49,10 @@ type Metrics struct {
 }
 
 // New builds and registers every instrument, with each labelled series at 0.
-func New() *Metrics {
+// version is the release this process runs, the build_info label.
+func New(version string) *Metrics {
+	buildInfo := measure.NewLabeledGauge("build_info",
+		"Always 1; the version label is the release this process runs.", []string{"version"})
 	m := &Metrics{
 		reg:          measure.NewRegistry("plex_language_sync"),
 		wsConnected:  measure.NewGauge("websocket_connected", "1 while the Plex WebSocket notification stream is connected, else 0."),
@@ -68,8 +71,9 @@ func New() *Metrics {
 		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config by the deep scan or at shutdown."),
 		sharedUsers:       measure.NewGauge("shared_users", "Shared Plex users the app currently follows, besides the admin."),
 	}
-	m.reg.MustRegister(m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanRuns,
+	m.reg.MustRegister(buildInfo, m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanRuns,
 		m.resolutionStalled, m.playEvents, m.trackUpdates, m.cacheSaveFailures, m.sharedUsers)
+	buildInfo.Set(1, version)
 	for _, r := range []string{"complete", "incomplete"} {
 		m.scanRuns.Add(0, r)
 	}

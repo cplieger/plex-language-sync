@@ -10,7 +10,7 @@ import (
 
 func TestNewSeedsEveryLabelledSeriesAtZero(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	for _, s := range []struct {
 		family string
 		labels []string
@@ -34,7 +34,7 @@ func TestNewSeedsEveryLabelledSeriesAtZero(t *testing.T) {
 
 func TestDeepScanFinished(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	at := time.Unix(1_800_000_000, 0)
 	m.DeepScanFinished(true, at)
 	m.DeepScanFinished(false, at.Add(time.Hour))
@@ -52,7 +52,7 @@ func TestDeepScanFinished(t *testing.T) {
 
 func TestResolutionStallRaisesOneCauseAndRecoveryClearsAll(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	m.ResolutionStalled(obs.StallAllClientsAbsent)
 	if got := metrictest.Value(t, m, "plex_language_sync_user_resolution_stalled", obs.StallAllClientsAbsent); got != 1 {
 		t.Errorf("stalled{all_clients_absent} = %v after the stall, want 1", got)
@@ -68,9 +68,17 @@ func TestResolutionStallRaisesOneCauseAndRecoveryClearsAll(t *testing.T) {
 
 func TestDeepScanIntervalInSeconds(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	m.DeepScanInterval(6 * time.Hour)
 	if got := metrictest.Value(t, m, "plex_language_sync_deep_scan_interval_seconds"); got != 21600 {
 		t.Errorf("interval = %v, want 21600", got)
+	}
+}
+
+func TestBuildInfoCarriesTheVersion(t *testing.T) {
+	t.Parallel()
+	m := obs.New("v1.2.3")
+	if got := metrictest.Value(t, m, "plex_language_sync_build_info", "v1.2.3"); got != 1 {
+		t.Errorf("build_info{version=v1.2.3} = %v, want 1", got)
 	}
 }

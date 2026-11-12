@@ -58,6 +58,10 @@ const cacheDir = "/config"
 // cache.
 const lastRunStampName = ".plex-language-sync-last-run"
 
+// version is the release this binary is, stamped by the Dockerfile's
+// BUILD_VERSION build argument; an unstamped build reports "dev".
+var version = "dev"
+
 // shutdownWaitBudget bounds how long run() waits for background loops
 // (user-token refresh + scheduler) to join before persisting the cache
 // on shutdown. If the budget is exceeded the cache is saved anyway — a
@@ -82,7 +86,7 @@ func run() int {
 	cfg := loadConfig()
 	logConfig(&cfg)
 
-	metrics := obs.New()
+	metrics := obs.New(version)
 	metrics.DeepScanInterval(cfg.schedulerInterval)
 	stamp := scheduler.NewStamp(filepath.Join(cacheDir, lastRunStampName))
 	seedDeepScan(metrics, stamp, &cfg)

@@ -66,7 +66,7 @@ func getHealthz(t *testing.T, h http.Handler) healthz {
 // liveness logs its verdict changes through the default logger.
 func TestHealthzRoute(t *testing.T) {
 	live := newTestLiveness(t)
-	base, _ := serveTestMetrics(t, obs.New(), live)
+	base, _ := serveTestMetrics(t, obs.New("test"), live)
 	url := base + "/healthz"
 
 	read := func(when string) healthz {

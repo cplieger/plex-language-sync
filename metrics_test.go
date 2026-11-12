@@ -46,14 +46,14 @@ func TestLoadMetricsListenAddr(t *testing.T) {
 func TestListenMetrics(t *testing.T) {
 	t.Run("unset binds nothing", func(t *testing.T) {
 		t.Parallel()
-		ms, err := listenMetrics(t.Context(), "", obs.New(), newTestLiveness(t))
+		ms, err := listenMetrics(t.Context(), "", obs.New("test"), newTestLiveness(t))
 		if err != nil || ms.Addr() != nil {
 			t.Errorf("listenMetrics(\"\") = %v, %v; want no listener and no error", ms.Addr(), err)
 		}
 	})
 	t.Run("a trimmed address binds", func(t *testing.T) {
 		t.Setenv("METRICS_LISTEN_ADDR", " 127.0.0.1:0\t")
-		ms, err := listenMetrics(t.Context(), loadMetricsListenAddr(), obs.New(), newTestLiveness(t))
+		ms, err := listenMetrics(t.Context(), loadMetricsListenAddr(), obs.New("test"), newTestLiveness(t))
 		if err != nil {
 			t.Fatalf("listenMetrics: %v", err)
 		}
@@ -70,7 +70,7 @@ func TestListenMetrics(t *testing.T) {
 	for _, addr := range []string{"not an address", taken.Addr().String()} {
 		t.Run(addr, func(t *testing.T) {
 			t.Parallel()
-			ms, err := listenMetrics(t.Context(), addr, obs.New(), newTestLiveness(t))
+			ms, err := listenMetrics(t.Context(), addr, obs.New("test"), newTestLiveness(t))
 			if err == nil {
 				ms.Close()
 				t.Fatalf("listenMetrics(%q) bound %s, want an error", addr, ms.Addr())
@@ -127,7 +127,7 @@ func get(t *testing.T, method, url string) (code int, body []byte, header http.H
 // logger.
 func TestServeMetricsLogsStraysButNotScrapes(t *testing.T) {
 	rec := capture.Default(t)
-	base, stop := serveTestMetrics(t, obs.New(), newTestLiveness(t))
+	base, stop := serveTestMetrics(t, obs.New("test"), newTestLiveness(t))
 	for _, path := range []string{"/metrics", "/healthz", "/stray"} {
 		get(t, http.MethodGet, base+path)
 	}
@@ -185,7 +185,7 @@ func TestSeedDeepScanFromTheStamp(t *testing.T) {
 		t.Run(age.String()+" old", func(t *testing.T) {
 			t.Parallel()
 			at := time.Now().Add(-age).Truncate(time.Second)
-			m := obs.New()
+			m := obs.New("test")
 			seedDeepScan(m, stampAt(t, at), enabled)
 			if got := metrictest.Value(t, m, lastSuccess); got != float64(at.Unix()) {
 				t.Errorf("the last complete scan = %v, want the record's %d", got, at.Unix())
@@ -199,7 +199,7 @@ func TestSeedDeepScanFromTheStamp(t *testing.T) {
 	}
 	t.Run("no record", func(t *testing.T) {
 		t.Parallel()
-		m := obs.New()
+		m := obs.New("test")
 		seedDeepScan(m, scheduler.NewStamp(filepath.Join(t.TempDir(), "last-run")), enabled)
 		if got := metrictest.Value(t, m, lastSuccess); got != 0 {
 			t.Errorf("the last complete scan = %v with no record, want 0", got)
@@ -207,7 +207,7 @@ func TestSeedDeepScanFromTheStamp(t *testing.T) {
 	})
 	t.Run("scan off", func(t *testing.T) {
 		t.Parallel()
-		m := obs.New()
+		m := obs.New("test")
 		seedDeepScan(m, stampAt(t, time.Now().Add(-time.Hour)), &config{})
 		if got := metrictest.Value(t, m, lastSuccess); got != 0 {
 			t.Errorf("the last complete scan = %v with the scan off, want 0", got)
@@ -217,7 +217,7 @@ func TestSeedDeepScanFromTheStamp(t *testing.T) {
 
 func TestServeMetrics(t *testing.T) {
 	t.Parallel()
-	base, _ := serveTestMetrics(t, obs.New(), newTestLiveness(t))
+	base, _ := serveTestMetrics(t, obs.New("test"), newTestLiveness(t))
 
 	if code, _, _ := get(t, http.MethodGet, base+"/healthz"); code != http.StatusServiceUnavailable {
 		t.Errorf("GET /healthz before the app serves = %d, want 503", code)
@@ -241,7 +241,7 @@ func TestServeMetrics(t *testing.T) {
 
 func TestNotifyAdapterRecordsConnectionState(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	adapter := &notifyAdapter{metrics: m}
 	adapter.OnConnection(t.Context(), true)
 	if got := metrictest.Value(t, m, "plex_language_sync_websocket_connected"); got != 1 {
@@ -258,7 +258,7 @@ func TestNotifyAdapterRecordsConnectionState(t *testing.T) {
 
 func TestPlayEventsCountedByOutcome(t *testing.T) {
 	t.Parallel()
-	m := obs.New()
+	m := obs.New("test")
 	_, client := newPlayServer(t)
 	adapter, _ := newPlayAdapter(t, client)
 	adapter.metrics = m
@@ -278,7 +278,7 @@ func TestPlayEventsCountedByOutcome(t *testing.T) {
 // Not parallel: skipUnattributedPlayEvent logs through the default logger.
 func TestResolutionStallGaugeHoldsUntilRecovery(t *testing.T) {
 	capture.Default(t)
-	m := obs.New()
+	m := obs.New("test")
 	_, client := newPlayServer(t)
 	adapter, _ := newPlayAdapter(t, client)
 	adapter.metrics, adapter.resolveStalls = m, &resolveStallCounter{}
@@ -302,7 +302,7 @@ func TestResolutionStallGaugeHoldsUntilRecovery(t *testing.T) {
 // default logger.
 func TestCacheSaveFailuresCountedOnBothPaths(t *testing.T) {
 	capture.Default(t)
-	m := obs.New()
+	m := obs.New("test")
 	notADir := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
 		t.Fatal(err)

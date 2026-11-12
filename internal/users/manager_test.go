@@ -883,7 +883,7 @@ func TestSharedUsersGaugeFollowsTheSharedMap(t *testing.T) {
 	adminClient := plexclient.NewFromHTTP(parsed, "admin-token", plexclient.Options{HTTP: &http.Client{}, TV: plexTVClientFor(srv)})
 	fc := fakeapi.NewCache()
 	fc.SetUserTokens(map[string]string{"100": "token-100"})
-	metrics := obs.New()
+	metrics := obs.New("test")
 	m := NewManager(fc, metrics)
 	m.Init(&plex.User{ID: "1", Name: "admin"})
 

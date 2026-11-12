@@ -771,7 +771,7 @@ func TestApplyCountsEachPutOnce(t *testing.T) {
 			ep := applyTarget("2001", 5001, 0, engAudioID, freSubID)
 			a, plx, _ := applyFixture(t, ep)
 			plx.SetSubtitleErr = tc.subErr
-			m := obs.New()
+			m := obs.New("test")
 			a.metrics = m
 			p := intentPlan(ep)
 			if tc.subOff {
