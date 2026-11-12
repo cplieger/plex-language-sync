@@ -21,12 +21,14 @@ Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET
 | `plex_language_sync_websocket_reconnects_total` | counter | none | Reconnect attempts after the stream dropped or failed to connect |
 | `plex_language_sync_deep_scan_last_success_timestamp_seconds` | gauge | none | Unix time the last complete deep scan finished, kept across restarts. 0 when none was ever recorded or the scan is off |
 | `plex_language_sync_deep_scan_interval_seconds` | gauge | none | `DEEP_SCAN_INTERVAL` in seconds, 0 when the scan is off |
+| `plex_language_sync_deep_scan_deadline_timestamp_seconds` | gauge | none | Unix time by which the next complete deep scan is due: the last complete one, kept across restarts, or else the start, plus two intervals and 2 hours. Only a complete scan moves it. 0 when the scan is off |
 | `plex_language_sync_deep_scan_runs_total` | counter | `result`: `complete`, `incomplete` | Deep scans finished. An incomplete one stopped before it covered its window |
 | `plex_language_sync_user_resolution_stalled` | gauge | `cause`: `sessions_unreadable`, `all_clients_absent` | 1 while no play can be attributed to a user, else 0 |
 | `plex_language_sync_play_events_total` | counter | `outcome`: `attributed`, `skipped` | Play events handled, attributed to a user or skipped because no user could be found |
 | `plex_language_sync_track_updates_total` | counter | `kind`: `audio`, `subtitle`. `result`: `set`, `failed` | Track selections written to Plex, one per request |
 | `plex_language_sync_cache_save_failures_total` | counter | none | Failed saves of what the app learned to `/config` |
 | `plex_language_sync_shared_users` | gauge | none | Shared Plex users the app follows, besides the admin |
+| `plex_language_sync_build_info` | gauge | `version` | Always 1. `version` is the release the container runs |
 
 The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. plex-language-sync bundles no dashboard. These queries answer the common questions in Grafana:
 
@@ -44,6 +46,7 @@ The app writes `key=value` text lines to standard error, with times in UTC.
 - The daily deep scan logs `scheduled deep analysis starting` and `deep analysis completed`. The second line carries `complete=true` when the pass covered its whole window, and `unknown_users` with the number of Plex users in the history that the app does not follow.
 - When no playback can be attributed to any user for a sustained run, it logs `user resolution stalled` once at WARN with a `cause` field. It logs `user resolution recovered` when attribution works again.
 - When the WebSocket listener, the reconnect loop or the deep scan stops making progress, it logs `a loop stopped making progress` once at WARN. The `loop` field is `websocket`, `reconnect` or `deep_scan`, and `lease` is how long that loop may stay silent.
+- With `METRICS_LISTEN_ADDR` set, the listener logs one `http` line per request: at DEBUG for `/metrics` and `/healthz`, so scrapes and probes stay out of the INFO log, and at INFO for any other path.
 - `LOG_LEVEL=debug` adds the reason each event was skipped and the detail of each track match.
 
 ERROR lines are kept for four failures that need you. A bad setting and a `/config` folder the app cannot write to stop the start. The other two are a WebSocket connection that keeps failing to reconnect and a cache save that failed on shutdown.
@@ -97,9 +100,9 @@ Thresholds, windows and the `severity` labels are starting points. In `alerts/lo
 
 A loop that misses its limit makes the app unhealthy, and `/healthz` names that loop in `reasons`, for example `the deep scan stopped making progress`. Plex being unreachable never makes the app unhealthy, because each reconnect attempt counts as progress. The outage shows on `/metrics` as `plex_language_sync_websocket_connected` at 0, and in the log.
 
-**Docker health.** The image checks itself every 30 seconds with `/plex-language-sync health`, which reads the health file `/tmp/.healthy`. The app touches that file every 10 seconds while the checks above pass, and removes it when one fails. The check fails when the file is missing or older than 30 seconds.
+**Docker health.** The image checks itself every 30 seconds with `/plex-language-sync health`, which reads the health file the app refreshes at `/dev/shm/plex-language-sync.healthy`. The app refreshes that file every 10 seconds while the checks above pass, and removes it when one fails. The check fails when the file is missing or older than 30 seconds. If that file cannot be written, the check passes and the log says so once, while `/healthz` on the metrics listener still gives the true answer.
 
-Docker marks the container unhealthy after 3 failures, and allows 15 seconds after a start. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. `/healthz` gives the same verdict as the image's check.
+Docker marks the container unhealthy after 3 failures, and allows 15 seconds after a start. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container. `/healthz` answers from the app's memory and gives the same verdict as the image's check.
 
 **Who is told.**
 

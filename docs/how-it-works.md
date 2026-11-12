@@ -60,4 +60,4 @@ plex-language-sync is one Go program. Its only third-party runtime libraries are
 
 ## The healthcheck
 
-The Docker healthcheck reads a file in `/tmp`, and one timer in the app writes it. The WebSocket listener, the reconnect loop and the deep scan each record their progress, and the timer updates the file every 10 seconds from all three. A loop that goes quiet for longer than its limit turns the container unhealthy, while the other loops keep working. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives each limit and what each check answers.
+The app keeps its health verdict in memory, and one timer in the app sets it. The WebSocket listener, the reconnect loop and the deep scan each record their progress, and the timer sets the verdict every 10 seconds from all three. `/healthz` answers from that verdict, and the Docker healthcheck reads a copy of it the app keeps in `/dev/shm`. A loop that goes quiet for longer than its limit turns the container unhealthy, while the other loops keep working. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) gives each limit and what each check answers.
