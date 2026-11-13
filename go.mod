@@ -15,7 +15,7 @@ require (
 	github.com/cplieger/go/scheduler v1.1.0
 	github.com/cplieger/go/slogx v1.1.0
 	github.com/cplieger/go/textsafe v1.1.0
-	github.com/cplieger/langtag/v3 v3.2.0-dev.3
+	github.com/cplieger/langtag/v3 v3.2.0
 	github.com/cplieger/plexapi/v3 v3.0.0
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/sync v0.25.0
