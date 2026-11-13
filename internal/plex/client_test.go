@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/httpx/v5/certtest"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/go/httpclient/certtest"
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // newClientForServer builds a Client whose requests to the Plex server go
@@ -312,7 +312,7 @@ func TestShowEpisodes_HappyPath(t *testing.T) {
 			t.Errorf("path = %q, want /library/metadata/42/allLeaves", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`{"MediaContainer":{"Metadata":[` +
-			`{"ratingKey":"1","parentIndex":"1","index":"1"},` +
+			`{"ratingKey":"1","parentIndex":"1","index":"1","lastViewedAt":1767225600},` +
 			`{"ratingKey":"2","parentIndex":"1","index":"2"}` +
 			`]}}`))
 	})
@@ -321,7 +321,10 @@ func TestShowEpisodes_HappyPath(t *testing.T) {
 		t.Fatalf("ShowEpisodes() error = %v", err)
 	}
 	if len(eps) != 2 {
-		t.Errorf("len(eps) = %d, want 2", len(eps))
+		t.Fatalf("len(eps) = %d, want 2", len(eps))
+	}
+	if eps[0].LastViewedAt != 1767225600 || eps[1].LastViewedAt != 0 {
+		t.Errorf("LastViewedAt = %d, %d, want 1767225600, 0 (absent key)", eps[0].LastViewedAt, eps[1].LastViewedAt)
 	}
 }
 
@@ -436,13 +439,9 @@ func TestShowSections_FiltersNonShow(t *testing.T) {
 	}
 }
 
-// --- Tests: ShowMetadata (runtime-types-p1 split) ---
+// --- Tests: ShowMetadata ---
 
-// ShowMetadata returns *Show with the show's labels. Before the split it
-// delegated to Episode and returned *Episode; now it's its own library hit
-// but the wire behaviour (path, label decoding) is identical.
-//
-// The payload deliberately carries a field Show does NOT declare
+// ShowMetadata returns *Show with the show's labels. The payload deliberately carries a field Show does NOT declare
 // (ratingKey) — real Plex sends it, and the non-strict decoder must ignore
 // it rather than fail.
 func TestShowMetadata_DecodesShowResponse(t *testing.T) {

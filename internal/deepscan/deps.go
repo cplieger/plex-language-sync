@@ -49,9 +49,20 @@ type skipChecker interface {
 // syncer is the propagation this pass drives, declared here so deepscan does
 // not import internal/tracksync.
 type syncer interface {
-	ReconcileWithIntent(ctx context.Context, userID string, episode *streams.Episode, viewedAt int64, trigger string)
-	ProcessNewOrUpdatedEpisodeAllUsers(ctx context.Context, episode *streams.Episode, trigger string)
+	Reconcile(ctx context.Context, userID string, episode *streams.Episode, trigger string) error
+	SeedEpisode(ctx context.Context, episode *streams.Episode, trigger string)
+	SeedsNewEpisodes() bool
 }
+
+// beater is the deep-scan loop's liveness entry.
+type beater interface {
+	Beat()
+}
+
+// noBeat is the beater of Deps that name none.
+type noBeat struct{}
+
+func (noBeat) Beat() {}
 
 // cacheSaver flushes the cache to disk at the end of a tick. Separate from
 // runLedger (which excludes file-system concerns), so the pass can trigger a

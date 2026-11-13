@@ -1,26 +1,29 @@
 # Recommended LogQL alert rules for plex-language-sync, for Loki's ruler.
 # Ship the container's logs to Loki and load this file into Loki's ruler.
-# Firing alerts go through your Alertmanager like any Prometheus alert.
+# The rules read INFO lines, so keep LOG_LEVEL at info or debug.
+# This file is the alternative to alerts/promql.yaml: load one of the two, not
+# both. PlexLanguageSyncErrorLog exists only here. There, PlexLanguageSyncDown
+# and PlexLanguageSyncWebSocketDown cover its causes.
+# The deadman's 50h window fits the default 24h DEEP_SCAN_INTERVAL. For
+# another interval, set it to two intervals plus 2h. With the scan off, drop it.
 # Thresholds and severity labels are starting points. Change the container
 # selector to the label your log collector sets, such as job or service.
 groups:
   - name: plex-language-sync
     rules:
-      # This rule fires on silence, keyed on the deep scan's completion line.
-      # If DEEP_SCAN_INTERVAL is off, drop it. See docs/monitoring.md.
       - alert: PlexLanguageSyncDeepScanStalled
         expr: |
-          absent_over_time({container="plex-language-sync"} |= `deep analysis completed` [26h])
+          absent_over_time({container="plex-language-sync"} |= `deep analysis completed` |= `complete=true` [50h])
         for: 1h
         labels:
           severity: warning
         annotations:
-          summary: "no plex-language-sync deep-analysis heartbeat in 26h"
+          summary: "no complete plex-language-sync deep scan in 50h"
           description: >
-            No `deep analysis completed` line has arrived in 26h, usually a
-            stalled deep scan. Missed episodes then get no tracks. Rule out a
-            stopped container or log pipeline, then find the last `scheduled
-            deep analysis starting` line.
+            No deep scan has covered its whole window in 50h, two scan
+            intervals plus 2h. Missed episodes then get no tracks. Rule out a
+            stopped container or log pipeline, then read the `deep analysis
+            completed` lines with `complete=false`.
       - alert: PlexLanguageSyncErrorLog
         expr: |
           sum by (container) (count_over_time(
@@ -34,12 +37,11 @@ groups:
           description: >
             plex-language-sync logged 3 or more ERROR lines in 15m. A bad
             setting or an unwritable /config ends in a restart loop. A WebSocket
-            that will not reconnect and a failed cache save on shutdown also log
-            ERROR. Read the lines.
+            that will not reconnect also logs ERROR. Read the lines.
       - alert: PlexLanguageSyncResolutionStalled
         expr: |
           sum by (container) (count_over_time(
-            {container="plex-language-sync"} |= `user resolution stalled` [30m]
+            {container="plex-language-sync"} |= `user resolution stalled` [6h]
           )) > 0
         for: 0m
         labels:
@@ -47,7 +49,7 @@ groups:
         annotations:
           summary: "plex-language-sync is attributing no playback to any user"
           description: >
-            Playback events are skipped, so no language choices are saved.
-            Read the `cause` field. For `sessions_unreadable`, check PLEX_TOKEN
-            admin rights and the server. For `all_clients_absent`, session
-            matching is failing.
+            No language choices are saved. Read the `cause` field. For
+            `sessions_unreadable`, check PLEX_TOKEN admin rights and the server.
+            For `all_clients_absent`, session matching is failing. The alert
+            holds 6h and does not track recovery.

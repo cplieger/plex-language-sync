@@ -4,7 +4,9 @@ This page covers how plex-language-sync handles your Plex token, a hardened comp
 
 ## Network exposure
 
-plex-language-sync listens on no port, so there is nothing to expose or put behind a proxy. It connects out to your Plex server, and to plex.tv to fetch the shared users' tokens.
+plex-language-sync listens on no port by default, so there is nothing to expose or put behind a proxy. It connects out to your Plex server, and to plex.tv to fetch the shared users' tokens.
+
+If you set `METRICS_LISTEN_ADDR`, the app serves `/metrics` and `/healthz` on that address with no login. Both show counts and health states, never a token, a user name or a show. Publish that port only to the network your scraper or uptime prober runs on, and do not put it behind a public proxy.
 
 Leave it on a network that can reach the internet. On a Docker network created with `internal: true`, every plex.tv refresh fails while the app keeps working for the users it already knows, so a user you add or remove later is never picked up.
 
@@ -33,11 +35,9 @@ The image runs without root and needs no extra privileges, so it also runs with 
       - ALL
     security_opt:
       - no-new-privileges:true
-    tmpfs:
-      - "/tmp:size=1m,mode=1777,noexec,nosuid,nodev"
 ```
 
-The `tmpfs` line is needed with `read_only`, because the healthcheck marker lives in `/tmp`.
+With `read_only: true`, plex-language-sync writes to two places. What it learns goes to the `/config` mount. The health file goes to `/dev/shm`, which stays writable under a read-only root, so no tmpfs is needed. If `/dev/shm` cannot be written, as under `ipc: none`, the healthcheck passes and the startup log says so, while `/healthz` on the metrics listener still gives the true answer.
 
 ## What the image contains
 

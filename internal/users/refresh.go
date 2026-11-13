@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // RefreshConfig bundles retry tunables for the initial token-refresh
@@ -62,11 +62,12 @@ func (m *Manager) refreshTokens(ctx context.Context, adminClient *plex.Client, m
 	var removed []string
 	for uid := range m.shared {
 		if _, ok := newShared[uid]; !ok {
-			removed = append(removed, runesafe.SanitizeSingleLine(string(uid)))
+			removed = append(removed, textsafe.SanitizeSingleLine(string(uid)))
 		}
 	}
 	m.shared = newShared
 	appliedCount := len(newShared)
+	m.metrics.SharedUsers(appliedCount)
 
 	tokensCopy := make(map[string]string, len(newShared))
 	for uid, info := range newShared {

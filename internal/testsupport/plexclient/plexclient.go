@@ -9,7 +9,7 @@ import (
 	"net/url"
 
 	"github.com/cplieger/plex-language-sync/internal/plex"
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/plexapi/v3"
 )
 
 // Options carries the two HTTP clients NewFromHTTP can override. Named

@@ -3,8 +3,8 @@ package streams
 import (
 	"testing"
 
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v3"
+	"github.com/cplieger/go/textsafe"
+	"github.com/cplieger/plexapi/v3"
 	"pgregory.net/rapid"
 )
 
@@ -30,7 +30,7 @@ func TestEpisodeMethods(t *testing.T) {
 	ep := &Episode{
 		ParentIndex:      2,
 		Index:            5,
-		GrandparentTitle: runesafe.NewUntrusted("Breaking Bad"),
+		GrandparentTitle: textsafe.NewUntrusted("Breaking Bad"),
 	}
 	if got := ep.SeasonNum(); got != 2 {
 		t.Errorf("seasonNum() = %d, want 2", got)
@@ -112,7 +112,7 @@ func TestStreamDescAllBranches(t *testing.T) {
 		{"title only", &Stream{Title: "Eng"}, "Eng"},
 		{"fallback to ID", &Stream{ID: 42}, "stream-42"},
 		{"ID zero", &Stream{}, "stream-0"},
-		{"title from a hostile file tag", &Stream{Title: "Eng\nlevel=ERROR \u202ex"}, runesafe.SanitizeSingleLine("Eng\nlevel=ERROR \u202ex")},
+		{"title from a hostile file tag", &Stream{Title: "Eng\nlevel=ERROR \u202ex"}, textsafe.SanitizeSingleLine("Eng\nlevel=ERROR \u202ex")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,17 +149,17 @@ func TestEpisodeShortNameFormatting(t *testing.T) {
 	}{
 		{
 			name: "single digit season and episode",
-			ep:   Episode{ParentIndex: 1, Index: 3, GrandparentTitle: runesafe.NewUntrusted("Show")},
+			ep:   Episode{ParentIndex: 1, Index: 3, GrandparentTitle: textsafe.NewUntrusted("Show")},
 			want: "'Show' (S01E03)",
 		},
 		{
 			name: "double digit",
-			ep:   Episode{ParentIndex: 12, Index: 24, GrandparentTitle: runesafe.NewUntrusted("Big Show")},
+			ep:   Episode{ParentIndex: 12, Index: 24, GrandparentTitle: textsafe.NewUntrusted("Big Show")},
 			want: "'Big Show' (S12E24)",
 		},
 		{
 			name: "zero (absent or null JSON)",
-			ep:   Episode{GrandparentTitle: runesafe.NewUntrusted("Bad")},
+			ep:   Episode{GrandparentTitle: textsafe.NewUntrusted("Bad")},
 			want: "'Bad' (S00E00)",
 		},
 	}

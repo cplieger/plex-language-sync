@@ -3,7 +3,7 @@ package streams
 import (
 	"testing"
 
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/plexapi/v3"
 )
 
 func TestSelectedStreams(t *testing.T) {
@@ -159,6 +159,67 @@ func TestSelectedStreamsMultipleMedia(t *testing.T) {
 	audio := Selected(ep).Audio
 	if audio == nil || audio.ID != 1 {
 		t.Errorf("Selected should use first media, got audio ID=%v", audio)
+	}
+}
+
+func TestDefaultAudio(t *testing.T) {
+	audio := func(id int, def bool) Stream {
+		s := Stream{}
+		s.ID, s.StreamType, s.Default = plexapi.FlexInt(id), plexapi.StreamTypeAudio, def
+		return s
+	}
+	sub := func(id int, def bool) Stream {
+		s := Stream{}
+		s.ID, s.StreamType, s.Default = plexapi.FlexInt(id), plexapi.StreamTypeSubtitle, def
+		return s
+	}
+	tests := []struct {
+		name string
+		ep   *Episode
+		want int // 0 = nil
+	}{
+		{
+			name: "default audio after a non-default one",
+			ep: &Episode{Media: []Media{{Part: []Part{{Stream: []Stream{
+				sub(9003, true), audio(9001, false), audio(9002, true),
+			}}}}}},
+			want: 9002,
+		},
+		{
+			name: "no audio marked default takes the first audio",
+			ep: &Episode{Media: []Media{{Part: []Part{{Stream: []Stream{
+				sub(9003, true), audio(9001, false), audio(9002, false),
+			}}}}}},
+			want: 9001,
+		},
+		{
+			name: "a default subtitle is not audio",
+			ep: &Episode{Media: []Media{{Part: []Part{{Stream: []Stream{
+				sub(9003, true),
+			}}}}}},
+			want: 0,
+		},
+		{
+			name: "no media",
+			ep:   &Episode{},
+			want: 0,
+		},
+		{
+			name: "nil episode",
+			ep:   nil,
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DefaultAudio(tt.ep)
+			switch {
+			case tt.want == 0 && got != nil:
+				t.Errorf("DefaultAudio() = stream %d, want nil", got.ID)
+			case tt.want != 0 && (got == nil || int(got.ID) != tt.want):
+				t.Errorf("DefaultAudio() = %v, want stream %d", got, tt.want)
+			}
+		})
 	}
 }
 

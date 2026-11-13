@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,13 +16,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/ignore"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/testsupport/fakeapi"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/scheduler/v4"
-	"github.com/cplieger/slogx/capture"
+	"github.com/cplieger/plex-language-sync/internal/testsupport/metrictest"
 )
 
 // ---------------------------------------------------------------------------
@@ -56,17 +59,21 @@ func stampTime(t *testing.T, st *scheduler.Stamp) time.Time {
 }
 
 type fakeSyncer struct {
-	changeCalls  atomic.Int64
-	processCalls atomic.Int64
+	reconcileCalls atomic.Int64
+	seedCalls      atomic.Int64
+	seedingOff     bool
 }
 
-func (s *fakeSyncer) ReconcileWithIntent(_ context.Context, _ string, _ *streams.Episode, _ int64, _ string) {
-	s.changeCalls.Add(1)
+func (s *fakeSyncer) Reconcile(_ context.Context, _ string, _ *streams.Episode, _ string) error {
+	s.reconcileCalls.Add(1)
+	return nil
 }
 
-func (s *fakeSyncer) ProcessNewOrUpdatedEpisodeAllUsers(_ context.Context, _ *streams.Episode, _ string) {
-	s.processCalls.Add(1)
+func (s *fakeSyncer) SeedEpisode(_ context.Context, _ *streams.Episode, _ string) {
+	s.seedCalls.Add(1)
 }
+
+func (s *fakeSyncer) SeedsNewEpisodes() bool { return !s.seedingOff }
 
 // fakeIgnore is a skipChecker that returns fixed decisions.
 // ShouldSkipEpisode defaults to false; set skipEpisode to flip it.
@@ -134,7 +141,7 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 	// and deepAnalysisConcurrency=4 workers, once the breaker trips the
 	// remaining items drain without calling the Syncer. Because multiple
 	// workers race to increment the counter, we give some slack on the
-	// exact number of Episode calls but assert that NO ChangeTracks call
+	// exact number of Episode calls but assert that NO Reconcile call
 	// ever happened (every fetch fails) AND that we stopped well short
 	// of the full list size.
 	items := make([]plex.HistoryItem, 100)
@@ -151,7 +158,7 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -162,8 +169,8 @@ func TestProcessRecentHistory_CircuitBreakerAbortsAtThreshold(t *testing.T) {
 
 	sched.processRecentHistory(t.Context(), time.Now().Unix())
 
-	if syncer.changeCalls.Load() != 0 {
-		t.Errorf("ChangeTracks called %d times on all-fail history; want 0", syncer.changeCalls.Load())
+	if syncer.reconcileCalls.Load() != 0 {
+		t.Errorf("Reconcile called %d times on all-fail history; want 0", syncer.reconcileCalls.Load())
 	}
 	// Breaker trips at maxConsecutiveErrors with deepAnalysisConcurrency
 	// workers draining remaining items. The total Episode() calls are
@@ -209,7 +216,7 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -227,8 +234,8 @@ func TestProcessRecentHistory_SuccessResetsBreaker(t *testing.T) {
 	if got, want := plx.Calls.Load(), int64(len(items)+1); got != want {
 		t.Errorf("Plex called %d times; want %d (1 History + %d Episode fetches; breaker must not trip)", got, want, len(items))
 	}
-	if got, want := syncer.changeCalls.Load(), int64(len(episodeByKey)); got != want {
-		t.Errorf("ChangeTracks called %d times; want %d (one per resolved episode)", got, want)
+	if got, want := syncer.reconcileCalls.Load(), int64(len(episodeByKey)); got != want {
+		t.Errorf("Reconcile called %d times; want %d (one per resolved episode)", got, want)
 	}
 }
 
@@ -244,7 +251,7 @@ func TestHistoryWorker_TrippedBreakerDrainsWithoutFetching(t *testing.T) {
 	plx := &fakeapi.Plex{EpisodeErr: errors.New("fetch failed")}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -292,7 +299,7 @@ func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -306,8 +313,8 @@ func TestProcessRecentlyAddedEpisode_DedupSkipsProcessed(t *testing.T) {
 	// already-deduped key (a redundant idempotent read); the guarantee is
 	// "not PROCESSED", not "not fetched". The CheckAndMark guard still skips
 	// the per-user processing.
-	if syncer.processCalls.Load() != 0 {
-		t.Errorf("ProcessNewOrUpdated called %d times on deduped key; want 0", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 0 {
+		t.Errorf("SeedEpisode called %d times on deduped key; want 0", syncer.seedCalls.Load())
 	}
 }
 
@@ -327,7 +334,7 @@ func TestProcessRecentlyAddedEpisode_TransientFetchFailureRetries(t *testing.T) 
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -339,14 +346,14 @@ func TestProcessRecentlyAddedEpisode_TransientFetchFailureRetries(t *testing.T) 
 
 	// First pass: fetch fails transiently → not processed, key left unmarked.
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
-	if syncer.processCalls.Load() != 0 {
+	if syncer.seedCalls.Load() != 0 {
 		t.Fatalf("processed despite a fetch failure; want 0")
 	}
 
 	// Recover: the key was never marked, so the retry processes the episode.
 	plx.EpisodeErr = nil
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
-	if got := syncer.processCalls.Load(); got != 1 {
+	if got := syncer.seedCalls.Load(); got != 1 {
 		t.Errorf("retry after transient failure processed %d times; want 1 (key must not have been marked on failure)", got)
 	}
 }
@@ -362,7 +369,7 @@ func TestProcessRecentlyAddedEpisode_SkipsIgnoredShow(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: &fakeIgnore{skipEpisode: true}},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -372,8 +379,8 @@ func TestProcessRecentlyAddedEpisode_SkipsIgnoredShow(t *testing.T) {
 	)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
-	if syncer.processCalls.Load() != 0 {
-		t.Errorf("ProcessNewOrUpdated called when show should have been skipped")
+	if syncer.seedCalls.Load() != 0 {
+		t.Errorf("SeedEpisode called when show should have been skipped")
 	}
 }
 
@@ -388,7 +395,7 @@ func TestProcessRecentlyAddedEpisode_HappyPathDelegates(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: &fakeIgnore{skipEpisode: false}},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -398,8 +405,8 @@ func TestProcessRecentlyAddedEpisode_HappyPathDelegates(t *testing.T) {
 	)
 	ep := &streams.Episode{RatingKey: "100", GrandparentRatingKey: "42"}
 	sched.processRecentlyAddedEpisode(t.Context(), ep)
-	if syncer.processCalls.Load() != 1 {
-		t.Errorf("ProcessNewOrUpdated called %d times; want 1", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 1 {
+		t.Errorf("SeedEpisode called %d times; want 1", syncer.seedCalls.Load())
 	}
 }
 
@@ -428,7 +435,7 @@ func TestProcessRecentlyAdded_FansOutAcrossSections(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -437,8 +444,8 @@ func TestProcessRecentlyAdded_FansOutAcrossSections(t *testing.T) {
 		},
 	)
 	sched.processRecentlyAdded(t.Context(), time.Now().Unix())
-	if syncer.processCalls.Load() != 3 {
-		t.Errorf("ProcessNewOrUpdated called %d times; want 3 (one per episode)", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 3 {
+		t.Errorf("SeedEpisode called %d times; want 3 (one per episode)", syncer.seedCalls.Load())
 	}
 }
 
@@ -461,7 +468,7 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: ignore.New(ignore.Config{Libraries: []string{"Kids"}})},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -470,8 +477,8 @@ func TestProcessRecentlyAdded_HonorsIgnoreLibraries(t *testing.T) {
 		},
 	)
 	sched.processRecentlyAdded(t.Context(), time.Now().Unix())
-	if syncer.processCalls.Load() != 1 {
-		t.Errorf("ProcessNewOrUpdated called %d times; want 1 (Kids section ignored)", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 1 {
+		t.Errorf("SeedEpisode called %d times; want 1 (Kids section ignored)", syncer.seedCalls.Load())
 	}
 }
 
@@ -493,7 +500,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 	var saveCalls atomic.Int64
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      st,
@@ -515,7 +522,7 @@ func TestDeepAnalysisCore_SetsLastRunAndFlushesCache(t *testing.T) {
 	// A nil saveCache must not panic.
 	schedNilSave := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      testStamp(t),
@@ -538,7 +545,7 @@ func TestRun_DisabledReturnsImmediately(t *testing.T) {
 	plx := &fakeapi.Plex{}
 	sched := New(
 		Config{Enable: false},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      testStamp(t),
@@ -573,7 +580,7 @@ func TestRun_NonPositiveIntervalIsDisabled(t *testing.T) {
 			plx := &fakeapi.Plex{}
 			sched := New(
 				Config{Enable: true, Interval: tt.interval},
-				Deps{
+				&Deps{
 					Plex:       plx,
 					Cache:      fakeapi.NewCache(),
 					Stamp:      testStamp(t),
@@ -606,7 +613,7 @@ func TestRun_RunsInitialAnalysisWhenNeverRun(t *testing.T) {
 	plx := &fakeapi.Plex{}
 	sched := New(
 		Config{Enable: true, Interval: 24 * time.Hour},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      testStamp(t), // no record -> initial pass should fire
@@ -655,7 +662,7 @@ func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 		}
 		sched := New(
 			Config{Enable: true, Interval: 24 * time.Hour},
-			Deps{
+			&Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
 				Stamp:      st,
@@ -677,7 +684,7 @@ func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 		st := stampAt(t, time.Now().Add(-72*time.Hour)) // older than the 24h interval
 		sched := New(
 			Config{Enable: true, Interval: 24 * time.Hour},
-			Deps{
+			&Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
 				Stamp:      st,
@@ -701,6 +708,64 @@ func TestRun_InitialPassDecisionFromStamp(t *testing.T) {
 		}
 		if !sawHistory || !sawSections {
 			t.Errorf("stale record did not trigger a catch-up pass (calls=%v); want History and ShowSections", names)
+		}
+	})
+}
+
+// countingBeater counts liveness beats.
+type countingBeater struct{ n atomic.Int32 }
+
+func (b *countingBeater) Beat() { b.n.Add(1) }
+
+// beatSnapshotPlex records how many beats had landed when the pass first read
+// Plex.
+type beatSnapshotPlex struct {
+	*fakeapi.Plex
+	beats     *countingBeater
+	atHistory atomic.Int32
+}
+
+func (p *beatSnapshotPlex) History(ctx context.Context, since int64) ([]plex.HistoryItem, error) {
+	p.atHistory.Store(p.beats.n.Load())
+	return p.Plex.History(ctx, since)
+}
+
+// The deep-scan loop beats when it starts and as each pass starts and ends, so
+// a pass that never returns stops the beats; a disabled loop never beats.
+func TestRun_BeatsItsLivenessAroundEachPass(t *testing.T) {
+	t.Parallel()
+	newSched := func(cfg Config, beats *countingBeater) (*Scheduler, *beatSnapshotPlex) {
+		plx := &beatSnapshotPlex{Plex: &fakeapi.Plex{}, beats: beats}
+		return New(cfg, &Deps{
+			Plex:       plx,
+			Cache:      fakeapi.NewCache(),
+			Stamp:      testStamp(t),
+			UserClient: func(_ string) EpisodeReader { return plx },
+			Sync:       &fakeSyncer{},
+			Liveness:   beats,
+		}), plx
+	}
+	t.Run("enabled", func(t *testing.T) {
+		t.Parallel()
+		beats := &countingBeater{}
+		sched, plx := newSched(Config{Enable: true, Interval: 24 * time.Hour}, beats)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // pre-cancelled on purpose: Run returns after the initial pass
+		sched.Run(ctx)
+		if got := plx.atHistory.Load(); got != 2 {
+			t.Errorf("beats before the pass read Plex = %d, want 2 (loop start and pass start)", got)
+		}
+		if got := beats.n.Load(); got != 3 {
+			t.Errorf("beats after one pass = %d, want 3 (loop start, pass start, pass end)", got)
+		}
+	})
+	t.Run("disabled", func(t *testing.T) {
+		t.Parallel()
+		beats := &countingBeater{}
+		sched, _ := newSched(Config{Enable: false, Interval: 24 * time.Hour}, beats)
+		sched.Run(t.Context())
+		if got := beats.n.Load(); got != 0 {
+			t.Errorf("a disabled deep scan beat %d times, want 0", got)
 		}
 	})
 }
@@ -750,7 +815,7 @@ func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
@@ -764,8 +829,70 @@ func TestProcessRecentHistory_HistoryFetchErrorWarnsAndAborts(t *testing.T) {
 	if !strings.Contains(out, "scheduler: failed to fetch history") {
 		t.Errorf("missing inviolate WARN key on history-fetch error; log: %q", out)
 	}
-	if syncer.changeCalls.Load() != 0 {
-		t.Errorf("ChangeTracks called %d times after history-fetch error; want 0", syncer.changeCalls.Load())
+	if syncer.reconcileCalls.Load() != 0 {
+		t.Errorf("Reconcile called %d times after history-fetch error; want 0", syncer.reconcileCalls.Load())
+	}
+}
+
+func TestDeepScanHistoryFailureStillSweeps(t *testing.T) {
+	t.Parallel()
+	base := &fakeapi.Plex{
+		Sections:           []plex.Section{{Key: "1", Title: "TV"}},
+		RecentlyAddedBySec: map[string][]streams.Episode{"1": {{RatingKey: "2001"}}},
+		EpisodeByKey:       map[string]*streams.Episode{"2001": {RatingKey: "2001", GrandparentRatingKey: "1001"}},
+	}
+	plx := &fetchErrPlex{Plex: base, historyErr: errors.New("boom")}
+	syncer := &fakeSyncer{}
+	prev := time.Now().Add(-72 * time.Hour)
+	st := stampAt(t, prev)
+	sched := New(Config{Enable: true}, &Deps{
+		Plex: plx, Cache: fakeapi.NewCache(), Stamp: st, Sync: syncer,
+		UserClient: func(_ string) EpisodeReader { return base },
+	})
+
+	sched.deepAnalysisCore(t.Context())
+
+	if n := syncer.reconcileCalls.Load(); n != 0 {
+		t.Errorf("Reconcile called %d times after a failed history fetch, want 0", n)
+	}
+	if n := syncer.seedCalls.Load(); n != 1 {
+		t.Errorf("recently added episodes processed %d times, want 1: the sweep runs without the history", n)
+	}
+	if got := stampTime(t, st); !got.Equal(prev) {
+		t.Errorf("a pass with no history advanced the record to %v, want it left at %v", got.UTC(), prev.UTC())
+	}
+}
+
+func TestDeepScanSeedingOffWritesNothing(t *testing.T) {
+	t.Parallel()
+	admin := &fakeapi.Plex{
+		Sections:           []plex.Section{{Key: "1", Title: "TV"}},
+		RecentlyAddedBySec: map[string][]streams.Episode{"1": {{RatingKey: "2002"}}},
+		EpisodeByKey:       map[string]*streams.Episode{"2002": {RatingKey: "2002", GrandparentRatingKey: "1001"}},
+		HistoryItems:       []plex.HistoryItem{{RatingKey: "2001", Type: "episode", AccountID: 2}},
+	}
+	user := &fakeapi.Plex{EpisodeByKey: map[string]*streams.Episode{"2001": {RatingKey: "2001", GrandparentRatingKey: "1001"}}}
+	syncer := &fakeSyncer{seedingOff: true}
+	prev := time.Now().Add(-72 * time.Hour)
+	st := stampAt(t, prev)
+	sched := New(Config{Enable: true}, &Deps{
+		Plex: admin, Cache: fakeapi.NewCache(), Stamp: st, Sync: syncer,
+		UserClient: func(_ string) EpisodeReader { return user },
+	})
+
+	sched.deepAnalysisCore(t.Context())
+
+	if got, want := admin.CallNames(), []string{"History"}; !slices.Equal(got, want) {
+		t.Errorf("admin requests = %v, want %v: with seeding off the sweep fetches nothing", got, want)
+	}
+	if n := syncer.seedCalls.Load(); n != 0 {
+		t.Errorf("SeedEpisode called %d times with seeding off, want 0", n)
+	}
+	if n := syncer.reconcileCalls.Load(); n != 1 {
+		t.Errorf("Reconcile called %d times, want 1: the history replay runs whatever the seeding switch", n)
+	}
+	if got := stampTime(t, st); !got.After(prev) {
+		t.Errorf("run record = %v, want it advanced past %v: the pass is complete", got.UTC(), prev.UTC())
 	}
 }
 
@@ -776,7 +903,7 @@ func TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
@@ -790,8 +917,8 @@ func TestProcessRecentlyAdded_SectionsFetchErrorWarnsAndAborts(t *testing.T) {
 	if !strings.Contains(out, "scheduler: failed to fetch sections") {
 		t.Errorf("missing inviolate WARN key on sections-fetch error; log: %q", out)
 	}
-	if syncer.processCalls.Load() != 0 {
-		t.Errorf("ProcessNewOrUpdated called %d times after sections-fetch error; want 0", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 0 {
+		t.Errorf("SeedEpisode called %d times after sections-fetch error; want 0", syncer.seedCalls.Load())
 	}
 }
 
@@ -803,7 +930,7 @@ func TestProcessRecentHistory_BreakerAbortLogsInviolateWarn(t *testing.T) {
 	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch failed")}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -835,7 +962,7 @@ func TestProcessRecentlyAddedEpisode_GenericFetchErrorSkipsSync(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -847,8 +974,8 @@ func TestProcessRecentlyAddedEpisode_GenericFetchErrorSkipsSync(t *testing.T) {
 	out := captureSlog(t, func() {
 		sched.processRecentlyAddedEpisode(t.Context(), ep)
 	})
-	if syncer.processCalls.Load() != 0 {
-		t.Errorf("ProcessNewOrUpdated called %d times after fetch error; want 0", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 0 {
+		t.Errorf("SeedEpisode called %d times after fetch error; want 0", syncer.seedCalls.Load())
 	}
 	if !strings.Contains(out, "scheduler: failed to fetch recently added episode") {
 		t.Errorf("non-ErrNotFound fetch error must be logged at debug; log: %q", out)
@@ -867,7 +994,7 @@ func TestProcessRecentlyAddedEpisode_NotFoundSkipsSyncSilently(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      c,
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -879,8 +1006,8 @@ func TestProcessRecentlyAddedEpisode_NotFoundSkipsSyncSilently(t *testing.T) {
 	out := captureSlog(t, func() {
 		sched.processRecentlyAddedEpisode(t.Context(), ep)
 	})
-	if syncer.processCalls.Load() != 0 {
-		t.Errorf("ProcessNewOrUpdated called %d times after ErrNotFound; want 0", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 0 {
+		t.Errorf("SeedEpisode called %d times after ErrNotFound; want 0", syncer.seedCalls.Load())
 	}
 	if strings.Contains(out, "scheduler: failed to fetch recently added episode") {
 		t.Errorf("ErrNotFound must be a silent skip, but a fetch-failure debug line was logged; log: %q", out)
@@ -935,7 +1062,7 @@ func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
 	}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      testStamp(t),
@@ -1025,7 +1152,7 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx.Plex },
@@ -1045,14 +1172,14 @@ func TestFeedRecentlyAdded_PartialSectionFailureWarnsWithCounts(t *testing.T) {
 	if !strings.Contains(out, "total_sections=2") {
 		t.Errorf("aggregate WARN must report total_sections=2; log: %q", out)
 	}
-	if syncer.processCalls.Load() != 1 {
-		t.Errorf("ProcessNewOrUpdated called %d times; want 1 (only the succeeding section's episode)", syncer.processCalls.Load())
+	if syncer.seedCalls.Load() != 1 {
+		t.Errorf("SeedEpisode called %d times; want 1 (only the succeeding section's episode)", syncer.seedCalls.Load())
 	}
 }
 
 // TestProcessHistoryItem_NilPerUserClientSkips pins the fail-closed per-user
 // write contract: when the per-user client is nil, the history item is skipped
-// (no admin-client fallback, no Episode fetch, no ReconcileWithIntent) and
+// (no admin-client fallback, no Episode fetch, no Reconcile) and
 // the skip is logged. Not parallel: captureSlog mutates the global logger.
 func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	plx := &fakeapi.Plex{
@@ -1061,7 +1188,7 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return nil },
@@ -1072,14 +1199,38 @@ func TestProcessHistoryItem_NilPerUserClientSkips(t *testing.T) {
 	out := captureSlog(t, func() {
 		sched.processRecentHistory(t.Context(), time.Now().Unix())
 	})
-	if syncer.changeCalls.Load() != 0 {
-		t.Errorf("ChangeTracks called %d times with a nil per-user client; want 0 (must skip, never fall back to admin)", syncer.changeCalls.Load())
+	if syncer.reconcileCalls.Load() != 0 {
+		t.Errorf("Reconcile called %d times with a nil per-user client; want 0 (must skip, never fall back to admin)", syncer.reconcileCalls.Load())
 	}
 	if plx.Calls.Load() != 1 {
 		t.Errorf("Plex called %d times; want 1 (History only, no per-user Episode fetch when the client is nil)", plx.Calls.Load())
 	}
 	if !strings.Contains(out, "scheduler: no per-user client, skipping history item") {
 		t.Errorf("missing per-user-client skip WARN; log: %q", out)
+	}
+}
+
+// A user with no per-user client is logged once per process while every pass
+// still counts it. Not parallel: it swaps the process-global default logger.
+func TestUnknownUserLoggedOncePerProcessCountedPerPass(t *testing.T) {
+	plx := &fakeapi.Plex{HistoryItems: []plex.HistoryItem{
+		{AccountID: 7, RatingKey: "300", Type: plex.TypeEpisode},
+		{AccountID: 7, RatingKey: "301", Type: plex.TypeEpisode},
+	}}
+	sched := New(Config{Enable: true}, &Deps{
+		Plex: plx, Cache: fakeapi.NewCache(), Stamp: testStamp(t),
+		UserClient: func(string) EpisodeReader { return nil }, Sync: &fakeSyncer{},
+	})
+	rec := capture.Default(t)
+	sched.deepAnalysisCore(t.Context())
+	sched.deepAnalysisCore(t.Context())
+
+	if got := rec.CountExact("scheduler: no per-user client, skipping history item"); got != 1 {
+		t.Errorf("unknown user logged %d times over two passes, want 1", got)
+	}
+	got := rec.AttrValuesExact("deep analysis completed", "unknown_users")
+	if !slices.Equal(got, []string{"1", "1"}) {
+		t.Errorf("deep analysis completed unknown_users = %q, want [1 1]", got)
 	}
 }
 
@@ -1093,7 +1244,7 @@ func TestDeepAnalysisCore_SaveCacheErrorWarns(t *testing.T) {
 	st := testStamp(t)
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      st,
@@ -1124,7 +1275,7 @@ func TestDeepAnalysisCore_StampRecordFailureWarnsOnly(t *testing.T) {
 	var saveCalls atomic.Int64
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      st,
@@ -1162,7 +1313,7 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			EpisodeByKey: map[string]*streams.Episode{"1": {RatingKey: "1"}, "2": {RatingKey: "2"}},
 		}
 		syncer := &fakeSyncer{}
-		sched := New(Config{Enable: true}, Deps{
+		sched := New(Config{Enable: true}, &Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -1170,8 +1321,8 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			SaveCache:  nil,
 		})
 		sched.processRecentHistory(ctx, time.Now().Unix())
-		if syncer.changeCalls.Load() != 0 {
-			t.Errorf("ChangeTracks called %d times under a cancelled context; want 0", syncer.changeCalls.Load())
+		if syncer.reconcileCalls.Load() != 0 {
+			t.Errorf("Reconcile called %d times under a cancelled context; want 0", syncer.reconcileCalls.Load())
 		}
 	})
 	t.Run("recently-added feeder", func(t *testing.T) {
@@ -1182,7 +1333,7 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			EpisodeByKey:       map[string]*streams.Episode{"101": {RatingKey: "101"}},
 		}
 		syncer := &fakeSyncer{}
-		sched := New(Config{Enable: true}, Deps{
+		sched := New(Config{Enable: true}, &Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -1190,8 +1341,8 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 			SaveCache:  nil,
 		})
 		sched.processRecentlyAdded(ctx, time.Now().Unix())
-		if syncer.processCalls.Load() != 0 {
-			t.Errorf("ProcessNewOrUpdated called %d times under a cancelled context; want 0", syncer.processCalls.Load())
+		if syncer.seedCalls.Load() != 0 {
+			t.Errorf("SeedEpisode called %d times under a cancelled context; want 0", syncer.seedCalls.Load())
 		}
 	})
 }
@@ -1201,7 +1352,7 @@ func TestScheduler_CancelledContextSkipsPerItemWork(t *testing.T) {
 // from an ignored library must both be dropped before any worker fetches them,
 // so only the eligible TV episode is processed. The symmetric recently-added
 // path has TestProcessRecentlyAdded_HonorsIgnoreLibraries; the history path's
-// identical filters were unpinned. changeCalls catches an ignore-library
+// identical filters were unpinned. reconcileCalls catches an ignore-library
 // regression (the Kids episode would then be synced); Calls catches a
 // non-episode regression (the movie would then trigger an Episode fetch).
 func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
@@ -1221,7 +1372,7 @@ func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
 	syncer := &fakeSyncer{}
 	sched := New(
 		Config{Enable: true, Ignore: ignore.New(ignore.Config{Libraries: []string{"Kids"}})},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -1232,8 +1383,8 @@ func TestFeedHistory_PreFiltersNonEpisodeAndIgnoredLibrary(t *testing.T) {
 
 	sched.processRecentHistory(t.Context(), time.Now().Unix())
 
-	if got := syncer.changeCalls.Load(); got != 1 {
-		t.Errorf("ChangeTracks called %d times; want 1 (movie type and ignored-library episode must be filtered before dispatch)", got)
+	if got := syncer.reconcileCalls.Load(); got != 1 {
+		t.Errorf("Reconcile called %d times; want 1 (movie type and ignored-library episode must be filtered before dispatch)", got)
 	}
 	if got := plx.Calls.Load(); got != 2 {
 		t.Errorf("Plex called %d times; want 2 (1 History + 1 Episode for the TV episode only; filtered items must never trigger a fetch)", got)
@@ -1252,7 +1403,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: context.Canceled}
 		sched := New(
 			Config{Enable: true},
-			Deps{
+			&Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
 				UserClient: func(_ string) EpisodeReader { return plx.Plex },
@@ -1274,7 +1425,7 @@ func TestScheduler_ContextCanceledFetchIsDebugNotWarn(t *testing.T) {
 		plx := &fetchErrPlex{Plex: &fakeapi.Plex{}, sectionsErr: context.Canceled}
 		sched := New(
 			Config{Enable: true},
-			Deps{
+			&Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
 				UserClient: func(_ string) EpisodeReader { return plx.Plex },
@@ -1313,7 +1464,7 @@ func TestProcessRecentHistory_PartialItemFailureWarnsWithCounts(t *testing.T) {
 	plx := &fakeapi.Plex{HistoryItems: items, EpisodeErr: errors.New("fetch boom")}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			UserClient: func(_ string) EpisodeReader { return plx },
@@ -1371,7 +1522,7 @@ func TestDeepAnalysisCore_ExtendsLookbackBeyond24hFromLastRun(t *testing.T) {
 	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      stampAt(t, time.Now().Add(-72*time.Hour)), // previous run 72h ago
@@ -1410,7 +1561,7 @@ func TestDeepAnalysisCore_LookbackFloorIsOneDayOnFirstRun(t *testing.T) {
 	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      testStamp(t), // no record -> the floor decides the window
@@ -1461,7 +1612,7 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 		var saveCalls atomic.Int64
 		sched := New(
 			Config{Enable: true},
-			Deps{
+			&Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
 				Stamp:      st,
@@ -1493,7 +1644,7 @@ func TestDeepAnalysisCore_CancelledPassLeavesWatermarkUnchanged(t *testing.T) {
 		st := stampAt(t, prev)
 		sched := New(
 			Config{Enable: true},
-			Deps{
+			&Deps{
 				Plex:       plx,
 				Cache:      fakeapi.NewCache(),
 				Stamp:      st,
@@ -1532,7 +1683,7 @@ func TestDeepAnalysisCore_IncompletePassLeavesWatermarkUnchanged(t *testing.T) {
 	// prev is the previous COMPLETED run's record; every subtest asserts it is
 	// left untouched by an incomplete pass.
 	newSched := func(plx plexReader, reader func(string) EpisodeReader, st *scheduler.Stamp) *Scheduler {
-		return New(Config{Enable: true}, Deps{Plex: plx, Cache: fakeapi.NewCache(), Stamp: st, UserClient: reader, Sync: &fakeSyncer{}})
+		return New(Config{Enable: true}, &Deps{Plex: plx, Cache: fakeapi.NewCache(), Stamp: st, UserClient: reader, Sync: &fakeSyncer{}})
 	}
 
 	t.Run("history circuit-breaker abort", func(t *testing.T) {
@@ -1600,7 +1751,7 @@ func TestDeepAnalysisCore_CapsLookback(t *testing.T) {
 	plx := &sinceCapturePlex{Plex: &fakeapi.Plex{}}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      stampAt(t, time.Now().Add(-60*24*time.Hour)), // 60 days ago, well past the 30d cap
@@ -1654,7 +1805,7 @@ func TestDeepAnalysisCore_ScatteredHistoryFailuresBelowBreakerStillAdvanceMarker
 	st := stampAt(t, prev)
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      st,
@@ -1694,7 +1845,7 @@ func TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning(t *testing.T) {
 	}
 	sched := New(
 		Config{Enable: true},
-		Deps{
+		&Deps{
 			Plex:       plx,
 			Cache:      fakeapi.NewCache(),
 			Stamp:      testStamp(t),
@@ -1722,7 +1873,7 @@ func TestDeepAnalysis_CleanPassRaisesNoIncompleteWarning(t *testing.T) {
 // Not parallel: it swaps the process-global default logger.
 func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 	const hostile = "7\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 
 	t.Run("history key", func(t *testing.T) {
 		rec := capture.Default(t)
@@ -1730,7 +1881,7 @@ func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 			HistoryItems: []plex.HistoryItem{{RatingKey: hostile, Type: plex.TypeEpisode}},
 			EpisodeErr:   errors.New("boom"),
 		}
-		sched := New(Config{Enable: true}, Deps{
+		sched := New(Config{Enable: true}, &Deps{
 			Plex: plx, Cache: fakeapi.NewCache(), Sync: &fakeSyncer{},
 			UserClient: func(string) EpisodeReader { return plx },
 		})
@@ -1745,7 +1896,7 @@ func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 			Plex:         &fakeapi.Plex{Sections: []plex.Section{{Key: "1", Title: hostile}}},
 			failSections: map[string]bool{"1": true},
 		}
-		sched := New(Config{Enable: true}, Deps{
+		sched := New(Config{Enable: true}, &Deps{
 			Plex: plx, Cache: fakeapi.NewCache(), Sync: &fakeSyncer{},
 			UserClient: func(string) EpisodeReader { return plx.Plex },
 		})
@@ -1757,7 +1908,7 @@ func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 	t.Run("recently added key", func(t *testing.T) {
 		rec := capture.Default(t)
 		plx := &fakeapi.Plex{EpisodeErr: errors.New("boom")}
-		sched := New(Config{Enable: true}, Deps{
+		sched := New(Config{Enable: true}, &Deps{
 			Plex: plx, Cache: fakeapi.NewCache(), Sync: &fakeSyncer{},
 			UserClient: func(string) EpisodeReader { return plx },
 		})
@@ -1766,4 +1917,33 @@ func TestDeepscanLogs_sanitizePlexValues(t *testing.T) {
 			t.Errorf("key was not logged as %q: %v", want, rec.Records())
 		}
 	})
+}
+
+func TestDeepScanMetricsMoveOnlyOnACompletePass(t *testing.T) {
+	t.Parallel()
+	m := obs.New("test")
+	newSched := func(plx plexReader) *Scheduler {
+		return New(Config{Enable: true}, &Deps{
+			Plex: plx, Cache: fakeapi.NewCache(), Stamp: testStamp(t),
+			UserClient: func(string) EpisodeReader { return nil }, Sync: &fakeSyncer{}, Metrics: m,
+		})
+	}
+	const lastSuccess = "plex_language_sync_deep_scan_last_success_timestamp_seconds"
+
+	newSched(&fetchErrPlex{Plex: &fakeapi.Plex{}, historyErr: errors.New("boom")}).deepAnalysisCore(t.Context())
+	if got := metrictest.Value(t, m, lastSuccess); got != 0 {
+		t.Errorf("an incomplete pass moved the last complete scan to %v, want 0", got)
+	}
+	if got := metrictest.Value(t, m, "plex_language_sync_deep_scan_runs_total", "incomplete"); got != 1 {
+		t.Errorf("incomplete runs = %v, want 1", got)
+	}
+
+	before := time.Now().Unix()
+	newSched(&fakeapi.Plex{}).deepAnalysisCore(t.Context())
+	if got := metrictest.Value(t, m, lastSuccess); got < float64(before) {
+		t.Errorf("a complete pass left the last complete scan at %v, want at least %d", got, before)
+	}
+	if got := metrictest.Value(t, m, "plex_language_sync_deep_scan_runs_total", "complete"); got != 1 {
+		t.Errorf("complete runs = %v, want 1", got)
+	}
 }

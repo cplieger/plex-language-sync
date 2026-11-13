@@ -83,3 +83,68 @@ func TestEpisode_JSONDecodeContract(t *testing.T) {
 		t.Errorf("len(Subtitle()) = %d, want 2", got)
 	}
 }
+
+// TestDecodeStreamDefault pins Plex's library-read shape for `default`:
+// the key is sent only when true, and one part can mark several
+// subtitles default, so an absent key must decode false.
+func TestDecodeStreamDefault(t *testing.T) {
+	t.Parallel()
+
+	const payload = `{
+		"ratingKey": "1001",
+		"Media": [{"Part": [{"id": 5001, "Stream": [
+			{"id": 9001, "streamType": 2, "languageCode": "jpn", "default": true, "selected": true},
+			{"id": 9002, "streamType": 2, "languageCode": "eng"},
+			{"id": 9003, "streamType": 3, "languageCode": "eng", "default": true},
+			{"id": 9004, "streamType": 3, "languageCode": "eng", "default": true},
+			{"id": 9005, "streamType": 3, "languageCode": "fre"}
+		]}]}]
+	}`
+
+	var ep Episode
+	if err := json.Unmarshal([]byte(payload), &ep); err != nil {
+		t.Fatalf("json.Unmarshal(Episode) err = %v, want nil", err)
+	}
+	if len(ep.Media) != 1 || len(ep.Media[0].Part) != 1 {
+		t.Fatalf("decoded Media = %+v, want one media with one part", ep.Media)
+	}
+	got := ep.Media[0].Part[0].Stream
+	want := map[int]bool{9001: true, 9002: false, 9003: true, 9004: true, 9005: false}
+	if len(got) != len(want) {
+		t.Fatalf("decoded %d streams, want %d", len(got), len(want))
+	}
+	for i := range got {
+		id := int(got[i].ID)
+		if got[i].Default != want[id] {
+			t.Errorf("stream %d Default = %v, want %v", id, got[i].Default, want[id])
+		}
+	}
+}
+
+// TestDecodeLastViewedAt pins the per-token view time on an episode
+// list: Plex sends it as a number on library reads, a quoted id-style
+// string is tolerated, and an episode the reading user never finished
+// carries no key.
+func TestDecodeLastViewedAt(t *testing.T) {
+	t.Parallel()
+
+	const payload = `[
+		{"ratingKey": "1001", "lastViewedAt": 1767225600},
+		{"ratingKey": "1002", "lastViewedAt": "1767312000"},
+		{"ratingKey": "1003"}
+	]`
+
+	var eps []Episode
+	if err := json.Unmarshal([]byte(payload), &eps); err != nil {
+		t.Fatalf("json.Unmarshal([]Episode) err = %v, want nil", err)
+	}
+	want := map[string]FlexInt{"1001": 1767225600, "1002": 1767312000, "1003": 0}
+	if len(eps) != len(want) {
+		t.Fatalf("decoded %d episodes, want %d", len(eps), len(want))
+	}
+	for i := range eps {
+		if got := eps[i].LastViewedAt; got != want[eps[i].RatingKey] {
+			t.Errorf("episode %s LastViewedAt = %d, want %d", eps[i].RatingKey, got, want[eps[i].RatingKey])
+		}
+	}
+}

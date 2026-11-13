@@ -2,10 +2,11 @@
 // plus recently-added sweep) over a bounded worker pool whose circuit breaker
 // aborts after consecutive per-item failures. It runs on a Go-duration interval
 // (default 24h), so it reads no wall-clock time, and a scheduler.Stamp file
-// keeps a cold restart from double-running. alerts/logql.yaml matches "deep
-// analysis completed" and docs/monitoring.md names "scheduled deep analysis
-// starting": keep both exact. Every collaborator is an interface declared in
-// deps.go, so deepscan imports no internal/tracksync.
+// keeps a cold restart from double-running. TestDeepScanStalledRuleMatchesCompletePassesOnly
+// binds "deep analysis completed" and its complete field to alerts/logql.yaml,
+// and docs/monitoring.md names "scheduled deep analysis starting": keep both
+// exact. Every collaborator is an interface declared in deps.go, so deepscan
+// imports no internal/tracksync.
 package deepscan
 
 import (
@@ -17,11 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
+	"github.com/cplieger/plex-language-sync/internal/obs"
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/scheduler/v4"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -64,14 +66,19 @@ type Config struct {
 // runner goroutine that loses the dedup race logs one WARN,
 // "scheduler: deep analysis already in progress, skipping".
 type Scheduler struct {
-	plex       plexReader
-	cache      runLedger
-	sync       syncer
-	stamp      *scheduler.Stamp
-	dedup      singleflight.Group
-	userClient userClientFunc
-	saveCache  cacheSaver
-	cfg        Config
+	plex  plexReader
+	cache runLedger
+	sync  syncer
+	stamp *scheduler.Stamp
+	dedup singleflight.Group
+	// loggedUnknownUsers holds the userIDs whose missing per-user client was
+	// already logged, once per process.
+	loggedUnknownUsers sync.Map
+	userClient         userClientFunc
+	saveCache          cacheSaver
+	live               beater
+	metrics            *obs.Metrics
+	cfg                Config
 	// workers bounds in-flight per-item work during a deep-analysis
 	// pass; zero (the default) means deepAnalysisConcurrency. Exists as
 	// a test seam: a serial (workers=1) run lets the breaker's
@@ -99,23 +106,28 @@ func (s *Scheduler) workerCount() int {
 type Deps struct {
 	// Plex reads history and library metadata for the sweep.
 	Plex plexReader
-	// Cache holds the dedup keys and the recorded intents the pass re-applies.
+	// Cache holds the dedup keys that keep an added episode from being seeded twice.
 	Cache runLedger
-	// Stamp is the persisted last-run record: it gates the startup pass and
-	// anchors the replay look-back window.
+	// Stamp is the persisted record of the last complete pass, the only kind
+	// written: it gates the startup pass and anchors the replay look-back window.
 	Stamp *scheduler.Stamp
-	// UserClient returns the per-user write client for a username.
+	// UserClient returns the per-user episode reader for a userID.
 	UserClient userClientFunc
-	// Sync applies the recorded intent to an episode.
+	// Sync replays recorded choices and seeds added episodes.
 	Sync syncer
 	// SaveCache flushes the cache to disk. May be nil in tests that do not
 	// exercise the disk-flush path.
 	SaveCache cacheSaver
+	// Metrics records each pass; nil records nothing.
+	Metrics *obs.Metrics
+	// Liveness is beaten when Run starts and as each pass starts and ends;
+	// nil receives no beats.
+	Liveness beater
 }
 
 // New constructs a Scheduler from cfg and deps.
-func New(cfg Config, deps Deps) *Scheduler {
-	return &Scheduler{
+func New(cfg Config, deps *Deps) *Scheduler {
+	s := &Scheduler{
 		cfg:        cfg,
 		plex:       deps.Plex,
 		cache:      deps.Cache,
@@ -123,7 +135,13 @@ func New(cfg Config, deps Deps) *Scheduler {
 		userClient: deps.UserClient,
 		sync:       deps.Sync,
 		saveCache:  deps.SaveCache,
+		live:       deps.Liveness,
+		metrics:    deps.Metrics,
 	}
+	if s.live == nil {
+		s.live = noBeat{}
+	}
+	return s
 }
 
 // Run is the outer scheduler loop: it runs a deep-analysis pass at
@@ -140,6 +158,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 
 	slog.Info("scheduler enabled", "interval", s.cfg.Interval.String())
+	s.live.Beat()
 
 	// Run immediately when never run before or the last run is older than
 	// one interval, so a container restarting more often than the interval
@@ -177,13 +196,11 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 	// singleflight.Do returns shared=true to EVERY caller that received
 	// this result once a duplicate joined — including the goroutine
 	// that actually executed the callback (Do returns c.dups>0 to the
-	// winner, not only to the losers). Guarding the "skipping" alert on
+	// winner, not only to the losers). Guarding the skip WARN on
 	// `shared` alone therefore makes the winner that DID the work also
 	// log the skip under concurrent Run. Track execution with a local
 	// flag set inside the callback: only the winner runs the callback,
-	// so `executed` stays false on every loser. Preserve the
-	// operational-alert key ("scheduler: deep analysis already in
-	// progress, skipping") from the earlier implementation.
+	// so `executed` stays false on every loser.
 	executed := false
 	_, _, shared := s.dedup.Do("deep_analysis", func() (any, error) {
 		executed = true
@@ -199,6 +216,7 @@ func (s *Scheduler) deepAnalysis(ctx context.Context) {
 // runs exactly once per singleflight key; overlapping callers share
 // its completion via dedup.Do.
 func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
+	s.live.Beat()
 	complete := false
 	defer func() {
 		// Record the run ONLY when this pass fully covered its look-back
@@ -219,6 +237,7 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 				slog.Warn("cache save failed", "error", err)
 			}
 		}
+		s.live.Beat()
 	}()
 
 	// Look back to the previous completed run so no window is missed when
@@ -240,35 +259,32 @@ func (s *Scheduler) deepAnalysisCore(ctx context.Context) {
 	}
 	sinceUnix := time.Now().Add(-lookback).Unix()
 
-	histComplete := s.processRecentHistory(ctx, sinceUnix)
+	histComplete, unknownUsers := s.processRecentHistory(ctx, sinceUnix)
 	addedComplete := s.processRecentlyAdded(ctx, sinceUnix)
 	complete = histComplete && addedComplete && ctx.Err() == nil
+	s.metrics.DeepScanFinished(complete, time.Now())
 
 	slog.Info("deep analysis completed",
 		"since", time.Unix(sinceUnix, 0).UTC().Format(time.RFC3339),
 		"complete", complete,
-		"marker_advanced", complete)
+		"unknown_users", unknownUsers)
 }
 
-// processRecentHistory reconciles the last window of play history:
-// for each replayed item the sync layer re-applies the user's RECORDED
-// intent (or skips — see ReconcileWithIntent); the replay never derives
-// a user's choice from the episode's current selection state.
-//
-// Fans out per-item work across a bounded worker pool
-// (deepAnalysisConcurrency workers), sharing the circuit-breaker
-// threshold (maxConsecutiveErrors) via an atomic counter. Successful
-// items reset the counter; once the threshold is reached, every worker
-// returns promptly without processing additional items.
-func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) bool {
+// processRecentHistory hands each item of the last window of play history
+// to the Syncer's Reconcile, across deepAnalysisConcurrency workers. The
+// workers share the maxConsecutiveErrors breaker through an atomic counter
+// that a success resets; once it trips, every worker stops processing. It
+// also returns how many distinct users the pass skipped for having no
+// per-user client.
+func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) (complete bool, unknownUsers int) {
 	history, err := s.plex.History(ctx, sinceUnix)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			slog.Debug("scheduler: history fetch cancelled during shutdown", "error", err)
-			return false
+			return false, 0
 		}
 		slog.Warn("scheduler: failed to fetch history", "error", err)
-		return false
+		return false, 0
 	}
 	slog.Debug("scheduler: processing recent history",
 		"items", len(history))
@@ -277,14 +293,12 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) b
 	var wg sync.WaitGroup
 	var consecutiveErrors atomic.Int32
 	var totalErrors atomic.Int32
-	// unknownUsers de-spams the per-item "no per-user client" WARN: each
-	// unknown userID is reported once per pass instead of once per history
-	// item, so a single unmanaged user with N recent plays no longer emits
-	// N identical WARN lines. Created per pass and shared across workers.
-	var unknownUsers sync.Map
+	// passUnknown holds the distinct unknown userIDs of this pass, shared
+	// across workers.
+	var passUnknown sync.Map
 
 	for range s.workerCount() {
-		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors, &totalErrors, &unknownUsers) })
+		wg.Go(func() { s.historyWorker(ctx, work, &consecutiveErrors, &totalErrors, &passUnknown) })
 	}
 	fedAll := s.feedHistory(ctx, work, history, &consecutiveErrors)
 	close(work)
@@ -301,14 +315,15 @@ func (s *Scheduler) processRecentHistory(ctx context.Context, sinceUnix int64) b
 	// cancelled). Scattered per-item fetch failures that did not trip the
 	// breaker do NOT block completion — they are the design's accepted
 	// skip-and-continue loss, already surfaced by the WARN above.
-	return fedAll && ctx.Err() == nil
+	passUnknown.Range(func(_, _ any) bool { unknownUsers++; return true })
+	return fedAll && ctx.Err() == nil, unknownUsers
 }
 
 // historyWorker drains work until it closes, replaying each history
 // item via processHistoryItem. It does no further work once the context
 // is cancelled (returning) or the shared circuit breaker has tripped
 // (continuing to drain so the feeder can finish and close the channel).
-func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors, totalErrors *atomic.Int32, unknownUsers *sync.Map) {
+func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryItem, consecutiveErrors, totalErrors *atomic.Int32, passUnknown *sync.Map) {
 	for item := range work {
 		if ctx.Err() != nil {
 			return
@@ -318,7 +333,7 @@ func (s *Scheduler) historyWorker(ctx context.Context, work <-chan plex.HistoryI
 			// exit; do no further work.
 			continue
 		}
-		s.processHistoryItem(ctx, item, consecutiveErrors, totalErrors, unknownUsers)
+		s.processHistoryItem(ctx, item, consecutiveErrors, totalErrors, passUnknown)
 	}
 }
 
@@ -352,25 +367,21 @@ func (s *Scheduler) feedHistory(ctx context.Context, work chan<- plex.HistoryIte
 	return true
 }
 
-// processHistoryItem runs a single history-replay reconciliation: fetch
-// the per-user episode (to resolve its show and pass the ignore gate)
-// and delegate to the Syncer's ReconcileWithIntent, which re-applies the
-// user's recorded intent — or skips when none exists or the play is
-// newer than the observation. Success resets the shared error counter;
-// a fetch failure increments it.
+// processHistoryItem replays one history item: it fetches the episode
+// through the user's client, to resolve its show and season, and hands it
+// to the Syncer's Reconcile. Success resets the shared error counter; a
+// fetch failure increments it.
 func (s *Scheduler) processHistoryItem(
 	ctx context.Context,
 	item plex.HistoryItem,
 	consecutiveErrors, totalErrors *atomic.Int32,
-	unknownUsers *sync.Map,
+	passUnknown *sync.Map,
 ) {
 	userID := strconv.Itoa(int(item.AccountID))
 	userClient := s.userClient(userID)
 	if userClient == nil {
-		// Log once per unknown user per pass, not once per history item:
-		// an unmanaged/removed user's every recent play would otherwise
-		// emit a separate WARN and drown genuine signals in Loki.
-		if _, seen := unknownUsers.LoadOrStore(userID, struct{}{}); !seen {
+		passUnknown.Store(userID, struct{}{})
+		if _, logged := s.loggedUnknownUsers.LoadOrStore(userID, struct{}{}); !logged {
 			slog.Warn("scheduler: no per-user client, skipping history item",
 				"user", userID)
 		}
@@ -381,17 +392,26 @@ func (s *Scheduler) processHistoryItem(
 		consecutiveErrors.Add(1)
 		totalErrors.Add(1)
 		slog.Debug("scheduler: skipping history item, fetch failed",
-			"key", runesafe.SanitizeSingleLine(item.RatingKey), "user", userID, "error", fetchErr)
+			"key", textsafe.SanitizeSingleLine(item.RatingKey), "user", userID, "error", fetchErr)
 		return
 	}
 	consecutiveErrors.Store(0)
-	s.sync.ReconcileWithIntent(ctx, userID, ep, int64(item.ViewedAt), "scheduler")
+	// Reconcile fails only when ctx ends, which the pass already reports as
+	// incomplete.
+	if err := s.sync.Reconcile(ctx, userID, ep, "scheduler"); err != nil {
+		slog.Debug("scheduler: history replay stopped", "user", userID, "error", err)
+	}
 }
 
 // processRecentlyAdded applies language settings to recently added
-// episodes for all users. Fans episodes out across a bounded worker
-// pool (see processRecentHistory for the rationale).
+// episodes for all users. Fans episodes out across the same bounded
+// worker pool as processRecentHistory. With seeding off it
+// fetches nothing and reports the sweep complete.
 func (s *Scheduler) processRecentlyAdded(ctx context.Context, sinceUnix int64) bool {
+	if !s.sync.SeedsNewEpisodes() {
+		slog.Debug("scheduler: seeding new episodes is off, skipping recently added episodes")
+		return true
+	}
 	sections, err := s.plex.ShowSections(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -453,7 +473,7 @@ func (s *Scheduler) feedRecentlyAdded(ctx context.Context, work chan<- streams.E
 		if err != nil {
 			failed++
 			slog.Debug("scheduler: failed to fetch recently added",
-				"section", runesafe.SanitizeSingleLine(section.Title), "error", err)
+				"section", textsafe.SanitizeSingleLine(section.Title), "error", err)
 			continue
 		}
 		if !feedEpisodes(ctx, work, episodes) {
@@ -483,20 +503,14 @@ func feedEpisodes(ctx context.Context, work chan<- streams.Episode, episodes []s
 	return true
 }
 
-// processRecentlyAddedEpisode handles a single recently-added episode
-// for all users. Fetches the episode's full metadata once via the
-// admin reader, then delegates to ProcessNewOrUpdatedEpisodeAllUsers,
-// which runs a single reference search shared across every user
-// followed by a per-user write path. Plex returns identical metadata
-// regardless of token (verified 2026-04-26 against live API + Tautulli
-// playback history), so the read side is token-independent and writes
-// use the per-user client.
+// processRecentlyAddedEpisode seeds one recently added episode for every
+// user, from the admin reader's copy of it.
 func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams.Episode) {
 	full, fetchErr := s.plex.Episode(ctx, plex.RatingKey(ep.RatingKey))
 	if fetchErr != nil {
 		if !errors.Is(fetchErr, plex.ErrNotFound) {
 			slog.Debug("scheduler: failed to fetch recently added episode",
-				"key", runesafe.SanitizeSingleLine(ep.RatingKey), "error", fetchErr)
+				"key", textsafe.SanitizeSingleLine(ep.RatingKey), "error", fetchErr)
 		}
 		return
 	}
@@ -504,14 +518,8 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 		return
 	}
 
-	// Mark the dedup key only after a successful fetch + ignore-check.
-	// A transient Episode() failure above therefore leaves the key
-	// unmarked, so the next scheduler pass retries immediately instead of
-	// suppressing the episode for the ~5-minute dedup window. CheckAndMark
-	// stays the atomic guard that lets exactly one worker reach
-	// ProcessNewOrUpdatedEpisodeAllUsers, so moving it here costs at most a
-	// redundant idempotent fetch if the same RatingKey is enqueued twice
-	// within the recently-added sweep — never a double write.
+	// Marked only after the fetch and the ignore check, so a failed fetch is
+	// retried on the next pass; CheckAndMark lets one worker through.
 	cacheKey := cache.KeyPrefixScheduler + ep.RatingKey
 	if !s.cache.CheckAndMark(cacheKey) {
 		return
@@ -520,5 +528,5 @@ func (s *Scheduler) processRecentlyAddedEpisode(ctx context.Context, ep *streams
 	slog.Info("scheduler: processing recently added episode",
 		"episode", ep.ShortName())
 
-	s.sync.ProcessNewOrUpdatedEpisodeAllUsers(ctx, full, "scheduler")
+	s.sync.SeedEpisode(ctx, full, "scheduler")
 }

@@ -5,29 +5,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/go/slogx/capture"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
-	"github.com/cplieger/slogx/capture"
 	"pgregory.net/rapid"
 )
 
 // Not parallel: it swaps the process-global default logger.
 func TestCacheLogsSanitizeLanguageCodes(t *testing.T) {
 	const hostile = "jpn\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 
 	t.Run("profile", func(t *testing.T) {
 		rec := capture.Default(t)
 		New().LearnLanguageProfile("1", streams.LanguageChoice{Audio: hostile, Subtitle: hostile})
 		for _, key := range []string{"audio_lang", "subtitle_lang"} {
-			if !rec.HasAttr("language profile updated", key, want) {
+			if !rec.HasAttr("language profile updated", capture.AttrName(key), want) {
 				t.Errorf("%s was not logged as %q; a language code comes from the media file: %v", key, want, rec.Records())
 			}
 		}
 	})
 	t.Run("intent", func(t *testing.T) {
 		rec := capture.Default(t)
-		New().RecordIntent("1", "42", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: hostile}}, 1))
+		New().RecordIntent("1", "42", streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: hostile}}, streams.Anchor{}, 1))
 		if !rec.HasAttr("intent recorded", "audio_lang", want) {
 			t.Errorf("audio_lang was not logged as %q; a language code comes from the media file: %v", want, rec.Records())
 		}
@@ -40,7 +40,7 @@ func TestCacheLogsSanitizeLanguageCodes(t *testing.T) {
 // Not parallel: it swaps the process-global default logger.
 func TestCacheLogsSanitizePlexIdentifiers(t *testing.T) {
 	const hostile = "7\nlevel=ERROR \u202ex"
-	want := runesafe.SanitizeSingleLine(hostile)
+	want := textsafe.SanitizeSingleLine(hostile)
 
 	t.Run("profile user", func(t *testing.T) {
 		rec := capture.Default(t)
@@ -51,9 +51,9 @@ func TestCacheLogsSanitizePlexIdentifiers(t *testing.T) {
 	})
 	t.Run("intent user and show key", func(t *testing.T) {
 		rec := capture.Default(t)
-		New().RecordIntent(hostile, hostile, streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "jpn"}}, 1))
+		New().RecordIntent(hostile, hostile, streams.NewIntent(streams.Pair{Audio: &streams.Stream{LanguageCode: "jpn"}}, streams.Anchor{}, 1))
 		for _, key := range []string{"user", "show_key"} {
-			if !rec.HasAttr("intent recorded", key, want) {
+			if !rec.HasAttr("intent recorded", capture.AttrName(key), want) {
 				t.Errorf("%s was not logged as %q: %v", key, want, rec.Records())
 			}
 		}
@@ -314,15 +314,12 @@ func TestCacheLanguageProfileLegacyKeyStillResolves(t *testing.T) {
 	}
 }
 
-// TestCacheLanguageProfileLegacyKeyDoesNotShadowUpdates pins the second defect
-// three reviewers found in the diff.
-//
-// The write path records the canonical key while the read path used to check the
-// spelling as given first, so an entry in a profiles.json written by an older
-// version answered every lookup forever and every later preference change was
-// silently discarded. In the collision shape it could answer with the empty
-// string, which the caller reads as "the user wants no subtitles" and acts on by
-// disabling them.
+// TestCacheLanguageProfileLegacyKeyDoesNotShadowUpdates pins that the read path
+// checks the canonical key the write path records before the spelling as
+// given. Otherwise an entry in a profiles.json written by an older version
+// answers every lookup and every later preference change is silently lost; in
+// the collision shape it answers with the empty string, which the caller reads
+// as "the user wants no subtitles" and acts on by disabling them.
 func TestCacheLanguageProfileLegacyKeyDoesNotShadowUpdates(t *testing.T) {
 	c := New()
 	c.mu.Lock()

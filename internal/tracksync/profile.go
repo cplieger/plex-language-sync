@@ -1,118 +1,26 @@
 package tracksync
 
 import (
-	"context"
-	"log/slog"
-
-	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi/v2"
-	"github.com/cplieger/runesafe/v3"
 )
 
-// applyLanguageProfile applies a learned language profile to a new
-// episode when no reference episode exists in the show. This handles
-// the case where a brand-new show is added and the user has
-// established preferences (e.g., Japanese audio → English subtitles
-// for anime).
-//
-// Historical note: this function used to Episode() via the per-user
-// client on the theory that the user-scoped view might show different
-// Stream.selected values than the caller's (possibly admin-fetched)
-// episode. Verified 2026-04-26 against live data: Plex does NOT
-// differentiate Stream.selected per user token — the same episode
-// returns identical Stream[*].selected values whether fetched via
-// admin token or a Plex Home user's token. The re-fetch was a
-// per-user round-trip that added no information, just latency.
-//
-// The caller (applyEpisodeForUser) passes `episode` freshly fetched
-// from either admin or user client upstream. The data we read from it
-// here — selected streams and the first Part ID — is metadata-level
-// and consistent across clients. When applyProfileSubtitle mutates
-// state, it does so via `userClient`: per-user writes go through the
-// user's own client when one is available. When the per-user client
-// cannot be constructed, callers pass nothing through to here — the
-// operation is SKIPPED upstream rather than written under the admin
-// token, preserving per-user isolation (writing a shared user's
-// selection under the admin token would corrupt the admin's per-user
-// state and not apply the intended user's).
-func (s *Syncer) applyLanguageProfile(
-	ctx context.Context,
-	userClient plexWriter,
-	userID string,
-	episode *streams.Episode,
-	trigger string,
-) bool {
-	target := episode
-
-	// Get the default audio stream to determine the show's primary
-	// language.
-	cur := streams.Selected(target)
-	if cur.Audio == nil || cur.Audio.LanguageCode == "" {
-		return false
+// profilePlan is userID's learned profile for ep's default audio language,
+// or nil when ep has no audio or the user has no profile for its language.
+// The admin read is only ep's inventory: the plan reads the user's own
+// selection before it writes.
+func (s *Syncer) profilePlan(userID string, ep *streams.Episode) (*plan, seedSource) {
+	audio := streams.DefaultAudio(ep)
+	if audio == nil || audio.LanguageCode == "" {
+		return nil, seedSource{}
 	}
-
-	subLang, ok := s.cache.SubtitleLangForAudio(userID, cur.Audio.LanguageCode)
+	subLang, ok := s.cache.SubtitleLangForAudio(userID, audio.LanguageCode)
 	if !ok {
-		return false
+		return nil, seedSource{}
 	}
-
-	partID := streams.FirstPartID(target)
-	if partID == 0 {
-		return false
+	return &plan{
+		pick:  pickForProfile(subLang, s.cfg.SubtitleFloor),
+		basis: streams.Basis{Version: profileVersion(streams.ProfileKey(audio.LanguageCode), subLang), Source: streams.SourceProfile},
+	}, seedSource{
+		audio: audio.LanguageCode, subtitle: subLang, tier: streams.SourceProfile,
 	}
-
-	username := s.users.Name(userID)
-	changed := applyProfileSubtitle(ctx, userClient, target, partID, subLang, cur.Subtitle, username, s.cfg.SubtitleFloor)
-	if changed {
-		slog.Info("language profile applied to new show",
-			"trigger", trigger,
-			"user", username,
-			"episode", target.ShortName(),
-			"audio_lang", runesafe.SanitizeSingleLine(cur.Audio.LanguageCode),
-			"subtitle_lang", runesafe.SanitizeSingleLine(subLang))
-	}
-	return changed
-}
-
-// applyProfileSubtitle sets or disables the subtitle stream based on
-// the learned language profile. It returns true when the stream was
-// changed.
-//
-// Unexported but documented: the tests exercise this through
-// applyLanguageProfile rather than directly, keeping the package's
-// public surface small.
-func applyProfileSubtitle(
-	ctx context.Context,
-	userClient plexWriter,
-	target *streams.Episode,
-	partID int,
-	subLang string,
-	curSub *streams.Stream,
-	username string,
-	floor langtag.Tier,
-) bool {
-	if subLang == "" {
-		// Profile says no subtitles for this audio language.
-		if curSub == nil {
-			return false
-		}
-		if err := userClient.DisableSubtitles(ctx, partID); err != nil {
-			slog.Warn("failed to disable subtitles via profile",
-				"episode", target.ShortName(), "user", username, "error", err)
-			return false
-		}
-		return true
-	}
-
-	bestSub := streams.FindSubtitleByLanguage(streams.Subtitle(target), subLang, floor)
-	if bestSub == nil || (curSub != nil && curSub.ID == bestSub.ID) {
-		return false
-	}
-	if err := userClient.SetSubtitleStream(ctx, plexapi.StreamSelection{PartID: partID, StreamID: int(bestSub.ID)}); err != nil {
-		slog.Warn("failed to set subtitle via profile",
-			"episode", target.ShortName(), "user", username, "error", err)
-		return false
-	}
-	return true
 }

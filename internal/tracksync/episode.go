@@ -2,266 +2,126 @@ package tracksync
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"slices"
-	"sync"
 
-	"github.com/cplieger/plex-language-sync/internal/plex"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
 )
 
-// episodeRef bundles a shared reference episode and its selected
-// streams. A nil *episodeRef means "no reference found, fall back to the
-// learned language profile" for the caller.
-type episodeRef struct {
-	Episode  *streams.Episode
-	Audio    *streams.Stream
-	Subtitle *streams.Stream
-}
-
-// maxRefSearchDepth caps the number of per-episode metadata fetches the
-// reference search will perform before giving up. Bounds latency on
-// very long shows.
-const maxRefSearchDepth = 50
-
-// ProcessNewOrUpdatedEpisodeAllUsers processes a new/updated episode
-// for every known user (admin + shared).
-//
-// The reference episode is searched ONCE per episode via the admin
-// reader and shared across all users. Plex returns identical
-// Stream.selected and metadata fields regardless of which user's token
-// is used for reads (verified 2026-04-26 against live API + Tautulli
-// playback history). Writes via updateEpisodeStreams /
-// applyLanguageProfile still use per-user clients because PUTs set
-// per-user playback state.
-//
-// Cost collapse: for an N-user household, this path previously ran
-// ShowEpisodes + up to maxRefSearchDepth Episode calls × N times per
-// episode (e.g. 15 users × ~10 calls = 150 admin-equivalent calls). Now
-// ~10 calls total for the reference search plus N writes — the only
-// per-user work required.
-//
-// Ignore contract: this entry point does NOT apply the ignore
-// policy itself. Callers MUST gate on
-// episodeSkipper.ShouldSkipEpisode before invoking it (main.go
-// handleTimeline and scheduler processRecentlyAddedEpisode both
-// do). The gate is kept upstream deliberately to avoid a
-// redundant ShowMetadata fetch here; a caller that skips it will
-// silently apply language to an ignored show, breaking the
-// documented "ignored show excluded from BOTH propagation AND
-// learning" policy. (Contrast ObserveAndPropagate and
-// ReconcileWithIntent, which self-gate.)
-func (s *Syncer) ProcessNewOrUpdatedEpisodeAllUsers(
-	ctx context.Context,
-	episode *streams.Episode,
-	trigger string,
-) {
-	// The shared reference search is LAZY: users with a recorded intent
-	// for the show never need it (their intent is strictly better — it is
-	// their own observed choice, not the household-ambient selection), so
-	// the fetch chain runs only when the first intent-less user is
-	// reached, and not at all once every user has an intent.
-	refOnce := sync.OnceValue(func() *episodeRef {
-		return s.findEpisodeReference(ctx, episode)
-	})
-
+// SeedEpisode puts a choice on ep, a new or updated episode as the admin
+// reader returned it, for every user through that user's own client: their
+// own choice that governs ep, else the newest other user's choice that governs
+// ep for its owner, else their learned profile. The applier leaves alone an
+// episode the user played since the app's last decision there. Callers apply
+// the ignore policy first, which saves a second show-metadata read here. With
+// Config.SeedNewEpisodes off it does nothing.
+func (s *Syncer) SeedEpisode(ctx context.Context, ep *streams.Episode, trigger string) {
+	if !s.cfg.SeedNewEpisodes {
+		return
+	}
 	for _, u := range s.users.All() {
 		if ctx.Err() != nil {
 			return
 		}
-		userClient := s.userClient(u.ID)
-		if userClient == nil {
-			slog.Warn("sync: no per-user client, skipping user", "user_id", runesafe.SanitizeSingleLine(u.ID))
+		client := s.userClient(u.ID)
+		if client == nil {
+			slog.Warn("sync: no per-user client, skipping user", "user_id", textsafe.SanitizeSingleLine(u.ID))
 			continue
 		}
-		s.applyEpisodeForUser(ctx, userClient, u.ID, episode, refOnce, trigger)
+		if err := s.seedForUser(ctx, client, u.ID, ep, trigger); err != nil {
+			return
+		}
 	}
 }
 
-// findEpisodeReference locates a reference episode for a new/updated
-// episode: the most recent previously-seen episode in the show with a
-// selected audio stream. Returns nil when the show has no reference yet
-// (no prior episode with an active selection), which signals callers to
-// fall back to the learned language profile.
-//
-// Uses the admin reader because stream-selection state is server-wide,
-// not per-user (see ProcessNewOrUpdatedEpisodeAllUsers for full
-// rationale). The caller shares the result across every user being
-// processed for the same episode, so this runs ONCE per episode
-// regardless of user count.
-//
-// When no reference is found, the branch emits a log line with a stable
-// `reason` label so Loki can pinpoint why an episode fell through to the
-// language-profile path. DEBUG reasons are benign ("no_grandparent_key",
-// "no_candidate", "no_selected_audio"); WARN reasons signal a degraded
-// fetch ("get_show_episodes_error", "candidate_fetch_errors") that may
-// have masked an otherwise-usable reference.
-func (s *Syncer) findEpisodeReference(
-	ctx context.Context,
-	episode *streams.Episode,
-) *episodeRef {
-	showRatingKey := episode.GrandparentRatingKey
-	if showRatingKey == "" {
-		slog.Debug("reference search skipped",
-			"episode", episode.ShortName(),
-			"reason", "no_grandparent_key")
-		return nil
-	}
+// SeedsNewEpisodes reports whether SeedEpisode writes anything, so a caller
+// can skip the reads that would only feed it. SeedEpisode enforces the switch
+// itself; no caller decides a write from this.
+func (s *Syncer) SeedsNewEpisodes() bool { return s.cfg.SeedNewEpisodes }
 
-	episodes, err := s.plex.ShowEpisodes(ctx, plex.RatingKey(showRatingKey))
+// seedForUser applies userID's seed plan to ep under the user's show lock. The
+// only error is ctx's.
+func (s *Syncer) seedForUser(ctx context.Context, client PlexReadWriter, userID string, ep *streams.Episode, trigger string) error {
+	unlock, err := s.apply.lock(ctx, userID, ep.GrandparentRatingKey)
 	if err != nil {
-		slog.Warn("failed to fetch show episodes for reference",
-			"show", episode.GrandparentTitle,
-			"reason", "get_show_episodes_error",
-			"error", err)
-		return nil
+		return err
 	}
+	defer unlock()
 
-	ref, searched, fetchErrors := findReferenceEpisode(
-		ctx, s.plex, episodes, episode.RatingKey, maxRefSearchDepth,
-	)
-
-	if ref == nil {
-		if fetchErrors > 0 && ctx.Err() == nil {
-			slog.Warn("reference search failed: candidate fetches errored",
-				"show", episode.GrandparentTitle,
-				"searched", searched,
-				"fetch_errors", fetchErrors,
-				"reason", "candidate_fetch_errors")
-			return nil
-		}
-		slog.Debug("reference search yielded no candidate",
-			"show", episode.GrandparentTitle,
-			"searched", searched,
-			"fetch_errors", fetchErrors,
-			"reason", "no_candidate")
-		return nil
-	}
-
-	sel := streams.Selected(ref)
-	if sel.Audio == nil {
-		// Reference found but has no selected audio — treat as
-		// no-reference so callers fall through to language-profile
-		// path.
-		slog.Debug("reference found but has no selected audio",
-			"episode", episode.ShortName(),
-			"reference", ref.ShortName(),
-			"reason", "no_selected_audio")
-		return nil
-	}
-
-	slog.Debug("reference search completed",
-		"show", episode.GrandparentTitle,
-		"searched", searched,
-		"reference", ref.ShortName())
-
-	return &episodeRef{Episode: ref, Audio: sel.Audio, Subtitle: sel.Subtitle}
-}
-
-// applyEpisodeForUser seeds a single new/updated episode for a single
-// user, trying the tiers most-attributable first:
-//
-//  1. The user's recorded INTENT for the show — their own observed
-//     choice, re-applied per-user (this is what makes a media-replaced
-//     episode recover each user's selection instead of imposing the
-//     household-ambient one).
-//  2. The shared reference episode (lazily searched once per episode
-//     across all users) — the show's established ambient selection.
-//  3. The learned language profile — cross-show generalization for a
-//     show the user has never touched.
-//
-// Writes via updateEpisodeStreams / applyLanguageProfile use the
-// per-user client because PUTs set per-user playback state.
-func (s *Syncer) applyEpisodeForUser(
-	ctx context.Context,
-	userClient PlexReadWriter,
-	userID string,
-	episode *streams.Episode,
-	refOnce func() *episodeRef,
-	trigger string,
-) {
 	username := s.users.Name(userID)
-
-	if intent, ok := s.cache.IntentFor(userID, episode.GrandparentRatingKey); ok {
-		intentRef := intent.RefStreams()
-		if s.updateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), intentRef) {
-			slog.Info("new/updated episode language set",
-				"trigger", trigger,
-				"user", username,
-				"episode", episode.ShortName(),
-				"source", "intent",
-				"audio", streams.Desc(intentRef.Audio),
-				"subtitle", streams.Desc(intentRef.Subtitle))
-		}
-		return
+	p, src := s.seedPlan(userID, ep)
+	if p == nil {
+		slog.Debug("no choice to seed new episode", "episode", ep.ShortName(), "user", username)
+		return nil
 	}
-
-	ref := refOnce()
-	if ref == nil {
-		if s.cfg.LanguageProfiles {
-			if s.applyLanguageProfile(ctx, userClient, userID, episode, trigger) {
-				return
-			}
-		}
-		slog.Debug("no reference episode found for new episode",
-			"episode", episode.ShortName(), "user", username)
-		return
+	p.targets = []streams.Episode{*ep}
+	written, err := s.apply.applyLocked(ctx, client, userID, p)
+	if written > 0 {
+		src.log(trigger, username, ep)
 	}
-
-	changed := s.updateEpisodeStreams(ctx, userClient, username, plex.RatingKey(episode.RatingKey), streams.Pair{Audio: ref.Audio, Subtitle: ref.Subtitle})
-	if changed {
-		slog.Info("new/updated episode language set",
-			"trigger", trigger,
-			"user", username,
-			"episode", episode.ShortName(),
-			"reference", ref.Episode.ShortName(),
-			"audio", streams.Desc(ref.Audio),
-			"subtitle", streams.Desc(ref.Subtitle))
-	}
+	return err
 }
 
-// findReferenceEpisode walks episodes from newest to oldest and returns
-// the first one (other than excludeKey) that has a selected audio
-// stream. It fetches full metadata per candidate via the given reader
-// and caps the search at maxDepth items to bound latency on very long
-// shows.
-//
-// A standalone helper (rather than a method) because the test suite
-// drives it directly with synthetic episode lists.
-func findReferenceEpisode(
-	ctx context.Context,
-	reader plexReader,
-	episodes []streams.Episode,
-	excludeKey string,
-	maxDepth int,
-) (reference *streams.Episode, searched, fetchErrors int) {
-	for i := range slices.Backward(episodes) {
-		if ctx.Err() != nil {
-			return nil, searched, fetchErrors
-		}
-		if searched >= maxDepth {
-			return nil, searched, fetchErrors
-		}
-		searched++
-		ep := &episodes[i]
-		if ep.RatingKey == excludeKey {
-			continue
-		}
-		full, err := reader.Episode(ctx, plex.RatingKey(ep.RatingKey))
-		if err != nil {
-			// ErrNotFound = benign (candidate has no metadata); a context
-			// error is shutdown, not degradation. Only real transport/server
-			// errors signal a degraded Plex.
-			if !errors.Is(err, plex.ErrNotFound) && ctx.Err() == nil {
-				fetchErrors++
-			}
-			continue
-		}
-		if streams.Selected(full).Audio != nil {
-			return full, searched, fetchErrors
-		}
+// seedSource is the tier a seed plan came from, for its log line.
+type seedSource struct {
+	choice   streams.Pair
+	from     string // the household tier's source user, by name
+	audio    string // the profile tier's audio and subtitle language
+	subtitle string
+	tier     streams.Source
+}
+
+func (src *seedSource) log(trigger, username string, ep *streams.Episode) {
+	if src.tier == streams.SourceProfile {
+		slog.Info("language profile applied to new show",
+			"trigger", trigger, "user", username, "episode", ep.ShortName(),
+			"audio_lang", textsafe.SanitizeSingleLine(src.audio),
+			"subtitle_lang", textsafe.SanitizeSingleLine(src.subtitle))
+		return
 	}
-	return nil, searched, fetchErrors
+	source, logger := "intent", slog.Default()
+	if src.tier == streams.SourceHousehold {
+		source, logger = "household", logger.With("from", src.from)
+	}
+	logger.Info("new/updated episode language set",
+		"trigger", trigger, "user", username, "episode", ep.ShortName(), "source", source,
+		"audio", streams.Desc(src.choice.Audio), "subtitle", streams.Desc(src.choice.Subtitle))
+}
+
+// seedPlan is userID's plan for ep from the first tier that has one, or nil.
+// The caller holds the user's show lock.
+func (s *Syncer) seedPlan(userID string, ep *streams.Episode) (*plan, seedSource) {
+	floor, strategy := s.cfg.SubtitleFloor, s.cfg.UpdateStrategy
+	if key, in, ok := s.intentFor(userID, ep); ok && inScope(key, strategy, in.Anchor, ep) {
+		ref := in.RefStreams()
+		return &plan{
+			pick: pickForIntent(ref, floor), ref: ref,
+			basis:      streams.Basis{Version: in.ObservedAt, Source: streams.SourceIntent},
+			observedAt: in.ObservedAt,
+		}, seedSource{choice: ref, tier: streams.SourceIntent}
+	}
+
+	covers := coversKey(ep)
+	in, key, from, ok := s.cache.LatestIntentFor(userID, func(owner, key string, in streams.Intent) bool {
+		if !covers(key) {
+			return false
+		}
+		governing, _, ok := s.intentFor(owner, ep)
+		return ok && governing.String() == key && inScope(governing, strategy, in.Anchor, ep)
+	})
+	if ok {
+		fromName := s.users.Name(from)
+		slog.Debug("seeding from another user's choice", "episode", ep.ShortName(),
+			"from", fromName, "key", textsafe.SanitizeSingleLine(key))
+		ref := in.RefStreams()
+		return &plan{
+			pick: pickForIntent(ref, floor), ref: ref,
+			basis: streams.Basis{From: from, Version: in.ObservedAt, Source: streams.SourceHousehold},
+		}, seedSource{choice: ref, from: fromName, tier: streams.SourceHousehold}
+	}
+
+	if s.cfg.LanguageProfiles {
+		return s.profilePlan(userID, ep)
+	}
+	return nil, seedSource{}
 }

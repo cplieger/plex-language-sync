@@ -1,22 +1,18 @@
-// Package cache is the on-disk persistence layer for processed-episode
-// deduplication, per-user language profiles, and shared-user tokens.
+// Package cache persists dedup keys, per-user language profiles and intents,
+// the record of what the app applied, and shared-user tokens.
 //
-// On-disk layout: state is split across three files in the cache dir by
-// retention class, so one corrupt file never costs another class's state:
+// State is split across three files by retention class, so one corrupt file
+// never costs another class's state:
 //
-//	profiles.json  language_profiles  irreplaceable learned state
-//	tokens.json    user_tokens        re-fetchable encrypted secrets
-//	state.json     processed_episodes disposable operational state
+//	profiles.json  language_profiles, intents  irreplaceable learned state
+//	tokens.json    user_tokens                 re-fetchable encrypted secrets
+//	state.json     processed_episodes, applied disposable operational state
 //
-// Field names, types, and JSON tags within each file are an inviolate
-// read-forward / write-back contract across deploys — any change is a
-// migration, not a refactor. A pre-split /config/cache.json (the legacy
-// union schema, see cacheData) is migrated automatically on first load: its
-// sections seed anything a split file does not yet cover, the split files
-// are then written eagerly, and the legacy file is removed once all three
-// split files exist on disk. Per-section precedence is
-// split-file > legacy > fresh, so a partially failed migration can never
-// lose a section that either source still holds.
+// Field names, types and JSON tags are a contract across deploys: fields are
+// additive, and renaming or retyping one is a migration. A legacy cache.json
+// (the union schema, see cacheData) is migrated on first load with per-section
+// precedence split-file > legacy > fresh, so a partly failed migration never
+// loses a section either source still holds.
 package cache
 
 import (
@@ -29,9 +25,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v4"
+	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/runesafe/v3"
 )
 
 // maxCacheSize caps each cache file at 50 MB. A file at this size is almost
@@ -56,10 +52,10 @@ const (
 type cacheData struct {
 	// ProcessedEpisodes tracks recently processed episode keys to avoid
 	// re-processing the same episode on rapid successive events.
-	// Keys carry a subsystem prefix from keys.go:
-	// "streams:{userID}:{ratingKey}:{audioID}:{subID}" (play events),
-	// "timeline:{itemID}" (library scans), and "scheduler:{ratingKey}"
-	// (deep-analysis runs). Persisted in state.json.
+	// Keys carry a subsystem prefix from keys.go: "timeline:{itemID}"
+	// (library scans) and "scheduler:{ratingKey}" (deep-analysis runs). A
+	// file from an older build also holds "streams:" keys, which nothing
+	// reads and the 24h prune drops. Persisted in state.json.
 	ProcessedEpisodes map[string]int64 `json:"processed_episodes"`
 	// LanguageProfiles maps userID → audioLang → subtitleLang.
 	// Empty subtitle string means "no subtitles" for that audio language.
@@ -70,6 +66,10 @@ type cacheData struct {
 	// profiles.json; absent from the legacy union schema (pre-intent
 	// versions), so legacy migration leaves it empty.
 	Intents map[string]map[string]streams.Intent `json:"intents,omitempty"`
+	// Applied maps userID → episode ratingKey → what the app last left on
+	// that episode for that user. Persisted in state.json; absent from the
+	// legacy union schema, so legacy migration leaves it empty.
+	Applied map[string]map[string]streams.Applied `json:"applied,omitempty"`
 	// UserTokens maps userID → accessToken for shared users. Persisted in
 	// tokens.json, encrypted at the disk boundary when a key is set.
 	UserTokens map[string]string `json:"user_tokens"`
@@ -88,7 +88,8 @@ type tokensData struct {
 
 // stateData is the state.json schema (disposable operational state).
 type stateData struct {
-	ProcessedEpisodes map[string]int64 `json:"processed_episodes"`
+	ProcessedEpisodes map[string]int64                      `json:"processed_episodes"`
+	Applied           map[string]map[string]streams.Applied `json:"applied,omitempty"`
 }
 
 // Cache is the concurrent-safe persistent cache. The zero value is usable;
@@ -104,13 +105,17 @@ type Cache struct {
 // preferred construction point for application code because it documents
 // intent.
 func New() *Cache {
-	return &Cache{
-		data: cacheData{
-			ProcessedEpisodes: make(map[string]int64),
-			LanguageProfiles:  make(map[string]map[string]string),
-			Intents:           make(map[string]map[string]streams.Intent),
-			UserTokens:        make(map[string]string),
-		},
+	return &Cache{data: freshData()}
+}
+
+// freshData returns an empty cacheData with every map initialized.
+func freshData() cacheData {
+	return cacheData{
+		ProcessedEpisodes: make(map[string]int64),
+		LanguageProfiles:  make(map[string]map[string]string),
+		Intents:           make(map[string]map[string]streams.Intent),
+		Applied:           make(map[string]map[string]streams.Applied),
+		UserTokens:        make(map[string]string),
 	}
 }
 
@@ -173,12 +178,7 @@ func (c *Cache) Load(dir string) error {
 func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.data = cacheData{
-		ProcessedEpisodes: make(map[string]int64),
-		LanguageProfiles:  make(map[string]map[string]string),
-		Intents:           make(map[string]map[string]streams.Intent),
-		UserTokens:        make(map[string]string),
-	}
+	c.data = freshData()
 
 	var errs []error
 
@@ -214,6 +214,7 @@ func (c *Cache) loadLocked(dir string) (migrate bool, err error) {
 		"dir", dir,
 		"processed_episodes", len(c.data.ProcessedEpisodes),
 		"language_profiles", len(c.data.LanguageProfiles),
+		"applied", appliedCount(c.data.Applied),
 		"user_tokens", len(c.data.UserTokens))
 	return legacyOK && splitPresent < 3, errors.Join(errs...)
 }
@@ -301,7 +302,7 @@ func (c *Cache) overlayStateLocked(dir string, errs *[]error) int {
 		return 0
 	}
 	if err != nil {
-		slog.Warn("cache: state file unreadable or corrupt; dedup keys and scheduler marker reset",
+		slog.Warn("cache: state file unreadable or corrupt; dedup keys, applied records and scheduler marker reset",
 			"file", stateFile, "error", err)
 		*errs = append(*errs, err)
 		return 1
@@ -309,6 +310,10 @@ func (c *Cache) overlayStateLocked(dir string, errs *[]error) int {
 	c.data.ProcessedEpisodes = sd.ProcessedEpisodes
 	if c.data.ProcessedEpisodes == nil {
 		c.data.ProcessedEpisodes = make(map[string]int64)
+	}
+	c.data.Applied = sd.Applied
+	if c.data.Applied == nil {
+		c.data.Applied = make(map[string]map[string]streams.Applied)
 	}
 	return 1
 }
@@ -327,7 +332,7 @@ func (c *Cache) decryptTokensLocked() {
 		plain, decErr := decryptToken(c.encKey, val)
 		if decErr != nil {
 			slog.Warn("cache: failed to decrypt user token, will refresh from plex.tv",
-				"user", runesafe.SanitizeSingleLine(uid), "error", decErr)
+				"user", textsafe.SanitizeSingleLine(uid), "error", decErr)
 			delete(c.data.UserTokens, uid)
 			continue
 		}
@@ -356,7 +361,7 @@ func loadJSONFile(path string, warnPerms bool, into any) (found bool, err error)
 	// error (that section starts fresh) rather than truncating. Unmarshal
 	// populates fields up to the error point, so decode into the caller's
 	// zero-value target and let the caller commit only on success.
-	raw, err := atomicfile.ReadBounded(context.Background(), path, maxCacheSize)
+	raw, err := filesafe.ReadBounded(context.Background(), path, maxCacheSize)
 	if err != nil {
 		return true, err
 	}
@@ -381,7 +386,7 @@ func fileExists(path string) bool {
 // Write failures are per-file: the remaining files are still attempted
 // and the joined error is returned. Each write is capped at
 // maxCacheSize: an over-cap section is refused with
-// atomicfile.ErrFileTooLarge and the previous file stays intact, instead
+// filesafe.ErrFileTooLarge and the previous file stays intact, instead
 // of persisting a file the next boot's bounded read would reject.
 func (c *Cache) Save(dir string) error {
 	profiles, tokens, state, err := c.encodeAllForSave()
@@ -402,9 +407,9 @@ func (c *Cache) Save(dir string) error {
 	var errs []error
 	for _, f := range files {
 		path := filepath.Join(dir, f.name)
-		res, werr := atomicfile.WriteFile(context.Background(), path, f.data,
-			atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700),
-			atomicfile.WithMaxBytes(maxCacheSize))
+		res, werr := filesafe.WriteFile(context.Background(), path, f.data,
+			filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700),
+			filesafe.WithMaxBytes(maxCacheSize))
 		if werr != nil {
 			// A non-nil error is unambiguously a real failure: the data did
 			// not reach its final path. Keep writing the other sections.
@@ -430,26 +435,26 @@ func (c *Cache) Save(dir string) error {
 
 // probeWritable is the seam tests stub to reach probe outcomes a real
 // directory cannot be made to produce.
-var probeWritable = atomicfile.ProbeWritable
+var probeWritable = filesafe.ProbeWritable
 
 // CheckWritable proves dir accepts Save's writes, at Save's modes, so a
 // read-only, wrongly owned or mode-widening volume fails at startup instead
 // of at the first save. A probe whose bytes reached disk passes even when
 // only its close or unlink failed, since Save publishes by rename; that
 // failure is logged at Warn. The returned error wraps the probe's cause, so
-// errors.Is against atomicfile.ErrModeNotStored or fs.ErrPermission works.
+// errors.Is against filesafe.ErrModeNotStored or fs.ErrPermission works.
 func CheckWritable(ctx context.Context, dir string) error {
 	res, err := probeWritable(ctx, dir,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+		filesafe.WithMode(0o600), filesafe.WithMkdirMode(0o700))
 	if err != nil {
 		return err
 	}
 	if !res.Writable() {
-		return fmt.Errorf("%s: %s: %w", res.Dir, res.Stage, res.Err)
+		return fmt.Errorf("%s: %s: %w", res.Dir, res.Phase, res.Err)
 	}
 	if !res.OK() {
 		slog.Warn("cache: directory accepts writes but the writability probe's cleanup failed",
-			"dir", res.Dir, "stage", res.Stage.String(), "leaked", res.Leaked, "error", res.Err)
+			"dir", res.Dir, "stage", res.Phase.String(), "leaked", res.Leaked, "error", res.Err)
 	}
 	return nil
 }
@@ -463,6 +468,7 @@ func (c *Cache) encodeAllForSave() (profiles, tokens, state []byte, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pruneOldEntriesLocked()
+	evictOldestApplied(c.data.Applied, maxAppliedEntries)
 
 	// Encrypt user tokens for the on-disk copy without mutating in-memory
 	// state. A nil map stays nil so tokens.json keeps the frozen
@@ -491,6 +497,7 @@ func (c *Cache) encodeAllForSave() (profiles, tokens, state []byte, err error) {
 	}
 	if state, err = json.MarshalIndent(&stateData{
 		ProcessedEpisodes: c.data.ProcessedEpisodes,
+		Applied:           c.data.Applied,
 	}, "", "  "); err != nil {
 		return nil, nil, nil, fmt.Errorf("marshal %s: %w", stateFile, err)
 	}

@@ -6,21 +6,20 @@ import (
 	"github.com/cplieger/plex-language-sync/internal/plex"
 	"github.com/cplieger/plex-language-sync/internal/streams"
 	"github.com/cplieger/plex-language-sync/internal/users"
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/plexapi/v3"
 )
 
-// plexReader is the admin-scoped read surface: resolve one episode, and
-// enumerate a show's or a season's episodes to propagate across.
+// plexReader is the read half of the per-user client: resolve one episode,
+// and enumerate a show's or a season's episodes to propagate across.
 type plexReader interface {
 	Episode(ctx context.Context, ratingKey plex.RatingKey) (*streams.Episode, error)
 	ShowEpisodes(ctx context.Context, showRatingKey plex.RatingKey) ([]streams.Episode, error)
 	SeasonEpisodes(ctx context.Context, seasonRatingKey plex.RatingKey) ([]streams.Episode, error)
 }
 
-// plexWriter is the stream-selection write surface. Every write is user-scoped:
-// Plex records a selection against the requesting token's user, not
-// server-wide, so these must be called on a per-user client and never on the
-// admin client as a fallback.
+// plexWriter is the stream-selection write surface. Plex records a selection
+// against the requesting token's user, so these must be called on a per-user
+// client and never on the admin client as a fallback.
 type plexWriter interface {
 	SetAudioStream(ctx context.Context, sel plexapi.StreamSelection) error
 	SetSubtitleStream(ctx context.Context, sel plexapi.StreamSelection) error
@@ -42,15 +41,23 @@ type PlexReadWriter interface {
 type userClientFunc func(userID string) PlexReadWriter
 
 // cacheStore is the knowledge this package creates and re-reads: the learned
-// audio->subtitle profiles and the per-(user, show) intent ledger.
+// audio->subtitle profiles, each user's recorded choices by scope key, and
+// the record of what the app left on each episode for each user.
 type cacheStore interface {
 	LearnLanguageProfile(userID string, choice streams.LanguageChoice)
 	SubtitleLangForAudio(userID, audioLang string) (string, bool)
-	// RecordIntent stores a user's observed track selection for a show
-	// (event-plane only: callers record what they witnessed at a resolved
-	// play session, never a reconstructed attribution).
-	RecordIntent(userID, showKey string, intent *streams.Intent)
-	IntentFor(userID, showKey string) (streams.Intent, bool)
+	// RecordIntent stores a user's observed track selection under a scope
+	// key (event-plane only: callers record what they witnessed at a
+	// resolved play session, never a reconstructed attribution).
+	RecordIntent(userID, key string, intent *streams.Intent)
+	IntentFor(userID, key string) (streams.Intent, bool)
+	NewestObservedAt(userID string, match func(key string) bool) int64
+	// LatestIntentFor runs match with no cache lock held, so match may read
+	// the cache.
+	LatestIntentFor(exceptUser string, match func(user, key string, in streams.Intent) bool) (in streams.Intent, key, fromUser string, ok bool)
+	AppliedFor(userID, ratingKey string) (streams.Applied, bool)
+	RecordApplied(userID, ratingKey string, a streams.Applied)
+	ForgetApplied(userID, ratingKey string)
 }
 
 // userLookup enumerates the users to fan out to and names them for logs.

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/plex-language-sync/internal/streams"
-	"github.com/cplieger/plexapi/v2"
+	"github.com/cplieger/plexapi/v3"
 )
 
 func FuzzSharedServersXMLUnmarshal(f *testing.F) {
