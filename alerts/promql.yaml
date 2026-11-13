@@ -12,13 +12,13 @@ groups:
     rules:
       - alert: PlexLanguageSyncDown
         expr: up{job="plex-language-sync"} == 0 or absent(up{job="plex-language-sync"})
-        for: 10m
+        for: 5m
         labels:
           severity: warning
         annotations:
           summary: "plex-language-sync is not being scraped"
           description: >
-            No successful scrape of plex-language-sync for 10m, or no scrape
+            No successful scrape of plex-language-sync for 5m, or no scrape
             target at all. Check that the container runs, METRICS_LISTEN_ADDR
             is set and the scrape job is named plex-language-sync.
       - alert: PlexLanguageSyncDeepScanStalled
