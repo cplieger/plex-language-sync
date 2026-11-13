@@ -61,7 +61,7 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into your Prometheus-compatib
 
 | Alert | File | Fires when | Severity |
 | --- | --- | --- | --- |
-| `PlexLanguageSyncDown` | `promql.yaml` | the scrape of the `plex-language-sync` job failed, or the job has no target, for 10 minutes | warning |
+| `PlexLanguageSyncDown` | `promql.yaml` | the scrape of the `plex-language-sync` job failed, or the job has no target, for 5 minutes | warning |
 | `PlexLanguageSyncDeepScanStalled` | both | no complete deep scan in two scan intervals plus 2 hours, 50 hours at the default | warning |
 | `PlexLanguageSyncWebSocketDown` | `promql.yaml` | the Plex notification stream has been down for 10 minutes | warning |
 | `PlexLanguageSyncResolutionStalled` | both | no playback is being attributed to any user | warning |

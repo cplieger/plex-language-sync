@@ -2,18 +2,18 @@
 rule_files:
   - promql.yaml
 
-evaluation_interval: 10m
+evaluation_interval: 1m
 
 tests:
   # Default DEEP_SCAN_INTERVAL, 24h: the window is 50h, then the 1h for.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 0x400
+        values: 0x4000
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 86400x400
+        values: 86400x4000
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 0x400
+        values: 0x4000
     alert_rule_test:
       - eval_time: 49h
         alertname: PlexLanguageSyncDeepScanStalled
@@ -33,14 +33,14 @@ tests:
               description: "No deep scan has covered its whole window for two scan intervals plus 2h. Missed episodes then get no tracks. Read the `deep analysis completed` lines with `complete=false`.\n"
 
   # Passes that keep completing every 24h never fire it.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 0x143 86400x143 172800x143 259200x143
+        values: 0x1439 86400x1439 172800x1439 259200x1430
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 86400x575
+        values: 86400x5750
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 0x575
+        values: 0x5750
     alert_rule_test:
       - eval_time: 95h
         alertname: PlexLanguageSyncDeepScanStalled
@@ -48,14 +48,14 @@ tests:
 
   # With no complete pass ever recorded the gauge reads 0, so a process younger
   # than the window is not stalled yet.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 0x400
+        values: 0x4000
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 86400x400
+        values: 86400x4000
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 144000x400
+        values: 144000x4000
     alert_rule_test:
       - eval_time: 60h
         alertname: PlexLanguageSyncDeepScanStalled
@@ -64,14 +64,14 @@ tests:
   # A container restarted every 40h whose passes never complete: the gauge
   # holds the recorded pass at 2h across restarts, so the alert is firing by
   # 54h although the process is 14h old.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 7200x400
+        values: 7200x4000
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 86400x400
+        values: 86400x4000
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 0x239 144000x239
+        values: 0x2399 144000x2390
     alert_rule_test:
       - eval_time: 51h
         alertname: PlexLanguageSyncDeepScanStalled
@@ -88,14 +88,14 @@ tests:
               description: "No deep scan has covered its whole window for two scan intervals plus 2h. Missed episodes then get no tracks. Read the `deep analysis completed` lines with `complete=false`.\n"
 
   # DEEP_SCAN_INTERVAL=6h: the window is 14h, not a fixed 50h.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 0x200
+        values: 0x2000
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 21600x200
+        values: 21600x2000
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 0x200
+        values: 0x2000
     alert_rule_test:
       - eval_time: 13h
         alertname: PlexLanguageSyncDeepScanStalled
@@ -113,14 +113,14 @@ tests:
 
   # DEEP_SCAN_INTERVAL=48h: the window is 98h, so a gap a fixed 50h would page
   # on is one normal interval.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 0x700
+        values: 0x7000
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 172800x700
+        values: 172800x7000
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 0x700
+        values: 0x7000
     alert_rule_test:
       - eval_time: 52h
         alertname: PlexLanguageSyncDeepScanStalled
@@ -140,20 +140,20 @@ tests:
               description: "No deep scan has covered its whole window for two scan intervals plus 2h. Missed episodes then get no tracks. Read the `deep analysis completed` lines with `complete=false`.\n"
 
   # DEEP_SCAN_INTERVAL=off: the gauge reads 0 and the rule stays silent.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_deep_scan_last_success_timestamp_seconds{job="plex-language-sync",instance="a"}
-        values: 0x1300
+        values: 0x13000
       - series: plex_language_sync_deep_scan_interval_seconds{job="plex-language-sync",instance="a"}
-        values: 0x1300
+        values: 0x13000
       - series: process_start_time_seconds{job="plex-language-sync",instance="a"}
-        values: 0x1300
+        values: 0x13000
     alert_rule_test:
       - eval_time: 200h
         alertname: PlexLanguageSyncDeepScanStalled
         exp_alerts: []
 
-  # A failing scrape and a missing target both fire the down alert.
+  # A failing scrape and a missing target both fire the down alert after 5m.
   - interval: 1m
     input_series:
       - series: up{job="plex-language-sync",instance="a"}
@@ -162,7 +162,7 @@ tests:
       - eval_time: 10m
         alertname: PlexLanguageSyncDown
         exp_alerts: []
-      - eval_time: 20m
+      - eval_time: 11m
         alertname: PlexLanguageSyncDown
         exp_alerts:
           - exp_labels:
@@ -171,13 +171,16 @@ tests:
               instance: a
             exp_annotations:
               summary: "plex-language-sync is not being scraped"
-              description: "No successful scrape of plex-language-sync for 10m, or no scrape target at all. Check that the container runs, METRICS_LISTEN_ADDR is set and the scrape job is named plex-language-sync.\n"
+              description: "No successful scrape of plex-language-sync for 5m, or no scrape target at all. Check that the container runs, METRICS_LISTEN_ADDR is set and the scrape job is named plex-language-sync.\n"
   - interval: 1m
     input_series:
       - series: up{job="other",instance="b"}
         values: 1x20
     alert_rule_test:
-      - eval_time: 20m
+      - eval_time: 4m
+        alertname: PlexLanguageSyncDown
+        exp_alerts: []
+      - eval_time: 5m
         alertname: PlexLanguageSyncDown
         exp_alerts:
           - exp_labels:
@@ -185,19 +188,18 @@ tests:
               job: plex-language-sync
             exp_annotations:
               summary: "plex-language-sync is not being scraped"
-              description: "No successful scrape of plex-language-sync for 10m, or no scrape target at all. Check that the container runs, METRICS_LISTEN_ADDR is set and the scrape job is named plex-language-sync.\n"
+              description: "No successful scrape of plex-language-sync for 5m, or no scrape target at all. Check that the container runs, METRICS_LISTEN_ADDR is set and the scrape job is named plex-language-sync.\n"
 
-  # The WebSocket alert waits 10m and clears on reconnect. Rules evaluate every
-  # 10m, so an alert pending at 10m fires at the 20m evaluation.
+  # The WebSocket alert waits 10m and clears on reconnect.
   - interval: 1m
     input_series:
       - series: plex_language_sync_websocket_connected{job="plex-language-sync",instance="a"}
         values: 1x5 0x20 1x20
     alert_rule_test:
-      - eval_time: 14m
+      - eval_time: 15m
         alertname: PlexLanguageSyncWebSocketDown
         exp_alerts: []
-      - eval_time: 25m
+      - eval_time: 16m
         alertname: PlexLanguageSyncWebSocketDown
         exp_alerts:
           - exp_labels:
@@ -213,12 +215,12 @@ tests:
 
   # The stall alert holds while the gauge holds, past any fixed window, and
   # clears on recovery.
-  - interval: 10m
+  - interval: 1m
     input_series:
       - series: plex_language_sync_user_resolution_stalled{job="plex-language-sync",instance="a",cause="sessions_unreadable"}
-        values: 0x2 1x60 0x5
+        values: 0x29 1x609 0x50
       - series: plex_language_sync_user_resolution_stalled{job="plex-language-sync",instance="a",cause="all_clients_absent"}
-        values: 0x67
+        values: 0x670
     alert_rule_test:
       - eval_time: 8h
         alertname: PlexLanguageSyncResolutionStalled
