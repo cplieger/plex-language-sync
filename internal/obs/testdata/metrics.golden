@@ -1,0 +1,42 @@
+# HELP plex_language_sync_deep_scan_runs_total Deep scans finished, by result: complete covered its whole window, incomplete stopped early.
+# TYPE plex_language_sync_deep_scan_runs_total counter
+plex_language_sync_deep_scan_runs_total{result="complete"} 1
+plex_language_sync_deep_scan_runs_total{result="incomplete"} 1
+# HELP plex_language_sync_play_events_total Play events handled, by outcome: attributed to a user, or skipped as unattributable.
+# TYPE plex_language_sync_play_events_total counter
+plex_language_sync_play_events_total{outcome="attributed"} 3
+plex_language_sync_play_events_total{outcome="skipped"} 1
+# HELP plex_language_sync_track_updates_total Stream selection writes to Plex, by kind (audio, subtitle) and result (set, failed).
+# TYPE plex_language_sync_track_updates_total counter
+plex_language_sync_track_updates_total{kind="audio",result="failed"} 1
+plex_language_sync_track_updates_total{kind="audio",result="set"} 2
+plex_language_sync_track_updates_total{kind="subtitle",result="failed"} 0
+plex_language_sync_track_updates_total{kind="subtitle",result="set"} 4
+# HELP plex_language_sync_websocket_reconnects_total Reconnect attempts after the Plex WebSocket stream dropped or failed to connect.
+# TYPE plex_language_sync_websocket_reconnects_total counter
+plex_language_sync_websocket_reconnects_total 2
+# HELP plex_language_sync_cache_save_failures_total Failed saves of the cache to /config by the deep scan or at shutdown.
+# TYPE plex_language_sync_cache_save_failures_total counter
+plex_language_sync_cache_save_failures_total 1
+# HELP plex_language_sync_build_info Always 1; the version label is the release this process runs.
+# TYPE plex_language_sync_build_info gauge
+plex_language_sync_build_info{version="v1.2.3"} 1
+# HELP plex_language_sync_user_resolution_stalled 1 while no play event can be attributed to a user, by cause, else 0.
+# TYPE plex_language_sync_user_resolution_stalled gauge
+plex_language_sync_user_resolution_stalled{cause="all_clients_absent"} 1
+plex_language_sync_user_resolution_stalled{cause="sessions_unreadable"} 0
+# HELP plex_language_sync_websocket_connected 1 while the Plex WebSocket notification stream is connected, else 0.
+# TYPE plex_language_sync_websocket_connected gauge
+plex_language_sync_websocket_connected 1
+# HELP plex_language_sync_deep_scan_last_success_timestamp_seconds Unix time the last complete deep scan finished, read from the last-run record at startup; 0 when none was ever recorded.
+# TYPE plex_language_sync_deep_scan_last_success_timestamp_seconds gauge
+plex_language_sync_deep_scan_last_success_timestamp_seconds 1800007200
+# HELP plex_language_sync_deep_scan_interval_seconds DEEP_SCAN_INTERVAL in seconds; 0 when the deep scan is off.
+# TYPE plex_language_sync_deep_scan_interval_seconds gauge
+plex_language_sync_deep_scan_interval_seconds 5400.5
+# HELP plex_language_sync_deep_scan_deadline_timestamp_seconds Unix time by which the next complete deep scan is due; 0 while the deep scan is off.
+# TYPE plex_language_sync_deep_scan_deadline_timestamp_seconds gauge
+plex_language_sync_deep_scan_deadline_timestamp_seconds 1800187200
+# HELP plex_language_sync_shared_users Shared Plex users the app currently follows, besides the admin.
+# TYPE plex_language_sync_shared_users gauge
+plex_language_sync_shared_users 5
