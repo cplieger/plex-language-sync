@@ -84,7 +84,6 @@ type gridItem struct {
 }
 
 type layoutNode struct {
-	Kind string `json:"kind"`
 	Spec struct {
 		Layout               *layoutNode     `json:"layout"`
 		ConditionalRendering *conditionGroup `json:"conditionalRendering"`
@@ -101,7 +100,6 @@ type dashVariable struct {
 		Refresh string `json:"refresh"`
 		Sort    string `json:"sort"`
 		Current struct {
-			Text  any `json:"text"`
 			Value any `json:"value"`
 		} `json:"current"`
 		Multi      bool            `json:"multi"`
