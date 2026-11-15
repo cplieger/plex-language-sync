@@ -1,12 +1,12 @@
 # Monitoring and alerts
 
-This page describes the metrics, log lines and alert rules of plex-language-sync, and what its healthcheck proves. Read it when you want to be told that the app has stopped doing its job. plex-language-sync serves a metrics page when you turn it on, and ships metric alert rules for it. If you run Loki and no metric store, a log rule file gives you the deep scan and user attribution alerts, and one on the app's ERROR lines.
+This page describes the metrics, log lines, alert rules and Grafana dashboard of plex-language-sync, and what its healthcheck proves. Read it when you want to be told that the app has stopped doing its job. The app serves a metrics page when you turn it on, and ships metric alert rules and a dashboard for it. If you run Loki and no metric store, a log rule file gives you the deep scan and user attribution alerts, and one on the app's ERROR lines.
 
 ## What you get
 
 | You run | You get | You set up |
 | --- | --- | --- |
-| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | The five metric alerts, `up` and graphs | `METRICS_LISTEN_ADDR`, a scrape job named `plex-language-sync`, and [`alerts/promql.yaml`](../alerts/promql.yaml) on your ruler |
+| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | The five metric alerts, `up` and the [dashboard](#dashboard) | `METRICS_LISTEN_ADDR`, a scrape job named `plex-language-sync`, and [`alerts/promql.yaml`](../alerts/promql.yaml) on your ruler |
 | Loki and Alertmanager, no metric store | The three log alerts | [`alerts/logql.yaml`](../alerts/logql.yaml) on Loki's ruler, with `LOG_LEVEL` at `info` |
 | Grafana-managed alerting only | The same rules, imported into Grafana | A Prometheus or Loki data source, and the rules |
 | Docker or Unraid only | Docker health, which notifies nobody on its own | An uptime prober on `/healthz`, or something that watches Docker health |
@@ -30,11 +30,7 @@ Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET
 | `plex_language_sync_shared_users` | gauge | none | Shared Plex users the app follows, besides the admin |
 | `plex_language_sync_build_info` | gauge | `version` | Always 1. `version` is the release the container runs |
 
-The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. plex-language-sync bundles no dashboard. These queries answer the common questions in Grafana:
-
-- `sum by (kind) (increase(plex_language_sync_track_updates_total{result="set"}[1d]))` shows how many tracks the app set in the last day.
-- `(time() - plex_language_sync_deep_scan_last_success_timestamp_seconds) / 3600` shows the hours since the last complete deep scan.
-- `increase(plex_language_sync_play_events_total{outcome="skipped"}[1d])` shows the plays of the last day that the app could not attribute to a user.
+The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. The bundled [dashboard](#dashboard) shows the `plex_language_sync_*` series in Grafana.
 
 ## Logs
 
@@ -85,6 +81,17 @@ Each rule's description in its file says what to check first when it fires. Note
 - The metric rule holds until playback is attributed again. The log rule holds for 6 hours after the stall line and does not follow recovery, so check for a later `user resolution recovered` line.
 
 Thresholds, windows and the `severity` labels are starting points. In `alerts/logql.yaml`, change the `container` selector to the label your log collector sets, such as `job` or `service`. In `alerts/promql.yaml`, keep the scrape job name that `PlexLanguageSyncDown` names.
+
+## Dashboard
+
+[`grafana-dashboard.json`](../grafana-dashboard.json) imports as the Plex Language Sync dashboard. It reads the metrics above from a Prometheus data source and needs Grafana 13.2 or newer. It works whatever you name the scrape job. The Instance variable lists the `instance` values of `plex_language_sync_build_info`, so with one container it is picked for you, and with several it picks the one to show. The dashboard has one page of four rows:
+
+- Needs attention appears only while an alert from `alerts/promql.yaml` fires, with one tile per rule. Each tile reads its rule's `ALERTS` series, which Prometheus and the Mimir ruler store beside your metrics, so the row stays hidden while those rules are not loaded. A scrape job with no target fires `PlexLanguageSyncDown` with no instance, so its tile cannot show that case.
+- Now shows whether the Plex notification stream is connected, when the last complete deep scan finished, when the next one is due and how many shared users the app follows. It reads `plex_language_sync_websocket_connected`, the two deep scan timestamps and `plex_language_sync_shared_users`.
+- Sync charts the audio and subtitle choices written to Plex, set or failed, from `plex_language_sync_track_updates_total`. It also charts the plays handled, matched to a user or skipped, from `plex_language_sync_play_events_total`.
+- Deep scan and Plex connection charts the complete and incomplete deep scans from `plex_language_sync_deep_scan_runs_total`. It also shows when the Plex notification stream was connected over the selected range, and the reconnect attempts from `plex_language_sync_websocket_reconnects_total`.
+
+The dashboard is versioned with the image, and the `grafana-dashboard.json` of release `<tag>` matches the metrics that image serves. Each release attaches it with its checksum at `https://github.com/cplieger/plex-language-sync/releases/download/<tag>/grafana-dashboard.json`, and each image publish pushes it as the OCI artifact `ghcr.io/cplieger/plex-language-sync/dashboard:<tag>`. The file sets `metadata.name` to `plex-language-sync`, which Grafana uses as the dashboard UID, so importing a newer copy over the old one updates it in place.
 
 ## Knowing the app is alive
 

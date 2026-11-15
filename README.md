@@ -115,13 +115,13 @@ When Plex is unreachable at start, the app keeps retrying instead of exiting, so
 
 ## Monitoring
 
-plex-language-sync serves Prometheus metrics when you set `METRICS_LISTEN_ADDR`, and opens a port only then. Five alert rules for them ship in [`alerts/promql.yaml`](alerts/promql.yaml). Without a metric store, load the three Loki rules in [`alerts/logql.yaml`](alerts/logql.yaml) instead, never both files, with `LOG_LEVEL` at `info`. The image has a Docker healthcheck, and [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what it proves and who is told. [Monitoring and alerts](docs/monitoring.md) lists the metrics, the log lines and the rules.
+plex-language-sync serves Prometheus metrics when you set `METRICS_LISTEN_ADDR`, and opens a port only then. Five alert rules ship in [`alerts/promql.yaml`](alerts/promql.yaml), and [`grafana-dashboard.json`](grafana-dashboard.json) is a dashboard for Grafana 13.2 or newer. Without a metric store, load the three Loki rules in [`alerts/logql.yaml`](alerts/logql.yaml) instead, with `LOG_LEVEL` at `info`. [Knowing the app is alive](docs/monitoring.md#knowing-the-app-is-alive) says what the Docker healthcheck proves and who is told. [Monitoring and alerts](docs/monitoring.md) lists the metrics, the dashboard, the log lines and the rules.
 
 ## Documentation
 
 - [How plex-language-sync works](docs/how-it-works.md) explains how tracks are matched and chosen, for anyone asking why a show did not follow.
 - [Configuration](docs/configuration.md) covers subtitle matching tiers, leaving shows out, https and the files in `/config`.
-- [Monitoring and alerts](docs/monitoring.md) covers the metrics, the log lines, both rule files and who tells you the app stopped.
+- [Monitoring and alerts](docs/monitoring.md) covers the metrics, the Grafana dashboard, the log lines, both rule files and who tells you the app stopped.
 - [Security](docs/hardening.md) covers token handling, a hardened compose setup and what the image contains.
 
 ## Credits
