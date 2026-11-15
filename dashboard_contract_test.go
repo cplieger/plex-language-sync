@@ -45,7 +45,11 @@ type dashPanel struct {
 			Spec  struct {
 				FieldConfig struct {
 					Defaults struct {
-						NoValue string `json:"noValue"`
+						NoValue  string `json:"noValue"`
+						Mappings []struct {
+							Type    string          `json:"type"`
+							Options json.RawMessage `json:"options"`
+						} `json:"mappings"`
 					} `json:"defaults"`
 				} `json:"fieldConfig"`
 			} `json:"spec"`
@@ -196,9 +200,8 @@ func row(t *testing.T, d *dashboard, title string) *layoutNode {
 
 var sampleRe = regexp.MustCompile(`(?m)^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{([^}]*)\})? `)
 
-// servedLabels is every series a fresh registry serves, with the label
-// names its samples carry.
-func servedLabels(t *testing.T) map[string][]string {
+// exposition is the metrics page a fresh registry serves.
+func exposition(t *testing.T) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	obs.New("test").Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody))
@@ -206,8 +209,15 @@ func servedLabels(t *testing.T) map[string][]string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return string(body)
+}
+
+// servedLabels is every series a fresh registry serves, with the label
+// names its samples carry.
+func servedLabels(t *testing.T) map[string][]string {
+	t.Helper()
 	served := map[string][]string{}
-	for _, m := range sampleRe.FindAllStringSubmatch(string(body), -1) {
+	for _, m := range sampleRe.FindAllStringSubmatch(exposition(t), -1) {
 		labels := served[m[1]]
 		for _, l := range matcherNameRe.FindAllStringSubmatch(m[2], -1) {
 			if !slices.Contains(labels, l[1]) {
@@ -234,6 +244,8 @@ var (
 	functionRe    = regexp.MustCompile(`\b[a-z_]+\s*\(`)
 	identRe       = regexp.MustCompile(`\b[a-zA-Z_:][a-zA-Z0-9_:]*\b`)
 	alertsRe      = regexp.MustCompile(`ALERTS\{alertname="([A-Za-z]+)"([^}]*)\}`)
+	stallTermRe   = regexp.MustCompile(`ALERTS\{alertname="PlexLanguageSyncResolutionStalled"[^}]*cause="([^"]*)"[^}]*\}(?:\s*\*\s*0\s*\+\s*(\d+))?`)
+	stallCauseRe  = regexp.MustCompile(`(?m)^plex_language_sync_user_resolution_stalled\{cause="([^"]*)"\} `)
 )
 
 var promqlKeywords = []string{"and", "or", "unless", "bool", "offset"}
@@ -411,6 +423,53 @@ func TestDashboardAttentionTilesMirrorEveryShippedRule(t *testing.T) {
 	for _, name := range mirrored {
 		if !slices.Contains(rules, name) {
 			t.Errorf("a tile mirrors %s, which alerts/promql.yaml does not hold", name)
+		}
+	}
+}
+
+// TestDashboardUserAttributionNamesEveryStallCause fails when a query reading
+// PlexLanguageSyncResolutionStalled misses a cause the app serves or names one
+// it does not, or a panel shows a cause's value with no text for it. A cause
+// no query names fires the alert with its tile and the Needs attention row
+// hidden.
+func TestDashboardUserAttributionNamesEveryStallCause(t *testing.T) {
+	var served []string
+	for _, m := range stallCauseRe.FindAllStringSubmatch(exposition(t), -1) {
+		served = append(served, m[1])
+	}
+	if len(served) == 0 {
+		t.Fatal("Setup: the registry serves no plex_language_sync_user_resolution_stalled series")
+	}
+	slices.Sort(served)
+	d := loadDashboard(t)
+	for where, expr := range panelQueries(&d) {
+		var causes []string
+		for _, m := range stallTermRe.FindAllStringSubmatch(expr, -1) {
+			causes = append(causes, m[1])
+		}
+		slices.Sort(causes)
+		if len(causes) > 0 && !slices.Equal(causes, served) {
+			t.Errorf("%s names stall causes %v, want the served %v", where, causes, served)
+		}
+	}
+	for name, p := range d.Spec.Elements {
+		mapped := map[string]bool{}
+		for _, mp := range p.Spec.VizConfig.Spec.FieldConfig.Defaults.Mappings {
+			var opts map[string]struct {
+				Text string `json:"text"`
+			}
+			if mp.Type == "value" && json.Unmarshal(mp.Options, &opts) == nil {
+				for v, o := range opts {
+					mapped[v] = o.Text != ""
+				}
+			}
+		}
+		for _, e := range panelExprs(&p) {
+			for _, m := range stallTermRe.FindAllStringSubmatch(e, -1) {
+				if !mapped[m[2]] {
+					t.Errorf("%s %q shows cause %s as %q, which no value mapping names", name, p.Spec.Title, m[1], m[2])
+				}
+			}
 		}
 	}
 }

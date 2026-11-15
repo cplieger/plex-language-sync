@@ -708,3 +708,31 @@ func TestListen_ReconnectLogsHowLongTheConnectionWasDown(t *testing.T) {
 		t.Errorf("websocket connected durations = %v, want %v", durations, want)
 	}
 }
+
+// An outage starts at the first failed attempt and holds across the failed
+// reconnects after it, so the duration covers every one of them.
+func TestOutageStart(t *testing.T) {
+	underWay := time.Now().Add(-time.Hour)
+	tests := []struct {
+		name      string
+		prev      time.Time
+		connected bool
+		keepsPrev bool
+	}{
+		{name: "first failure starts the outage", prev: time.Time{}, connected: false},
+		{name: "drop after a handshake starts a new outage", prev: underWay, connected: true},
+		{name: "failed reconnect keeps the outage start", prev: underWay, connected: false, keepsPrev: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := time.Now()
+			got := outageStart(tt.prev, tt.connected)
+			if tt.keepsPrev && !got.Equal(tt.prev) {
+				t.Errorf("outageStart(%v, %v) = %v, want the outage start %v", tt.prev, tt.connected, got, tt.prev)
+			}
+			if !tt.keepsPrev && got.Before(before) {
+				t.Errorf("outageStart(%v, %v) = %v, want now (not before %v)", tt.prev, tt.connected, got, before)
+			}
+		})
+	}
+}
