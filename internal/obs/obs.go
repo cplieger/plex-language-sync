@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/go/measure"
+	"github.com/cplieger/go/measure/v2"
 )
 
 // TrackKind is the kind label of the track-update counter.
@@ -57,26 +57,27 @@ type Metrics struct {
 // version is the release this process runs, the build_info label.
 func New(version string) *Metrics {
 	buildInfo := measure.NewLabeledGauge("build_info",
-		"Always 1; the version label is the release this process runs.", []string{"version"})
+		"Always 1; the version label is the release this process runs.", measure.UnitNone, []string{"version"})
 	m := &Metrics{
 		reg:          measure.NewRegistry("plex_language_sync"),
-		wsConnected:  measure.NewGauge("websocket_connected", "1 while the Plex WebSocket notification stream is connected, else 0."),
-		wsReconnects: measure.NewCounter("websocket_reconnects_total", "Reconnect attempts after the Plex WebSocket stream dropped or failed to connect."),
+		wsConnected:  measure.NewGauge("websocket_connected", "1 while the Plex WebSocket notification stream is connected, else 0.", measure.UnitNone),
+		wsReconnects: measure.NewCounter("websocket_reconnects_total", "Reconnect attempts after the Plex WebSocket stream dropped or failed to connect.", measure.UnitCount),
 		scanLastSuccess: measure.NewGauge("deep_scan_last_success_timestamp_seconds",
-			"Unix time the last complete deep scan finished, read from the last-run record at startup; 0 when none was ever recorded."),
-		scanInterval: measure.NewGauge("deep_scan_interval_seconds", "DEEP_SCAN_INTERVAL in seconds; 0 when the deep scan is off."),
+			"Unix time the last complete deep scan finished, read from the last-run record at startup; 0 when none was ever recorded.",
+			measure.UnitSeconds),
+		scanInterval: measure.NewGauge("deep_scan_interval_seconds", "DEEP_SCAN_INTERVAL in seconds; 0 when the deep scan is off.", measure.UnitSeconds),
 		scanDeadline: measure.NewGauge("deep_scan_deadline_timestamp_seconds",
-			"Unix time by which the next complete deep scan is due; 0 while the deep scan is off."),
+			"Unix time by which the next complete deep scan is due; 0 while the deep scan is off.", measure.UnitSeconds),
 		scanRuns: measure.NewLabeledCounter("deep_scan_runs_total",
-			"Deep scans finished, by result: complete covered its whole window, incomplete stopped early.", []string{"result"}),
+			"Deep scans finished, by result: complete covered its whole window, incomplete stopped early.", measure.UnitCount, []string{"result"}),
 		resolutionStalled: measure.NewLabeledGauge("user_resolution_stalled",
-			"1 while no play event can be attributed to a user, by cause, else 0.", []string{"cause"}),
+			"1 while no play event can be attributed to a user, by cause, else 0.", measure.UnitNone, []string{"cause"}),
 		playEvents: measure.NewLabeledCounter("play_events_total",
-			"Play events handled, by outcome: attributed to a user, or skipped as unattributable.", []string{"outcome"}),
+			"Play events handled, by outcome: attributed to a user, or skipped as unattributable.", measure.UnitCount, []string{"outcome"}),
 		trackUpdates: measure.NewLabeledCounter("track_updates_total",
-			"Stream selection writes to Plex, by kind (audio, subtitle) and result (set, failed).", []string{"kind", "result"}),
-		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config by the deep scan or at shutdown."),
-		sharedUsers:       measure.NewGauge("shared_users", "Shared Plex users the app currently follows, besides the admin."),
+			"Stream selection writes to Plex, by kind (audio, subtitle) and result (set, failed).", measure.UnitCount, []string{"kind", "result"}),
+		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config by the deep scan or at shutdown.", measure.UnitCount),
+		sharedUsers:       measure.NewGauge("shared_users", "Shared Plex users the app currently follows, besides the admin.", measure.UnitNone),
 	}
 	m.reg.MustRegister(buildInfo, m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanDeadline, m.scanRuns,
 		m.resolutionStalled, m.playEvents, m.trackUpdates, m.cacheSaveFailures, m.sharedUsers)
