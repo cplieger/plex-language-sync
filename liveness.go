@@ -116,9 +116,10 @@ type liveness struct {
 	websocket *loopEntry
 	reconnect *loopEntry
 	deepScan  *loopEntry
-	// stale holds the loops already reported stale, so each stall logs once.
-	stale map[*loopEntry]bool
-	mu    sync.Mutex
+	// staleSince holds when each loop now stale was first seen stale, so each
+	// stall logs once and its end line carries how long it lasted.
+	staleSince map[*loopEntry]time.Time
+	mu         sync.Mutex
 	// serving is atomic so /healthz never waits on l.mu, which a marker write
 	// holds.
 	serving atomic.Bool
@@ -129,11 +130,11 @@ type liveness struct {
 // the long-running process only: it removes the marker another process left.
 func newLiveness(path string, leases loopLeases) *liveness {
 	return &liveness{
-		status:    health.NewStatus(health.WithMarker(path)),
-		websocket: newLoopEntry("websocket", "the Plex WebSocket listener stopped making progress", leases.websocket),
-		reconnect: newLoopEntry("reconnect", "the Plex reconnect loop stopped making progress", leases.reconnect),
-		deepScan:  newLoopEntry("deep_scan", "the deep scan stopped making progress", leases.deepScan),
-		stale:     map[*loopEntry]bool{},
+		status:     health.NewStatus(health.WithMarker(path)),
+		websocket:  newLoopEntry("websocket", "the Plex WebSocket listener stopped making progress", leases.websocket),
+		reconnect:  newLoopEntry("reconnect", "the Plex reconnect loop stopped making progress", leases.reconnect),
+		deepScan:   newLoopEntry("deep_scan", "the deep scan stopped making progress", leases.deepScan),
+		staleSince: map[*loopEntry]time.Time{},
 	}
 }
 
@@ -208,16 +209,22 @@ func (l *liveness) run(ctx context.Context, every time.Duration) {
 }
 
 // updateLocked sets the verdict healthy only while the app serves and every
-// loop is inside its lease, and logs each loop that has just gone stale.
-// Caller holds l.mu.
+// loop is inside its lease, and logs each loop that has just gone stale or
+// just recovered. Caller holds l.mu.
 func (l *liveness) updateLocked() {
 	healthy := l.serving.Load()
 	for _, e := range l.loops() {
 		ok := e.Healthy()
-		if !ok && !l.stale[e] {
+		since, wasStale := l.staleSince[e]
+		switch {
+		case !ok && !wasStale:
 			slog.Warn("a loop stopped making progress", "loop", e.name, "lease", e.lease.String())
+			l.staleSince[e] = time.Now()
+		case ok && wasStale:
+			slog.Info("a loop resumed making progress", "loop", e.name,
+				"duration", time.Since(since).Round(time.Second).String())
+			delete(l.staleSince, e)
 		}
-		l.stale[e] = !ok
 		healthy = healthy && ok
 	}
 	l.status.Set(healthy)

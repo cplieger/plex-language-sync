@@ -303,7 +303,7 @@ func TestConnectAndListen_SlowDialNotStable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
+	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{}, time.Time{})
 
 	if !connected {
 		t.Fatalf("connected = false, want true (handshake should succeed)")
@@ -371,7 +371,7 @@ func TestConnectAndListen_ReadIdleTimeoutFires(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
+	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{}, time.Time{})
 	elapsed := time.Since(start)
 
 	if !connected {
@@ -536,7 +536,7 @@ func TestConnectAndListen_DispatchesReceivedMessage(t *testing.T) {
 	defer cancel()
 
 	h := &fakeHandler{}
-	connected, handshakeAt, err := l.connectAndListen(ctx, h)
+	connected, handshakeAt, err := l.connectAndListen(ctx, h, time.Time{})
 
 	if !connected {
 		t.Fatalf("connected = false, want true (handshake should succeed)")
@@ -605,7 +605,7 @@ func TestConnectAndListen_PinnedCAHandshake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{})
+	connected, handshakeAt, err := l.connectAndListen(ctx, &fakeHandler{}, time.Time{})
 	if !connected {
 		t.Fatalf("wss handshake over the pinned CA failed (connected=false, err=%v); "+
 			"the dial transport dropped the CA pin", err)
@@ -647,5 +647,64 @@ func TestListen_ReportsConnectionState(t *testing.T) {
 
 	if want := []bool{true, false, true, false}; !slices.Equal(h.connections, want) {
 		t.Errorf("connection states = %v, want %v", h.connections, want)
+	}
+}
+
+// A reconnect after a drop logs how long the connection was down, from the
+// drop to the new handshake; the first connect of the process logs none. Not
+// parallel: it captures the default logger.
+func TestListen_ReconnectLogsHowLongTheConnectionWasDown(t *testing.T) {
+	rec := capture.Default(t)
+	const outage = 1200 * time.Millisecond
+	var dials sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dials.Lock()
+		n++
+		second := n == 2
+		dials.Unlock()
+		if second {
+			time.Sleep(outage) // the dial that ends the outage is slow to answer
+		}
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("server accept: %v", err)
+			return
+		}
+		c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	base, _ := url.Parse(srv.URL)
+	cfg := DefaultConfig()
+	cfg.MinBackoff, cfg.MaxBackoff = time.Millisecond, time.Millisecond
+	l := NewListener(&fakePlexClient{base: base, token: "t", client: srv.Client()}, cfg)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	drops := 0
+	l.Listen(ctx, &fakeHandler{onConnection: func(connected bool) {
+		if !connected {
+			if drops++; drops == 2 {
+				cancel()
+			}
+		}
+	}})
+
+	var durations []string
+	for _, r := range rec.Records() {
+		if r.Message != "websocket connected" {
+			continue
+		}
+		d := "absent"
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "duration" {
+				d = a.Value.String()
+			}
+			return true
+		})
+		durations = append(durations, d)
+	}
+	if want := []string{"absent", "1s"}; !slices.Equal(durations, want) {
+		t.Errorf("websocket connected durations = %v, want %v", durations, want)
 	}
 }

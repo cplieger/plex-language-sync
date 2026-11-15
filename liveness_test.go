@@ -199,6 +199,49 @@ func TestLivenessWedgedLoopTurnsTheProbeUnhealthy(t *testing.T) {
 	}
 }
 
+// A stale loop that beats again logs its recovery once, with how long it was
+// stale: from the tick that saw it stale to the tick that sees it beat.
+func TestLivenessRecoveredLoopLogsHowLongItWasStale(t *testing.T) {
+	rec := capture.Default(t)
+	const staleFor = 30 * time.Minute
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "healthy")
+		live := newLiveness(path, defaultLeases())
+		for _, e := range live.loops() {
+			e.Beat()
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go live.run(ctx, livenessTick)
+		go beatEvery(ctx, live.reconnect, live.deepScan)
+		live.start()
+
+		time.Sleep(live.websocket.lease + livenessTick)
+		synctest.Wait()
+		if !rec.HasAttr("a loop stopped making progress", "loop", "websocket") {
+			t.Fatalf("the websocket loop was not reported stale; got %v", rec.Messages())
+		}
+		time.Sleep(staleFor)
+		live.websocket.Beat()
+		time.Sleep(livenessTick)
+		synctest.Wait()
+		if got := probe(t, path); got != 0 {
+			t.Errorf("probe after the websocket loop beat again = %d, want 0", got)
+		}
+	})
+	if n := rec.CountExact("a loop resumed making progress"); n != 1 {
+		t.Fatalf("recovery lines = %d, want 1; got %v", n, rec.Messages())
+	}
+	if !rec.HasAttr("a loop resumed making progress", "loop", "websocket") {
+		t.Errorf("the recovery line does not name the websocket loop")
+	}
+	raw, _ := rec.AttrValue("a loop resumed making progress", "duration")
+	got, err := time.ParseDuration(raw)
+	if err != nil || got < staleFor || got > staleFor+2*livenessTick {
+		t.Errorf("recovery duration = %q, want between %v and %v", raw, staleFor, staleFor+2*livenessTick)
+	}
+}
+
 // With DEEP_SCAN_INTERVAL=off the deep-scan entry is not checked, so a deep
 // scan that never beats again stays healthy.
 func TestLivenessScanOffSilentDeepScanStaysHealthy(t *testing.T) {
@@ -358,5 +401,46 @@ func TestConnectAndResolveAdminUnreachablePlexBeatsTheReconnectLoop(t *testing.T
 	}
 	if !live.reconnect.isParked() {
 		t.Error("the reconnect entry stayed armed after the connect retry returned")
+	}
+}
+
+// A degraded start that ends logs the recovery with how long Plex was
+// unreachable, measured from the first failed attempt. Plex answers only once
+// the app has started degraded, so every try of the first attempt fails.
+func TestConnectAndResolveAdminRecoveryLogsTheOutageDuration(t *testing.T) {
+	rec := capture.Default(t)
+	live := newLiveness(filepath.Join(t.TempDir(), "healthy"), defaultLeases())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !live.serving.Load():
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case r.URL.Path == "/":
+			_, _ = w.Write([]byte(`{"MediaContainer":{"friendlyName":"Plex","machineIdentifier":"abc","version":"1.40"}}`))
+		case r.URL.Path == "/myplex/account":
+			_, _ = w.Write([]byte(`{"username":"admin"}`))
+		case r.URL.Path == "/accounts":
+			_, _ = w.Write([]byte(`{"MediaContainer":{"Account":[{"name":"admin","id":1}]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	client, err := plex.NewClient(plex.Options{ServerURL: srv.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if _, _, err := connectAndResolveAdmin(t.Context(), client, live); err != nil {
+		t.Fatalf("connectAndResolveAdmin = %v, want success on the retry", err)
+	}
+	elapsed := time.Since(start)
+	raw, ok := rec.AttrValue("plex connection recovered; leaving degraded state", "duration")
+	if !ok {
+		t.Fatalf("no recovery line with a duration; got %v", rec.Messages())
+	}
+	got, err := time.ParseDuration(raw)
+	if err != nil || got < startupBaseBackoff || got > elapsed.Round(time.Second) {
+		t.Errorf("recovery duration = %q, want between %v and %v", raw, startupBaseBackoff, elapsed.Round(time.Second))
 	}
 }
