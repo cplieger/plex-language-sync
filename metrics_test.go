@@ -292,7 +292,7 @@ func TestPlayEventsCountedByOutcome(t *testing.T) {
 
 // Not parallel: skipUnattributedPlayEvent logs through the default logger.
 func TestResolutionStallGaugeHoldsUntilRecovery(t *testing.T) {
-	capture.Default(t)
+	rec := capture.Default(t)
 	m := obs.New("test")
 	_, client := newPlayServer(t)
 	adapter, _ := newPlayAdapter(t, client)
@@ -309,6 +309,9 @@ func TestResolutionStallGaugeHoldsUntilRecovery(t *testing.T) {
 	adapter.OnPlay(t.Context(), playOfFirst)
 	if got := metrictest.Value(t, m, family, obs.StallSessionsUnreadable); got != 0 {
 		t.Errorf("stalled{sessions_unreadable} = %v after an attributed play, want 0", got)
+	}
+	if _, ok := rec.AttrValue("user resolution recovered", "duration"); !ok {
+		t.Errorf("the recovery line carries no duration; got %v", rec.Messages())
 	}
 }
 

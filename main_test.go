@@ -1455,9 +1455,9 @@ func TestResolveStallCounter_thresholdAndRecovery(t *testing.T) {
 		t.Error("a second stall was reported without an intervening success; the warn must fire once per stall")
 	}
 
-	recovered, after := c.success()
-	if !recovered || after != resolveStallThreshold+1 {
-		t.Errorf("success after a warned stall = (%v, %d), want (true, %d); recovery must be a positive log line, not the absence of one", recovered, after, resolveStallThreshold+1)
+	r := c.success()
+	if !r.recovered || r.after != resolveStallThreshold+1 {
+		t.Errorf("success after a warned stall = (%v, %d), want (true, %d); recovery must be a positive log line, not the absence of one", r.recovered, r.after, resolveStallThreshold+1)
 	}
 	// The run is cleared, so the next stall must be able to fire again.
 	for range resolveStallThreshold {
@@ -1549,6 +1549,22 @@ func TestResolveStallCounter_anEmptyClientIsNotASecondClient(t *testing.T) {
 	}
 }
 
+func TestResolveStallCounter_recoveryCarriesHowLongTheStallStood(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := &resolveStallCounter{}
+		ev := playingBy("mac-A", "100")
+		for range resolveStallThreshold {
+			c.miss(ev, true)
+		}
+		time.Sleep(7 * time.Minute)
+		c.miss(ev, true)
+		time.Sleep(3 * time.Minute)
+		if r := c.success(); !r.recovered || r.duration != 10*time.Minute {
+			t.Errorf("success = (%v, %v), want (true, 10m0s) from the stall report to the success", r.recovered, r.duration)
+		}
+	})
+}
+
 func TestResolveStallCounter_successClearsTheAbsentPairs(t *testing.T) {
 	// A success ends the run, so pairs seen before it must not combine
 	// with pairs seen after into a false spread.
@@ -1568,7 +1584,7 @@ func TestResolveStallCounter_successWithoutStallIsNotRecovery(t *testing.T) {
 	c := &resolveStallCounter{}
 	c.miss(playingBy("mac-A", "100"), false) // a normal race, well below the threshold
 
-	if recovered, _ := c.success(); recovered {
+	if c.success().recovered {
 		t.Error("a success after an ordinary sub-threshold race reported recovery; nothing warned, so nothing recovered")
 	}
 }
@@ -1582,7 +1598,7 @@ func TestResolveStallCounter_nilCountsNothing(t *testing.T) {
 			t.Fatal("a nil counter escalated")
 		}
 	}
-	if recovered, _ := c.success(); recovered {
+	if c.success().recovered {
 		t.Error("a nil counter reported recovery")
 	}
 }

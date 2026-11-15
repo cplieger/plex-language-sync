@@ -120,6 +120,8 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 	backoff := minBackoff
 	reconnecting := false
 	reconnects := 0
+	// downSince is when the connection last dropped; zero before the first.
+	var downSince time.Time
 
 	for {
 		if ctx.Err() != nil {
@@ -132,7 +134,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 				"backoff", backoff.String())
 		}
 		l.cfg.ReconnectLoop.Beat()
-		connected, handshakeAt, err := l.connectAndListen(ctx, h)
+		connected, handshakeAt, err := l.connectAndListen(ctx, h, downSince)
 		l.cfg.ReconnectLoop.Beat()
 		l.cfg.ReadLoop.Park()
 		if ctx.Err() != nil {
@@ -158,6 +160,7 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 			return
 		}
 		h.OnConnection(ctx, false)
+		downSince = outageStart(downSince, connected)
 		logDisconnect(ctx, err, backoff, stable, reconnects)
 
 		delay := time.NewTimer(backoff)
@@ -169,6 +172,15 @@ func (l *Listener) Listen(ctx context.Context, h Handler) {
 		}
 		reconnecting = true
 	}
+}
+
+// outageStart is when the outage under way after an attempt began: now when
+// the attempt had connected or none was under way, else prev.
+func outageStart(prev time.Time, connected bool) time.Time {
+	if connected || prev.IsZero() {
+		return time.Now()
+	}
+	return prev
 }
 
 // backoffBounds returns the reconnect backoff floor and ceiling, applying
@@ -212,13 +224,14 @@ func logDisconnect(ctx context.Context, err error, backoff time.Duration, stable
 	}
 }
 
-// connectAndListen performs a single dial + read-loop cycle. Returns
+// connectAndListen performs a single dial + read-loop cycle; downSince is
+// when the connection last dropped, zero before the first. Returns
 // (connected, handshakeAt, err). `connected` is true iff the WebSocket
 // handshake succeeded; `handshakeAt` is the instant the handshake
 // completed (zero when connected is false). The outer loop measures
 // connection stability from handshakeAt — NOT from before the dial — so
 // a slow-but-successful dial is not mistaken for held-open uptime.
-func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.Time, error) {
+func (l *Listener) connectAndListen(ctx context.Context, h Handler, downSince time.Time) (bool, time.Time, error) {
 	base := l.client.BaseURL()
 	scheme := "ws"
 	if base.Scheme == "https" {
@@ -252,7 +265,11 @@ func (l *Listener) connectAndListen(ctx context.Context, h Handler) (bool, time.
 		}
 	}()
 
-	slog.Info("websocket connected", "host", base.Host)
+	attrs := []any{"host", base.Host}
+	if !downSince.IsZero() {
+		attrs = append(attrs, "duration", handshakeAt.Sub(downSince).Round(time.Second).String())
+	}
+	slog.Info("websocket connected", attrs...)
 	l.cfg.ReadLoop.Beat()
 	l.cfg.ReconnectLoop.Park()
 	h.OnConnection(ctx, true)
