@@ -91,6 +91,8 @@ Thresholds, windows and the `severity` labels are starting points. In `alerts/lo
 - Sync charts the audio and subtitle choices written to Plex, set or failed, from `plex_language_sync_track_updates_total`. It also charts the plays handled, matched to a user or skipped, from `plex_language_sync_play_events_total`.
 - Deep scan and Plex connection charts the complete and incomplete deep scans from `plex_language_sync_deep_scan_runs_total`. It also shows when the Plex notification stream was connected over the selected range, and the reconnect attempts from `plex_language_sync_websocket_reconnects_total`.
 
+The charts that count per interval also read `process_start_time_seconds` to find a container restart. Keep the `process_*` series in your scrape, or a restart draws a negative bar.
+
 The dashboard is versioned with the image, and the `grafana-dashboard.json` of release `<tag>` matches the metrics that image serves. Each release attaches it with its checksum at `https://github.com/cplieger/plex-language-sync/releases/download/<tag>/grafana-dashboard.json`, and each image publish pushes it as the OCI artifact `ghcr.io/cplieger/plex-language-sync/dashboard:<tag>`. The file sets `metadata.name` to `plex-language-sync`, which Grafana uses as the dashboard UID, so importing a newer copy over the old one updates it in place.
 
 ## Knowing the app is alive

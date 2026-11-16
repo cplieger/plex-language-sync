@@ -984,7 +984,7 @@
         "spec": {
           "id": 20,
           "title": "Track selections written",
-          "description": "Audio and subtitle choices the app wrote to Plex, per interval. Failed bars mean Plex refused the write, and the container log says why. A gap means plex-language-sync was not scraped.",
+          "description": "Audio and subtitle choices the app wrote to Plex, per interval. An interval near a container restart, a failed scrape or a scrape outage can show fewer or more writes than were made. Failed bars mean Plex refused the write, and the container log says why. A gap means plex-language-sync was not scraped.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1001,7 +1001,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "round(label_replace(label_replace(sum by (kind) (increase(plex_language_sync_track_updates_total{instance=\"$instance\", result=\"set\"}[$__interval])), \"kind\", \"Audio\", \"kind\", \"audio\"), \"kind\", \"Subtitle\", \"kind\", \"subtitle\"))",
+                        "expr": "round(label_replace(label_replace(sum by (kind) ((((plex_language_sync_track_updates_total{instance=\"$instance\", result=\"set\"} - last_over_time(plex_language_sync_track_updates_total{instance=\"$instance\", result=\"set\"}[1h] offset $__interval)) unless on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_track_updates_total{instance=\"$instance\", result=\"set\"} and on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_track_updates_total{instance=\"$instance\", result=\"set\"} - min_over_time(plex_language_sync_track_updates_total{instance=\"$instance\", result=\"set\"}[$__interval])))), \"kind\", \"Audio\", \"kind\", \"audio\"), \"kind\", \"Subtitle\", \"kind\", \"subtitle\"))",
                         "legendFormat": "{{kind}} set"
                       }
                     },
@@ -1020,7 +1020,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "round(label_replace(label_replace(sum by (kind) (increase(plex_language_sync_track_updates_total{instance=\"$instance\", result=\"failed\"}[$__interval])), \"kind\", \"Audio\", \"kind\", \"audio\"), \"kind\", \"Subtitle\", \"kind\", \"subtitle\"))",
+                        "expr": "round(label_replace(label_replace(sum by (kind) ((((plex_language_sync_track_updates_total{instance=\"$instance\", result=\"failed\"} - last_over_time(plex_language_sync_track_updates_total{instance=\"$instance\", result=\"failed\"}[1h] offset $__interval)) unless on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_track_updates_total{instance=\"$instance\", result=\"failed\"} and on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_track_updates_total{instance=\"$instance\", result=\"failed\"} - min_over_time(plex_language_sync_track_updates_total{instance=\"$instance\", result=\"failed\"}[$__interval])))), \"kind\", \"Audio\", \"kind\", \"audio\"), \"kind\", \"Subtitle\", \"kind\", \"subtitle\"))",
                         "legendFormat": "{{kind}} failed"
                       }
                     },
@@ -1105,7 +1105,7 @@
         "spec": {
           "id": 21,
           "title": "Plays handled",
-          "description": "Plays the app handled, per interval, split by whether it could tell which user was watching. Skipped plays save no choice: many of them point to a token that cannot read sessions or a player Plex does not list. A gap means plex-language-sync was not scraped.",
+          "description": "Plays the app handled, per interval, split by whether it could tell which user was watching. An interval near a container restart, a failed scrape or a scrape outage can show fewer or more plays than were handled. Skipped plays save no choice: many of them point to a token that cannot read sessions or a player Plex does not list. A gap means plex-language-sync was not scraped.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1122,7 +1122,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "label_replace(label_replace(round(sum by (outcome) (increase(plex_language_sync_play_events_total{instance=\"$instance\"}[$__interval]))), \"outcome\", \"Matched to a user\", \"outcome\", \"attributed\"), \"outcome\", \"Skipped, no user\", \"outcome\", \"skipped\")",
+                        "expr": "label_replace(label_replace(round(sum by (outcome) ((((plex_language_sync_play_events_total{instance=\"$instance\"} - last_over_time(plex_language_sync_play_events_total{instance=\"$instance\"}[1h] offset $__interval)) unless on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_play_events_total{instance=\"$instance\"} and on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_play_events_total{instance=\"$instance\"} - min_over_time(plex_language_sync_play_events_total{instance=\"$instance\"}[$__interval]))))), \"outcome\", \"Matched to a user\", \"outcome\", \"attributed\"), \"outcome\", \"Skipped, no user\", \"outcome\", \"skipped\")",
                         "legendFormat": "{{outcome}}"
                       }
                     },
@@ -1207,7 +1207,7 @@
         "spec": {
           "id": 30,
           "title": "Deep scans finished",
-          "description": "Deep scans that finished, per interval: complete ones covered their whole window, incomplete ones stopped early and leave it to the next scan. Repeated incomplete scans lead to the Deep scan tile. A gap means plex-language-sync was not scraped.",
+          "description": "Deep scans that finished, per interval: complete ones covered their whole window, incomplete ones stopped early and leave it to the next scan. An interval near a container restart, a failed scrape or a scrape outage can show fewer or more scans than finished. Repeated incomplete scans lead to the Deep scan tile. A gap means plex-language-sync was not scraped.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1224,7 +1224,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "label_replace(label_replace(round(sum by (result) (increase(plex_language_sync_deep_scan_runs_total{instance=\"$instance\"}[$__interval]))), \"result\", \"Complete\", \"result\", \"complete\"), \"result\", \"Incomplete\", \"result\", \"incomplete\")",
+                        "expr": "label_replace(label_replace(round(sum by (result) ((((plex_language_sync_deep_scan_runs_total{instance=\"$instance\"} - last_over_time(plex_language_sync_deep_scan_runs_total{instance=\"$instance\"}[1h] offset $__interval)) unless on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_deep_scan_runs_total{instance=\"$instance\"} and on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_deep_scan_runs_total{instance=\"$instance\"} - min_over_time(plex_language_sync_deep_scan_runs_total{instance=\"$instance\"}[$__interval]))))), \"result\", \"Complete\", \"result\", \"complete\"), \"result\", \"Incomplete\", \"result\", \"incomplete\")",
                         "legendFormat": "{{result}}"
                       }
                     },
@@ -1408,7 +1408,7 @@
         "spec": {
           "id": 32,
           "title": "Reconnect attempts",
-          "description": "Attempts to reconnect the Plex notification stream after it dropped, per interval. A single bar is a Plex restart or a network blip. A steady run means Plex keeps refusing the stream. A gap means plex-language-sync was not scraped.",
+          "description": "Attempts to reconnect the Plex notification stream after it dropped, per interval. An interval near a container restart, a failed scrape or a scrape outage can show fewer or more attempts than were made. A single bar is a Plex restart or a network blip, and a steady run means Plex keeps refusing the stream. A gap means plex-language-sync was not scraped.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -1425,7 +1425,7 @@
                         "name": "${datasource}"
                       },
                       "spec": {
-                        "expr": "round(increase(plex_language_sync_websocket_reconnects_total{instance=\"$instance\"}[$__interval]))",
+                        "expr": "round(sum by (instance) ((((plex_language_sync_websocket_reconnects_total{instance=\"$instance\"} - last_over_time(plex_language_sync_websocket_reconnects_total{instance=\"$instance\"}[1h] offset $__interval)) unless on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_websocket_reconnects_total{instance=\"$instance\"} and on (instance) ((process_start_time_seconds{instance=\"$instance\"} != last_over_time(process_start_time_seconds{instance=\"$instance\"}[1h] offset $__interval)) or (process_start_time_seconds{instance=\"$instance\"} > time() - ${__interval_ms} / 1000))) or (plex_language_sync_websocket_reconnects_total{instance=\"$instance\"} - min_over_time(plex_language_sync_websocket_reconnects_total{instance=\"$instance\"}[$__interval])))))",
                         "legendFormat": "Reconnects"
                       }
                     },
