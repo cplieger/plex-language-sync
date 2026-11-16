@@ -259,3 +259,238 @@ tests:
       - eval_time: 2h30m
         alertname: PlexLanguageSyncCacheSaveFailed
         exp_alerts: []
+
+  # The dashboard's per-interval counts; TestDashboardCounterSlotsAreTheTestedQueries pins them to the panels.
+  - name: "Reconnect attempts: a slot counts the reconnects in it"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "0+1x30"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x30"
+    promql_expr_test:
+      - expr: &reconnect_attempts 'round(sum by (instance) ((((plex_language_sync_websocket_reconnects_total{instance="a"} - last_over_time(plex_language_sync_websocket_reconnects_total{instance="a"}[1h] offset 5m)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_websocket_reconnects_total{instance="a"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_websocket_reconnects_total{instance="a"} - min_over_time(plex_language_sync_websocket_reconnects_total{instance="a"}[5m])))))'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 5
+  - name: "Reconnect attempts: a quiet slot reads 0"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "3x40"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x40"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 30m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 0
+  - name: "Reconnect attempts: a restart counts the new total even when it matches the old one"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "1x29 1x20"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x29 1770x20"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 34m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 1
+  - name: "Reconnect attempts: a failed scrape during the restart does not hide it"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "1x28 stale 1x20"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x28 stale 1770x20"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 34m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 1
+  - name: "Reconnect attempts: a restart counts the new total, not the drop from the old one"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "3x29 0 2 3 4x20"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x29 1770x20"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 34m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 4
+  - name: "Reconnect attempts: the slot after a restart reads 0"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "1x29 1x20"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x29 1770x20"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 39m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 0
+  - name: "Reconnect attempts: a start just before a slot ends counts in the slot of its first scrape"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "3x29 _ 1x20"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x29 _ 1794x20"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 35m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 1
+  - name: "Reconnect attempts: a first scrape counts the growth inside the slot, not the lifetime total"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "_x29 7 7 8x10"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "_x29 0x12"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 33m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 1
+  - name: "Reconnect attempts: a failed scrape at a slot's start moves that slot's reconnects into the next one"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "0+1x27 stale 29+1x12"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x27 stale 0x12"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 33m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 6
+  - name: "Reconnect attempts: a scrape outage that leaves no stale marker moves its reconnects into the slot after it"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "0+1x20 _x10 31+1x10"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x20 _x10 0x10"
+    promql_expr_test:
+      - expr: *reconnect_attempts
+        eval_time: 30m
+        exp_samples: []
+      - expr: *reconnect_attempts
+        eval_time: 35m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 15
+  - name: "Reconnect attempts: a 15s slot counts a new process whose restart a failed scrape hid"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_websocket_reconnects_total{job="plex-language-sync",instance="a"}'
+        values: "3x28 stale 2x10"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x28 stale 1760x10"
+    promql_expr_test:
+      - expr: &reconnect_attempts_15s 'round(sum by (instance) ((((plex_language_sync_websocket_reconnects_total{instance="a"} - last_over_time(plex_language_sync_websocket_reconnects_total{instance="a"}[1h] offset 15s)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 15s)) or (process_start_time_seconds{instance="a"} > time() - 15000 / 1000))) or (plex_language_sync_websocket_reconnects_total{instance="a"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 15s)) or (process_start_time_seconds{instance="a"} > time() - 15000 / 1000))) or (plex_language_sync_websocket_reconnects_total{instance="a"} - min_over_time(plex_language_sync_websocket_reconnects_total{instance="a"}[15s])))))'
+        eval_time: 30m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 2
+      - expr: &reconnect_attempts_15s_total 'sum_over_time((round(sum by (instance) ((((plex_language_sync_websocket_reconnects_total{instance="a"} - last_over_time(plex_language_sync_websocket_reconnects_total{instance="a"}[1h] offset 15s)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 15s)) or (process_start_time_seconds{instance="a"} > time() - 15000 / 1000))) or (plex_language_sync_websocket_reconnects_total{instance="a"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 15s)) or (process_start_time_seconds{instance="a"} > time() - 15000 / 1000))) or (plex_language_sync_websocket_reconnects_total{instance="a"} - min_over_time(plex_language_sync_websocket_reconnects_total{instance="a"}[15s]))))))[3m:15s])'
+        eval_time: 32m
+        exp_samples:
+          - labels: '{instance="a"}'
+            value: 2
+  - name: "Track selections written: a slot counts each kind's writes by result"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_track_updates_total{job="plex-language-sync",instance="a",kind="audio",result="set"}'
+        values: "0+1x30"
+      - series: 'plex_language_sync_track_updates_total{job="plex-language-sync",instance="a",kind="subtitle",result="set"}'
+        values: "0+3x30"
+      - series: 'plex_language_sync_track_updates_total{job="plex-language-sync",instance="a",kind="subtitle",result="failed"}'
+        values: "0+2x30"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x30"
+    promql_expr_test:
+      - expr: &track_selections_set 'round(label_replace(label_replace(sum by (kind) ((((plex_language_sync_track_updates_total{instance="a", result="set"} - last_over_time(plex_language_sync_track_updates_total{instance="a", result="set"}[1h] offset 5m)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_track_updates_total{instance="a", result="set"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_track_updates_total{instance="a", result="set"} - min_over_time(plex_language_sync_track_updates_total{instance="a", result="set"}[5m])))), "kind", "Audio", "kind", "audio"), "kind", "Subtitle", "kind", "subtitle"))'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{kind="Audio"}'
+            value: 5
+          - labels: '{kind="Subtitle"}'
+            value: 15
+      - expr: &track_selections_failed 'round(label_replace(label_replace(sum by (kind) ((((plex_language_sync_track_updates_total{instance="a", result="failed"} - last_over_time(plex_language_sync_track_updates_total{instance="a", result="failed"}[1h] offset 5m)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_track_updates_total{instance="a", result="failed"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_track_updates_total{instance="a", result="failed"} - min_over_time(plex_language_sync_track_updates_total{instance="a", result="failed"}[5m])))), "kind", "Audio", "kind", "audio"), "kind", "Subtitle", "kind", "subtitle"))'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{kind="Subtitle"}'
+            value: 10
+  - name: "Track selections written: a restart counts each series from zero"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_track_updates_total{job="plex-language-sync",instance="a",kind="audio",result="set"}'
+        values: "4x29 2x20"
+      - series: 'plex_language_sync_track_updates_total{job="plex-language-sync",instance="a",kind="subtitle",result="set"}'
+        values: "6x29 0x20"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x29 1770x20"
+    promql_expr_test:
+      - expr: *track_selections_set
+        eval_time: 34m
+        exp_samples:
+          - labels: '{kind="Audio"}'
+            value: 2
+          - labels: '{kind="Subtitle"}'
+            value: 0
+  - name: "Plays handled: a slot counts the plays in it by outcome"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_play_events_total{job="plex-language-sync",instance="a",outcome="attributed"}'
+        values: "0+1x30"
+      - series: 'plex_language_sync_play_events_total{job="plex-language-sync",instance="a",outcome="skipped"}'
+        values: "2x30"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x30"
+    promql_expr_test:
+      - expr: &plays_handled 'label_replace(label_replace(round(sum by (outcome) ((((plex_language_sync_play_events_total{instance="a"} - last_over_time(plex_language_sync_play_events_total{instance="a"}[1h] offset 5m)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_play_events_total{instance="a"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_play_events_total{instance="a"} - min_over_time(plex_language_sync_play_events_total{instance="a"}[5m]))))), "outcome", "Matched to a user", "outcome", "attributed"), "outcome", "Skipped, no user", "outcome", "skipped")'
+        eval_time: 20m
+        exp_samples:
+          - labels: '{outcome="Matched to a user"}'
+            value: 5
+          - labels: '{outcome="Skipped, no user"}'
+            value: 0
+  - name: "Deep scans finished: a slot counts the scans that finished in it by result"
+    interval: 1m
+    input_series:
+      - series: 'plex_language_sync_deep_scan_runs_total{job="plex-language-sync",instance="a",result="complete"}'
+        values: "0x9 1x30"
+      - series: 'plex_language_sync_deep_scan_runs_total{job="plex-language-sync",instance="a",result="incomplete"}'
+        values: "0x30"
+      - series: 'process_start_time_seconds{job="plex-language-sync",instance="a"}'
+        values: "0x40"
+    promql_expr_test:
+      - expr: &deep_scans_finished 'label_replace(label_replace(round(sum by (result) ((((plex_language_sync_deep_scan_runs_total{instance="a"} - last_over_time(plex_language_sync_deep_scan_runs_total{instance="a"}[1h] offset 5m)) unless on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_deep_scan_runs_total{instance="a"} and on (instance) ((process_start_time_seconds{instance="a"} != last_over_time(process_start_time_seconds{instance="a"}[1h] offset 5m)) or (process_start_time_seconds{instance="a"} > time() - 300000 / 1000))) or (plex_language_sync_deep_scan_runs_total{instance="a"} - min_over_time(plex_language_sync_deep_scan_runs_total{instance="a"}[5m]))))), "result", "Complete", "result", "complete"), "result", "Incomplete", "result", "incomplete")'
+        eval_time: 12m
+        exp_samples:
+          - labels: '{result="Complete"}'
+            value: 1
+          - labels: '{result="Incomplete"}'
+            value: 0
+      - expr: *deep_scans_finished
+        eval_time: 20m
+        exp_samples:
+          - labels: '{result="Complete"}'
+            value: 0
+          - labels: '{result="Incomplete"}'
+            value: 0

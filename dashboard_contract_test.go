@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -244,7 +245,18 @@ var (
 	alertsRe      = regexp.MustCompile(`ALERTS\{alertname="([A-Za-z]+)"([^}]*)\}`)
 	stallTermRe   = regexp.MustCompile(`ALERTS\{alertname="PlexLanguageSyncResolutionStalled"[^}]*cause="([^"]*)"[^}]*\}(?:\s*\*\s*0\s*\+\s*(\d+))?`)
 	stallCauseRe  = regexp.MustCompile(`(?m)^plex_language_sync_user_resolution_stalled\{cause="([^"]*)"\} `)
+	counterCallRe = regexp.MustCompile(`\b(increase|rate|irate)\s*\(`)
+	oneSlotRe     = regexp.MustCompile(`\[\s*\$(?:__interval|\{__interval\}|\{__interval_ms\}ms)\s*(?::[^\]]*)?\]`)
+	// Grafana's variable grammar, variableRegex in
+	// https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/variables/utils.ts
+	grafanaVarRe = regexp.MustCompile(`\$(\w+)|\[\[(\w+?)(?::\w+)?\]\]|\$\{(\w+)(?:\.[^:^}]+)?(?::[^}]+)?\}`)
+	// ${name}'s braces are no selector.
+	bracedVarRe = regexp.MustCompile(`\$\{\w+(?::\w+)?\}`)
+	matcherRe   = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*|` + promqlString + `)\s*(=~|!~|!=|=)\s*(` + promqlString + `)$`)
+	stringRe    = regexp.MustCompile(`^(?:` + promqlString + `)$`)
 )
+
+const promqlString = `"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` + "`[^`]*`"
 
 var promqlKeywords = []string{"and", "or", "unless", "bool", "offset"}
 
@@ -339,8 +351,10 @@ func TestDashboardFiltersOnTheInstanceOnly(t *testing.T) {
 	}
 	for where, expr := range panelQueries(&d) {
 		filtered := map[int]bool{}
+		pinned := strings.Contains(expr, `instance="$instance"`)
 		for _, loc := range selectorRe.FindAllStringSubmatchIndex(expr, -1) {
-			if strings.Contains(expr[loc[4]:loc[5]], `instance="$instance"`) {
+			if sel := expr[loc[4]:loc[5]]; strings.Contains(sel, `instance="$instance"`) ||
+				pinned && strings.Contains(sel, `instance=""`) {
 				filtered[loc[0]] = true
 			}
 			for _, m := range matcherNameRe.FindAllStringSubmatch(quotedRe.ReplaceAllString(expr[loc[4]:loc[5]], `""`), -1) {
@@ -358,6 +372,205 @@ func TestDashboardFiltersOnTheInstanceOnly(t *testing.T) {
 				t.Errorf("%s reads %s without instance=\"$instance\"", where, name)
 			}
 		}
+	}
+}
+
+func skipString(s string, i int) int {
+	q := s[i]
+	for i++; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && q != '`':
+			i++
+		case s[i] == q:
+			return i + 1
+		}
+	}
+	return len(s)
+}
+
+func skipComment(s string, i int) int {
+	if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+		return i + j
+	}
+	return len(s)
+}
+
+// promqlUnquote decodes a string literal. PromQL escapes as Go does
+// (https://prometheus.io/docs/prometheus/latest/querying/basics/#string-literals),
+// so "inst\x61nce" names the instance label.
+func promqlUnquote(s string) (string, error) {
+	if s[0] == '\'' {
+		s = `"` + strings.ReplaceAll(strings.ReplaceAll(s[1:len(s)-1], `\'`, `'`), `"`, `\"`) + `"`
+	}
+	return strconv.Unquote(s)
+}
+
+func selectors(expr string) [][]string {
+	var out [][]string
+	var parts []string
+	start, part := -1, 0
+	for i := 0; i < len(expr); i++ {
+		switch c := expr[i]; {
+		case c == '#':
+			i = skipComment(expr, i)
+		case c == '"' || c == '\'' || c == '`':
+			i = skipString(expr, i) - 1
+		case c == '{':
+			start, part, parts = i, i+1, nil
+		case (c == ',' || c == '}') && start >= 0:
+			if p := strings.TrimSpace(expr[part:i]); p != "" {
+				parts = append(parts, p)
+			}
+			part = i + 1
+			if c == '}' {
+				out = append(out, parts)
+				start = -1
+			}
+		}
+	}
+	return out
+}
+
+// TestDashboardMatchesTheInstanceExactly fails when a query matches instance
+// by regex or negation. instance is single-select, and Grafana regex-escapes a
+// variable only when it is multi-value or include-all
+// (https://github.com/grafana/grafana-prometheus-datasource/blob/v13.2.3/packages/grafana-prometheus/src/escaping.ts),
+// so an IPv6 target's brackets parse as a character class and a host name's
+// dots match its neighbours. instance="" is allowed only beside the pinned
+// matcher, for an alert that carries no instance label.
+func TestDashboardMatchesTheInstanceExactly(t *testing.T) {
+	d := loadDashboard(t)
+	for where, expr := range panelQueries(&d) {
+		var matchers [][]string
+		for _, parts := range selectors(bracedVarRe.ReplaceAllString(expr, "$$v")) {
+			instances := 0
+			for _, part := range parts {
+				m := matcherRe.FindStringSubmatch(part)
+				if m == nil {
+					if !stringRe.MatchString(part) {
+						t.Errorf("%s holds %q in a selector, which is no label matcher", where, part)
+					}
+					continue
+				}
+				label, lerr := m[1], error(nil)
+				if stringRe.MatchString(label) {
+					label, lerr = promqlUnquote(label)
+				}
+				value, verr := promqlUnquote(m[3])
+				if lerr != nil || verr != nil {
+					t.Errorf("%s quotes %q in a form the check cannot read", where, part)
+					continue
+				}
+				if label == "instance" {
+					instances++
+					matchers = append(matchers, []string{m[2], value})
+				}
+			}
+			if instances > 1 {
+				t.Errorf("%s matches instance twice in one selector", where)
+			}
+		}
+		pinned := slices.ContainsFunc(matchers, func(m []string) bool { return m[0] == "=" && m[1] == "$instance" })
+		for _, m := range matchers {
+			if m[0] != "=" || m[1] != "$instance" && (m[1] != "" || !pinned) {
+				t.Errorf("%s matches instance%s%q, want instance=\"$instance\", or instance=\"\" beside it", where, m[0], m[1])
+			}
+		}
+	}
+}
+
+func callArgs(expr string, open int) string {
+	depth := 0
+	for i := open; i < len(expr); i++ {
+		switch expr[i] {
+		case '#':
+			i = skipComment(expr, i)
+		case '"', '\'', '`':
+			i = skipString(expr, i) - 1
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return expr[open+1 : i]
+			}
+		}
+	}
+	return expr[open+1:]
+}
+
+func canonicalIntervals(expr string) string {
+	return grafanaVarRe.ReplaceAllStringFunc(expr, func(ref string) string {
+		m := grafanaVarRe.FindStringSubmatch(ref)
+		switch m[1] + m[2] + m[3] {
+		case "__interval":
+			return "$__interval"
+		case "__interval_ms":
+			return "${__interval_ms}"
+		}
+		return ref
+	})
+}
+
+// TestDashboardNeverTakesACounterOverOneInterval fails when a query takes
+// increase, rate or irate over one $__interval, in any of Grafana's spellings,
+// plain or as a subquery. At short ranges the interval falls to the scrape
+// interval, the window holds one sample and the panel goes blank while the
+// user zooms in on an incident.
+func TestDashboardNeverTakesACounterOverOneInterval(t *testing.T) {
+	d := loadDashboard(t)
+	for where, expr := range panelQueries(&d) {
+		expr = canonicalIntervals(expr)
+		for _, loc := range counterCallRe.FindAllStringSubmatchIndex(expr, -1) {
+			if r := oneSlotRe.FindString(callArgs(expr, loc[1]-1)); r != "" {
+				t.Errorf("%s takes %s over %s, want [$__rate_interval], or the offset slot for an exact count", where, expr[loc[2]:loc[3]], r)
+			}
+		}
+	}
+}
+
+// TestDashboardCounterSlotsAreTheTestedQueries fails when a per-interval count
+// differs from the query alerts/promql_test.yaml runs under its anchor, with
+// $instance and a 5m interval filled in, or 15s for a _15s anchor.
+func TestDashboardCounterSlotsAreTheTestedQueries(t *testing.T) {
+	raw, err := os.ReadFile("alerts/promql_test.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	testedAs := func(anchor, want string) {
+		t.Helper()
+		m := regexp.MustCompile(`(?m)expr: &` + anchor + ` '([^']*)'$`).FindSubmatch(raw)
+		if m == nil {
+			t.Errorf("alerts/promql_test.yaml has no expr anchored as %s", anchor)
+		} else if string(m[1]) != want {
+			t.Errorf("alerts/promql_test.yaml tests %s as\n%s\nthe dashboard reads, with its variables filled in,\n%s", anchor, m[1], want)
+		}
+	}
+	at5m := strings.NewReplacer(`$instance`, "a", `${__interval_ms}`, "300000", `$__interval`, "5m")
+	at15s := strings.NewReplacer(`$instance`, "a", `${__interval_ms}`, "15000", `$__interval`, "15s")
+	d := loadDashboard(t)
+	titles := map[string][]string{}
+	for _, p := range d.Spec.Elements {
+		titles[p.Spec.Title] = panelExprs(&p)
+	}
+	for title, anchors := range map[string][]string{
+		"Track selections written": {"track_selections_set", "track_selections_failed"},
+		"Plays handled":            {"plays_handled"},
+		"Deep scans finished":      {"deep_scans_finished"},
+		"Reconnect attempts":       {"reconnect_attempts"},
+	} {
+		exprs := titles[title]
+		if len(exprs) != len(anchors) {
+			t.Errorf("%q has %d queries, want %d", title, len(exprs), len(anchors))
+			continue
+		}
+		for i, anchor := range anchors {
+			testedAs(anchor, at5m.Replace(exprs[i]))
+		}
+	}
+	if exprs := titles["Reconnect attempts"]; len(exprs) == 1 {
+		bar := at15s.Replace(exprs[0])
+		testedAs("reconnect_attempts_15s", bar)
+		testedAs("reconnect_attempts_15s_total", "sum_over_time(("+bar+")[3m:15s])")
 	}
 }
 
