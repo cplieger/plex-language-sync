@@ -444,13 +444,14 @@ const (
 // immediately so the caller can exit non-zero. Returns ctx.Err() when shutdown is signalled mid-retry.
 func connectAndResolveAdmin(ctx context.Context, client *plex.Client, live *liveness) (*plex.ServerIdentity, *plex.User, error) {
 	defer live.reconnect.Park()
-	degraded := false
+	var degradedSince time.Time
 	for attempt := 0; ; attempt++ {
 		live.reconnect.Beat()
 		identity, admin, err := connectOnce(ctx, client)
 		if err == nil {
-			if degraded {
-				slog.Info("plex connection recovered; leaving degraded state")
+			if !degradedSince.IsZero() {
+				slog.Info("plex connection recovered; leaving degraded state",
+					"duration", time.Since(degradedSince).Round(time.Second).String())
 			}
 			return identity, admin, nil
 		}
@@ -460,14 +461,14 @@ func connectAndResolveAdmin(ctx context.Context, client *plex.Client, live *live
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
-		if degraded {
+		if !degradedSince.IsZero() {
 			slog.Warn("plex still unreachable; retrying", "error", err)
 		} else {
 			// First transient failure: start healthy so the restart policy does
 			// not crash-loop the container while Plex is unreachable, then keep
 			// retrying.
 			live.start()
-			degraded = true
+			degradedSince = time.Now()
 			slog.Warn("initial plex connection failed; starting in degraded state and retrying", "error", err)
 		}
 		select {
@@ -647,9 +648,10 @@ func (n *notifyAdapter) resolvePlayEventUser(ctx context.Context, ev notify.Play
 		n.skipUnattributedPlayEvent(ev, err)
 		return "", "", false
 	}
-	if recovered, after := n.resolveStalls.success(); recovered {
+	if r := n.resolveStalls.success(); r.recovered {
 		slog.Info("play event: user resolution recovered",
-			"after_consecutive_failures", after)
+			"after_consecutive_failures", r.after,
+			"duration", r.duration.Round(time.Second).String())
 		n.metrics.ResolutionRecovered()
 	}
 	// The account holder chooses the name and callers only log it.
@@ -789,6 +791,8 @@ type resolveStallCounter struct {
 	// readable session list. A set, so one client repeating one item
 	// contributes once however many notifications it sends.
 	absentPairs map[absentPair]struct{}
+	// stalledAt is when the warned stall was reported; zero when none is.
+	stalledAt time.Time
 	// mu guards every field of this struct.
 	mu     sync.Mutex
 	misses int
@@ -850,23 +854,38 @@ func (c *resolveStallCounter) miss(ev notify.PlayEvent, sessionsUnreadable bool)
 	case len(c.absentPairs) >= resolveAbsentPairThreshold:
 		c.warned, v.stalled, v.cause = true, true, causeAllClientsAbsent
 	}
+	if v.stalled {
+		c.stalledAt = time.Now()
+	}
 	return v
+}
+
+// stallRecovery is success's answer: whether the success ended a warned
+// stall, with the run's length and how long the stall stood since it was
+// reported.
+type stallRecovery struct {
+	after     int
+	duration  time.Duration
+	recovered bool
 }
 
 // success clears the run and reports whether it ended a stall that was
 // warned about, so recovery is a positive log line rather than the
 // absence of one.
-func (c *resolveStallCounter) success() (recovered bool, after int) {
+func (c *resolveStallCounter) success() stallRecovery {
 	if c == nil {
-		return false, 0
+		return stallRecovery{}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	after, recovered = c.misses, c.warned
+	r := stallRecovery{after: c.misses, recovered: c.warned}
+	if c.warned {
+		r.duration = time.Since(c.stalledAt)
+	}
 	c.misses, c.unreadableRun = 0, 0
 	clear(c.absentPairs)
-	c.warned = false
-	return recovered, after
+	c.warned, c.stalledAt = false, time.Time{}
+	return r
 }
 
 func (n *notifyAdapter) handleTimeline(ctx context.Context, entries []notify.TimelineEntry) {

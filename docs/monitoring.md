@@ -1,12 +1,12 @@
 # Monitoring and alerts
 
-This page describes the metrics, log lines and alert rules of plex-language-sync, and what its healthcheck proves. Read it when you want to be told that the app has stopped doing its job. plex-language-sync serves a metrics page when you turn it on, and ships metric alert rules for it. If you run Loki and no metric store, a log rule file gives you the deep scan and user attribution alerts, and one on the app's ERROR lines.
+This page describes the metrics, log lines, alert rules and Grafana dashboard of plex-language-sync, and what its healthcheck proves. Read it when you want to be told that the app has stopped doing its job. The app serves a metrics page when you turn it on, and ships metric alert rules and a dashboard for it. If you run Loki and no metric store, a log rule file gives you the deep scan and user attribution alerts, and one on the app's ERROR lines.
 
 ## What you get
 
 | You run | You get | You set up |
 | --- | --- | --- |
-| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | The five metric alerts, `up` and graphs | `METRICS_LISTEN_ADDR`, a scrape job named `plex-language-sync`, and [`alerts/promql.yaml`](../alerts/promql.yaml) on your ruler |
+| Prometheus, Mimir or VictoriaMetrics, with Alertmanager | The five metric alerts, `up` and the [dashboard](#dashboard) | `METRICS_LISTEN_ADDR`, a scrape job named `plex-language-sync`, and [`alerts/promql.yaml`](../alerts/promql.yaml) on your ruler |
 | Loki and Alertmanager, no metric store | The three log alerts | [`alerts/logql.yaml`](../alerts/logql.yaml) on Loki's ruler, with `LOG_LEVEL` at `info` |
 | Grafana-managed alerting only | The same rules, imported into Grafana | A Prometheus or Loki data source, and the rules |
 | Docker or Unraid only | Docker health, which notifies nobody on its own | An uptime prober on `/healthz`, or something that watches Docker health |
@@ -30,11 +30,7 @@ Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET
 | `plex_language_sync_shared_users` | gauge | none | Shared Plex users the app follows, besides the admin |
 | `plex_language_sync_build_info` | gauge | `version` | Always 1. `version` is the release the container runs |
 
-The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. plex-language-sync bundles no dashboard. These queries answer the common questions in Grafana:
-
-- `sum by (kind) (increase(plex_language_sync_track_updates_total{result="set"}[1d]))` shows how many tracks the app set in the last day.
-- `(time() - plex_language_sync_deep_scan_last_success_timestamp_seconds) / 3600` shows the hours since the last complete deep scan.
-- `increase(plex_language_sync_play_events_total{outcome="skipped"}[1d])` shows the plays of the last day that the app could not attribute to a user.
+The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. The bundled [dashboard](#dashboard) shows the `plex_language_sync_*` series in Grafana.
 
 ## Logs
 
@@ -44,8 +40,9 @@ The app writes `key=value` text lines to standard error, with times in UTC.
 - Each play that sets or changes a choice logs `play event detected`, and each new or updated episode logs `library scan event detected`.
 - A subtitle matched past the `other-region` tier logs `track language substituted` with the codes and the `match_tier`. Closer matches log `track language matched` at DEBUG.
 - The daily deep scan logs `scheduled deep analysis starting` and `deep analysis completed`. The second line carries `complete=true` when the pass covered its whole window, and `unknown_users` with the number of Plex users in the history that the app does not follow.
-- When no playback can be attributed to any user for a sustained run, it logs `user resolution stalled` once at WARN with a `cause` field. It logs `user resolution recovered` when attribution works again.
-- When the WebSocket listener, the reconnect loop or the deep scan stops making progress, it logs `a loop stopped making progress` once at WARN. The `loop` field is `websocket`, `reconnect` or `deep_scan`, and `lease` is how long that loop may stay silent.
+- When no playback can be attributed to any user for a sustained run, it logs `play event: user resolution stalled` once at WARN with a `cause` field. It logs `play event: user resolution recovered` when attribution works again, with `duration` the time since the stall line.
+- When the Plex notification stream drops, it logs `websocket disconnected, reconnecting`, and again after each failed reconnect. The `websocket connected` line that follows carries how long the stream was down as `duration`. When Plex is unreachable at start, `plex connection recovered; leaving degraded state` carries the same field.
+- When the WebSocket listener, the reconnect loop or the deep scan stops making progress, it logs `a loop stopped making progress` once at WARN. The `loop` field is `websocket`, `reconnect` or `deep_scan`, and `lease` is how long that loop may stay silent. When the loop makes progress again it logs `a loop resumed making progress` with how long it was stale as `duration`.
 - With `METRICS_LISTEN_ADDR` set, the listener logs one `http` line per request: at DEBUG for `/metrics` and `/healthz`, so scrapes and probes stay out of the INFO log, and at INFO for any other path.
 - `LOG_LEVEL=debug` adds the reason each event was skipped and the detail of each track match.
 
@@ -81,9 +78,22 @@ Each rule's description in its file says what to check first when it fires. Note
 - A cache save that failed on shutdown logs one ERROR, which alone does not fire `PlexLanguageSyncErrorLog`. `PlexLanguageSyncCacheSaveFailed` counts the saves that fail while the app runs.
 - `PlexLanguageSyncResolutionStalled` follows the app's own stall. The app finds the viewer by matching each playback notification with the server's active sessions. It skips an event it cannot attribute rather than save a language choice under the wrong user. With `cause=sessions_unreadable`, the session list could not be read for 20 events in a row. With `cause=all_clients_absent`, the list was read every time but 5 different client and item pairs were missing from it, and the log's `absent_pairs` field carries that count.
 - Repetition alone never fires `PlexLanguageSyncResolutionStalled`, and a paused client never counts toward it. Three normal cases look like a missing session. Plex announces playback a few seconds before the session can be read. An idle web client keeps announcing a finished item while its tab stays open. A client whose session Plex removed keeps announcing it as paused. Individual skips log at DEBUG.
-- The metric rule holds until playback is attributed again. The log rule holds for 6 hours after the stall line and does not follow recovery, so check for a later `user resolution recovered` line.
+- The metric rule holds until playback is attributed again. The log rule holds for 6 hours after the stall line and does not follow recovery, so check for a later `play event: user resolution recovered` line.
 
 Thresholds, windows and the `severity` labels are starting points. In `alerts/logql.yaml`, change the `container` selector to the label your log collector sets, such as `job` or `service`. In `alerts/promql.yaml`, keep the scrape job name that `PlexLanguageSyncDown` names.
+
+## Dashboard
+
+[`grafana-dashboard.json`](../grafana-dashboard.json) imports as the Plex Language Sync dashboard. It reads the metrics above from a Prometheus data source and needs Grafana 13.2 or newer. It works whatever you name the scrape job. The Instance variable lists the `instance` values of `plex_language_sync_build_info`, so with one container it is picked for you, and with several it picks the one to show. The dashboard has one page of four rows:
+
+- Needs attention appears only while an alert from `alerts/promql.yaml` fires, with one tile per rule. Each tile reads its rule's `ALERTS` series, which Prometheus and the Mimir ruler store beside your metrics, so the row stays hidden while those rules are not loaded. A scrape job with no target fires `PlexLanguageSyncDown` with no instance, so its tile cannot show that case.
+- Now shows whether the Plex notification stream is connected, when the last complete deep scan finished, when the next one is due and how many shared users the app follows. It reads `plex_language_sync_websocket_connected`, the two deep scan timestamps and `plex_language_sync_shared_users`.
+- Sync charts the audio and subtitle choices written to Plex, set or failed, from `plex_language_sync_track_updates_total`. It also charts the plays handled, matched to a user or skipped, from `plex_language_sync_play_events_total`.
+- Deep scan and Plex connection charts the complete and incomplete deep scans from `plex_language_sync_deep_scan_runs_total`. It also shows when the Plex notification stream was connected over the selected range, and the reconnect attempts from `plex_language_sync_websocket_reconnects_total`.
+
+The charts that count per interval also read `process_start_time_seconds` to find a container restart. Keep the `process_*` series in your scrape, or a restart draws a negative bar.
+
+The dashboard is versioned with the image, and the `grafana-dashboard.json` of release `<tag>` matches the metrics that image serves. Each release attaches it with its checksum at `https://github.com/cplieger/plex-language-sync/releases/download/<tag>/grafana-dashboard.json`, and each image publish pushes it as the OCI artifact `ghcr.io/cplieger/plex-language-sync/dashboard:<tag>`. The file sets `metadata.name` to `plex-language-sync`, which Grafana uses as the dashboard UID, so importing a newer copy over the old one updates it in place.
 
 ## Knowing the app is alive
 
