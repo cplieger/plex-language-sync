@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -98,14 +98,13 @@ type dashVariable struct {
 	Kind string `json:"kind"`
 	Spec struct {
 		Name    string `json:"name"`
+		Regex   string `json:"regex"`
 		Refresh string `json:"refresh"`
 		Sort    string `json:"sort"`
 		Current struct {
 			Value any `json:"value"`
 		} `json:"current"`
-		Multi      bool            `json:"multi"`
-		IncludeAll bool            `json:"includeAll"`
-		Query      json.RawMessage `json:"query"`
+		Query json.RawMessage `json:"query"`
 	} `json:"spec"`
 }
 
@@ -169,21 +168,113 @@ func variableQuery(v *dashVariable) string {
 	return q.Spec.Query
 }
 
-// panelQueries is every panel query and every query variable's PromQL but
-// the instance variable's, which lists the instances the others filter on.
+// panelQueries is every panel query and every query variable's PromQL, with
+// its # comments removed so no check reads a comment as a query.
 func panelQueries(d *dashboard) map[string]string {
 	queries := map[string]string{}
 	for name, v := range d.variables() {
-		if q := variableQuery(&v); q != "" && name != "instance" {
-			queries["variable "+name] = q
+		if q := variableQuery(&v); q != "" {
+			queries["variable "+name] = withoutComments(q)
 		}
 	}
 	for name, p := range d.Spec.Elements {
 		for i, e := range panelExprs(&p) {
-			queries[fmt.Sprintf("%s %s query %d", name, p.Spec.Title, i)] = e
+			queries[fmt.Sprintf("%s %s query %d", name, p.Spec.Title, i)] = withoutComments(e)
 		}
 	}
 	return queries
+}
+
+// skipString returns the index just past the string literal opening at s[i].
+func skipString(s string, i int) int {
+	q := s[i]
+	for i++; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && q != '`':
+			i++
+		case s[i] == q:
+			return i + 1
+		}
+	}
+	return len(s)
+}
+
+// withoutComments drops each # comment from expr, up to its newline. A # inside
+// a string literal opens no comment, and a quote inside a comment opens no
+// string.
+func withoutComments(expr string) string {
+	var b strings.Builder
+	for i := 0; i < len(expr); {
+		switch expr[i] {
+		case '#':
+			if j := strings.IndexByte(expr[i:], '\n'); j >= 0 {
+				i += j
+			} else {
+				i = len(expr)
+			}
+		case '"', '\'', '`':
+			j := skipString(expr, i)
+			b.WriteString(expr[i:j])
+			i = j
+		default:
+			b.WriteByte(expr[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// promqlCode is expr with its string literals and # comments blanked, so a
+// name inside one is not read as code.
+func promqlCode(expr string) string {
+	b := []byte(expr)
+	for i := 0; i < len(b); i++ {
+		switch b[i] {
+		case '"', '\'', '`':
+			end := skipString(expr, i)
+			for j := i; j < end; j++ {
+				b[j] = ' '
+			}
+			i = end - 1
+		case '#':
+			for ; i < len(b) && b[i] != '\n'; i++ {
+				b[i] = ' '
+			}
+		}
+	}
+	return string(b)
+}
+
+type selectorBlock struct {
+	name, text string
+}
+
+// selectors returns each {...} block of expr with the series name written
+// before it, empty when none, a keyword (x or {...}) or a variable ($v{...})
+// is. Quoted strings are skipped, so a brace inside a label value ends no
+// block.
+func selectors(expr string) []selectorBlock {
+	var out []selectorBlock
+	start := -1
+	for i := 0; i < len(expr); i++ {
+		switch c := expr[i]; {
+		case c == '"' || c == '\'' || c == '`':
+			i = skipString(expr, i) - 1
+		case c == '{':
+			start = i
+		case c == '}' && start >= 0:
+			before := strings.TrimRight(expr[:start], " ")
+			name := before[len(strings.TrimRightFunc(before, func(r rune) bool {
+				return r == '_' || r == ':' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+			})):]
+			if slices.Contains(promqlKeywords, name) || strings.HasSuffix(before[:len(before)-len(name)], "$") {
+				name = ""
+			}
+			out = append(out, selectorBlock{name: name, text: name + expr[start:i+1]})
+			start = -1
+		}
+	}
+	return out
 }
 
 func row(t *testing.T, d *dashboard, title string) *layoutNode {
@@ -242,21 +333,29 @@ var (
 	labelValuesRe = regexp.MustCompile(`label_values\(([^,]+),\s*\w+\)`)
 	functionRe    = regexp.MustCompile(`\b[a-z_]+\s*\(`)
 	identRe       = regexp.MustCompile(`\b[a-zA-Z_:][a-zA-Z0-9_:]*\b`)
-	alertsRe      = regexp.MustCompile(`ALERTS\{alertname="([A-Za-z]+)"([^}]*)\}`)
+	alertsRe      = regexp.MustCompile(`ALERTS\{alertname="(\w+)"`)
 	stallTermRe   = regexp.MustCompile(`ALERTS\{alertname="PlexLanguageSyncResolutionStalled"[^}]*cause="([^"]*)"[^}]*\}(?:\s*\*\s*0\s*\+\s*(\d+))?`)
 	stallCauseRe  = regexp.MustCompile(`(?m)^plex_language_sync_user_resolution_stalled\{cause="([^"]*)"\} `)
-	counterCallRe = regexp.MustCompile(`\b(increase|rate|irate)\s*\(`)
-	oneSlotRe     = regexp.MustCompile(`\[\s*\$(?:__interval|\{__interval\}|\{__interval_ms\}ms)\s*(?::[^\]]*)?\]`)
-	// Grafana's variable grammar, variableRegex in
-	// https://github.com/grafana/grafana/blob/v13.2.3/public/app/features/variables/utils.ts
-	grafanaVarRe = regexp.MustCompile(`\$(\w+)|\[\[(\w+?)(?::\w+)?\]\]|\$\{(\w+)(?:\.[^:^}]+)?(?::[^}]+)?\}`)
-	// ${name}'s braces are no selector.
-	bracedVarRe = regexp.MustCompile(`\$\{\w+(?::\w+)?\}`)
-	matcherRe   = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*|` + promqlString + `)\s*(=~|!~|!=|=)\s*(` + promqlString + `)$`)
-	stringRe    = regexp.MustCompile(`^(?:` + promqlString + `)$`)
+	// bracedVariableRe matches ${name}, whose braces are no selector.
+	bracedVariableRe = regexp.MustCompile(`\$\{\w+(?::\w+)?\}`)
+	// absentCallRe matches a call of absent() or absent_over_time(); PromQL
+	// lets whitespace stand before a call's parenthesis.
+	absentCallRe = regexp.MustCompile(`(?:^|[^\w:])absent(?:_over_time)?\s*\(`)
 )
 
-const promqlString = `"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` + "`[^`]*`"
+// servedCauses is every stall cause a fresh registry serves, sorted.
+func servedCauses(t *testing.T) []string {
+	t.Helper()
+	var served []string
+	for _, m := range stallCauseRe.FindAllStringSubmatch(exposition(t), -1) {
+		served = append(served, m[1])
+	}
+	if len(served) == 0 {
+		t.Fatal("Setup: the registry serves no plex_language_sync_user_resolution_stalled series")
+	}
+	slices.Sort(served)
+	return served
+}
 
 var promqlKeywords = []string{"and", "or", "unless", "bool", "offset"}
 
@@ -291,15 +390,18 @@ func TestDashboardIsSchemaV2(t *testing.T) {
 
 // TestDashboardReadsOnlyExportedSeries fails when a panel or a variable reads
 // a series or a label plex-language-sync does not serve, so a renamed series
-// fails the build instead of blanking a panel. ALERTS is the ruler's series;
-// instance is the scrape's label.
+// fails the build instead of blanking a panel. It also fails a selector with
+// no series name before its braces, which this test and the ALERTS pin cannot
+// read. ALERTS is the ruler's series; instance is the scrape's label.
 func TestDashboardReadsOnlyExportedSeries(t *testing.T) {
 	served := servedLabels(t)
 	d := loadDashboard(t)
-	queries := panelQueries(&d)
-	inst := d.variables()["instance"]
-	queries["variable instance"] = variableQuery(&inst)
-	for where, expr := range queries {
+	for where, expr := range panelQueries(&d) {
+		for _, sel := range selectors(bracedVariableRe.ReplaceAllString(expr, "$$v")) {
+			if sel.name == "" {
+				t.Errorf("%s has a selector with no series name before its braces, which this check cannot read: %s", where, sel.text)
+			}
+		}
 		var labels []string
 		for _, name := range seriesIn(expr) {
 			switch have, ok := served[name]; {
@@ -334,197 +436,21 @@ func TestDashboardReadsOnlyExportedSeries(t *testing.T) {
 	}
 }
 
-// TestDashboardFiltersOnTheInstanceOnly fails when a series a query reads is
-// not filtered on the selected instance, or a query matches on a label the
-// user or their collector names (job, hostname, container), which would blank
-// the panel for anyone who named theirs differently.
-func TestDashboardFiltersOnTheInstanceOnly(t *testing.T) {
-	served := servedLabels(t)
+// TestDashboardInstanceVariableListsServedInstances fails when the instance
+// variable stops listing every plex-language-sync instance that reports a
+// build as one alphabetical list that refreshes with the range and starts
+// empty.
+func TestDashboardInstanceVariableListsServedInstances(t *testing.T) {
 	d := loadDashboard(t)
 	inst := d.variables()["instance"]
 	if q := variableQuery(&inst); q != "label_values(plex_language_sync_build_info, instance)" {
 		t.Errorf("instance variable query = %q, want label_values(plex_language_sync_build_info, instance)", q)
 	}
-	if inst.Spec.Sort != "alphabeticalAsc" || inst.Spec.Refresh != "onTimeRangeChanged" ||
-		inst.Spec.Multi || inst.Spec.IncludeAll || inst.Spec.Current.Value != "" {
-		t.Errorf("instance variable is not a single-select, alphabetical, range-refreshed list with an empty current value")
+	if inst.Spec.Regex != "" {
+		t.Errorf("instance variable has regex %q, which hides instances its query lists", inst.Spec.Regex)
 	}
-	for where, expr := range panelQueries(&d) {
-		filtered := map[int]bool{}
-		pinned := strings.Contains(expr, `instance="$instance"`)
-		for _, loc := range selectorRe.FindAllStringSubmatchIndex(expr, -1) {
-			if sel := expr[loc[4]:loc[5]]; strings.Contains(sel, `instance="$instance"`) ||
-				pinned && strings.Contains(sel, `instance=""`) {
-				filtered[loc[0]] = true
-			}
-			for _, m := range matcherNameRe.FindAllStringSubmatch(quotedRe.ReplaceAllString(expr[loc[4]:loc[5]], `""`), -1) {
-				if slices.Contains([]string{"job", "hostname", "container"}, m[1]) {
-					t.Errorf("%s matches on %s, a label the user names", where, m[1])
-				}
-			}
-		}
-		// Blank quoted strings in place, keeping offsets, so a label value
-		// is never read as a series name.
-		bare := quotedRe.ReplaceAllStringFunc(expr, func(s string) string { return strings.Repeat(" ", len(s)) })
-		for _, loc := range identRe.FindAllStringIndex(bare, -1) {
-			name := bare[loc[0]:loc[1]]
-			if _, ok := served[name]; (ok || name == "ALERTS") && !filtered[loc[0]] {
-				t.Errorf("%s reads %s without instance=\"$instance\"", where, name)
-			}
-		}
-	}
-}
-
-func skipString(s string, i int) int {
-	q := s[i]
-	for i++; i < len(s); i++ {
-		switch {
-		case s[i] == '\\' && q != '`':
-			i++
-		case s[i] == q:
-			return i + 1
-		}
-	}
-	return len(s)
-}
-
-func skipComment(s string, i int) int {
-	if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
-		return i + j
-	}
-	return len(s)
-}
-
-// promqlUnquote decodes a string literal. PromQL escapes as Go does
-// (https://prometheus.io/docs/prometheus/latest/querying/basics/#string-literals),
-// so "inst\x61nce" names the instance label.
-func promqlUnquote(s string) (string, error) {
-	if s[0] == '\'' {
-		s = `"` + strings.ReplaceAll(strings.ReplaceAll(s[1:len(s)-1], `\'`, `'`), `"`, `\"`) + `"`
-	}
-	return strconv.Unquote(s)
-}
-
-func selectors(expr string) [][]string {
-	var out [][]string
-	var parts []string
-	start, part := -1, 0
-	for i := 0; i < len(expr); i++ {
-		switch c := expr[i]; {
-		case c == '#':
-			i = skipComment(expr, i)
-		case c == '"' || c == '\'' || c == '`':
-			i = skipString(expr, i) - 1
-		case c == '{':
-			start, part, parts = i, i+1, nil
-		case (c == ',' || c == '}') && start >= 0:
-			if p := strings.TrimSpace(expr[part:i]); p != "" {
-				parts = append(parts, p)
-			}
-			part = i + 1
-			if c == '}' {
-				out = append(out, parts)
-				start = -1
-			}
-		}
-	}
-	return out
-}
-
-// TestDashboardMatchesTheInstanceExactly fails when a query matches instance
-// by regex or negation. instance is single-select, and Grafana regex-escapes a
-// variable only when it is multi-value or include-all
-// (https://github.com/grafana/grafana-prometheus-datasource/blob/v13.2.3/packages/grafana-prometheus/src/escaping.ts),
-// so an IPv6 target's brackets parse as a character class and a host name's
-// dots match its neighbours. instance="" is allowed only beside the pinned
-// matcher, for an alert that carries no instance label.
-func TestDashboardMatchesTheInstanceExactly(t *testing.T) {
-	d := loadDashboard(t)
-	for where, expr := range panelQueries(&d) {
-		var matchers [][]string
-		for _, parts := range selectors(bracedVarRe.ReplaceAllString(expr, "$$v")) {
-			instances := 0
-			for _, part := range parts {
-				m := matcherRe.FindStringSubmatch(part)
-				if m == nil {
-					if !stringRe.MatchString(part) {
-						t.Errorf("%s holds %q in a selector, which is no label matcher", where, part)
-					}
-					continue
-				}
-				label, lerr := m[1], error(nil)
-				if stringRe.MatchString(label) {
-					label, lerr = promqlUnquote(label)
-				}
-				value, verr := promqlUnquote(m[3])
-				if lerr != nil || verr != nil {
-					t.Errorf("%s quotes %q in a form the check cannot read", where, part)
-					continue
-				}
-				if label == "instance" {
-					instances++
-					matchers = append(matchers, []string{m[2], value})
-				}
-			}
-			if instances > 1 {
-				t.Errorf("%s matches instance twice in one selector", where)
-			}
-		}
-		pinned := slices.ContainsFunc(matchers, func(m []string) bool { return m[0] == "=" && m[1] == "$instance" })
-		for _, m := range matchers {
-			if m[0] != "=" || m[1] != "$instance" && (m[1] != "" || !pinned) {
-				t.Errorf("%s matches instance%s%q, want instance=\"$instance\", or instance=\"\" beside it", where, m[0], m[1])
-			}
-		}
-	}
-}
-
-func callArgs(expr string, open int) string {
-	depth := 0
-	for i := open; i < len(expr); i++ {
-		switch expr[i] {
-		case '#':
-			i = skipComment(expr, i)
-		case '"', '\'', '`':
-			i = skipString(expr, i) - 1
-		case '(':
-			depth++
-		case ')':
-			if depth--; depth == 0 {
-				return expr[open+1 : i]
-			}
-		}
-	}
-	return expr[open+1:]
-}
-
-func canonicalIntervals(expr string) string {
-	return grafanaVarRe.ReplaceAllStringFunc(expr, func(ref string) string {
-		m := grafanaVarRe.FindStringSubmatch(ref)
-		switch m[1] + m[2] + m[3] {
-		case "__interval":
-			return "$__interval"
-		case "__interval_ms":
-			return "${__interval_ms}"
-		}
-		return ref
-	})
-}
-
-// TestDashboardNeverTakesACounterOverOneInterval fails when a query takes
-// increase, rate or irate over one $__interval, in any of Grafana's spellings,
-// plain or as a subquery. At short ranges the interval falls to the scrape
-// interval, the window holds one sample and the panel goes blank while the
-// user zooms in on an incident.
-func TestDashboardNeverTakesACounterOverOneInterval(t *testing.T) {
-	d := loadDashboard(t)
-	for where, expr := range panelQueries(&d) {
-		expr = canonicalIntervals(expr)
-		for _, loc := range counterCallRe.FindAllStringSubmatchIndex(expr, -1) {
-			if r := oneSlotRe.FindString(callArgs(expr, loc[1]-1)); r != "" {
-				t.Errorf("%s takes %s over %s, want [$__rate_interval], or the offset slot for an exact count", where, expr[loc[2]:loc[3]], r)
-			}
-		}
+	if inst.Spec.Sort != "alphabeticalAsc" || inst.Spec.Refresh != "onTimeRangeChanged" || inst.Spec.Current.Value != "" {
+		t.Errorf("instance variable is not an alphabetical, range-refreshed list with an empty current value")
 	}
 }
 
@@ -574,15 +500,129 @@ func TestDashboardCounterSlotsAreTheTestedQueries(t *testing.T) {
 	}
 }
 
+type causeRead struct {
+	cause string
+	value int
+}
+
+// causeTiles holds each tile that tells its rule's causes apart: the
+// aggregation and the number each cause's read adds, which the panel's value
+// mappings put into words.
+var causeTiles = map[string]struct {
+	agg   string
+	reads []causeRead
+}{
+	"PlexLanguageSyncResolutionStalled": {"max", []causeRead{{"sessions_unreadable", 1}, {"all_clients_absent", 2}}},
+}
+
+// attentionReads is every ALERTS selector a query may read the rule name's
+// firing alerts with, for the rule expression expr, in its tile's order.
+// absent() and absent_over_time() label their alert with only the selector's
+// equality matchers, and a shipped rule's selector names no instance, so only
+// such a rule's alert is also read with instance="":
+// https://prometheus.io/docs/prometheus/latest/querying/functions/#absent
+func attentionReads(name, expr string) []string {
+	read := `ALERTS{alertname="` + name + `", alertstate="firing", instance=`
+	if ct, ok := causeTiles[name]; ok {
+		var reads []string
+		for _, c := range ct.reads {
+			reads = append(reads, read+`"$instance", cause="`+c.cause+`"}`)
+		}
+		return reads
+	}
+	if absentCallRe.MatchString(promqlCode(expr)) {
+		return []string{read + `"$instance"}`, read + `""}`}
+	}
+	return []string{read + `"$instance"}`}
+}
+
+// attentionTile is the query of the Needs attention tile for the rule name
+// with expression expr, which answers while any of its reads does.
+func attentionTile(name, expr string) string {
+	reads := attentionReads(name, expr)
+	if ct, ok := causeTiles[name]; ok {
+		parts := make([]string, len(reads))
+		for i, r := range reads {
+			parts[i] = fmt.Sprintf("%s * 0 + %d", r, ct.reads[i].value)
+		}
+		return ct.agg + "(" + strings.Join(parts, " or ") + ")"
+	}
+	if len(reads) == 2 {
+		return `0 * max((` + reads[0] + ` or ` + reads[1] + `))`
+	}
+	return `0 * max(` + reads[0] + `)`
+}
+
 // TestDashboardAttentionTilesMirrorEveryShippedRule fails when a rule in
-// alerts/promql.yaml has no Needs attention tile, or a tile names a rule the
-// file does not hold. Each tile reads its rule's firing ALERTS series and
-// names the rule, and starts hidden until its query answers.
+// alerts/promql.yaml has no Needs attention tile, a tile's query is not
+// exactly attentionTile's for a shipped rule its description names, a cause
+// tile misses or adds a cause its rule fires for, the row's variable does not
+// count exactly those tiles in layout order, a tile is not hidden until its
+// query answers, or any query reads ALERTS other than through attentionReads'
+// selectors, instance="" only beside instance="$instance".
 func TestDashboardAttentionTilesMirrorEveryShippedRule(t *testing.T) {
 	d := loadDashboard(t)
-	var rules []string
+	rules := map[string]string{}
 	for _, r := range alertrules.Load(t, "alerts/promql.yaml") {
-		rules = append(rules, r.Alert)
+		rules[r.Alert] = r.Expr
+	}
+	for where, expr := range panelQueries(&d) {
+		sels := selectors(bracedVariableRe.ReplaceAllString(expr, "$$v"))
+		var texts []string
+		alertSels := 0
+		for _, sel := range sels {
+			texts = append(texts, sel.text)
+			if sel.name == "ALERTS" {
+				alertSels++
+			}
+		}
+		n := 0
+		for _, id := range identRe.FindAllString(promqlCode(expr), -1) {
+			if id == "ALERTS" {
+				n++
+			}
+		}
+		if n != alertSels {
+			t.Errorf("%s names ALERTS %d times but reads it through %d selectors: every ALERTS read is one of attentionReads' selectors", where, n, alertSels)
+		}
+		for _, sel := range sels {
+			if sel.name != "ALERTS" {
+				continue
+			}
+			name := ""
+			if m := alertsRe.FindStringSubmatch(sel.text); m != nil {
+				name = m[1]
+			}
+			rule, ok := rules[name]
+			if !ok {
+				t.Errorf("%s reads %s, whose alertname is not first or names no rule in alerts/promql.yaml", where, sel.text)
+				continue
+			}
+			reads := attentionReads(name, rule)
+			switch {
+			case !slices.Contains(reads, sel.text):
+				t.Errorf("%s reads %s; a read of %s must be exactly one of these, since a missing or looser instance match shows other instances' alerts, a second instance matcher reads nothing, and instance=\"\" reads only the alert of an absent() rule, which carries no instance:\n%s", where, sel.text, name, strings.Join(reads, "\n"))
+			case strings.HasSuffix(sel.text, `instance=""}`) && !slices.Contains(texts, reads[0]):
+				t.Errorf("%s reads %s without %s in the same query: a read of only instance=\"\" misses the rule's alerts for the selected instance", where, sel.text, reads[0])
+			}
+		}
+	}
+	served := servedCauses(t)
+	for name, ct := range causeTiles {
+		expr, ok := rules[name]
+		if !ok {
+			t.Errorf("causeTiles holds %s, which alerts/promql.yaml does not hold", name)
+			continue
+		}
+		var got []string
+		for _, c := range ct.reads {
+			got = append(got, c.cause)
+		}
+		slices.Sort(got)
+		// A rule whose selectors carry no matcher fires for every served cause.
+		if !slices.Equal(got, served) || len(selectors(withoutComments(expr))) > 0 || absentCallRe.MatchString(promqlCode(expr)) {
+			t.Errorf("%s's tile reads causes %q, want the served %q, from a rule that reads its series with no matcher and no absent() arm", name, got, served)
+		}
 	}
 	attention := row(t, &d, "Needs attention")
 	gate := attention.Spec.ConditionalRendering
@@ -591,10 +631,8 @@ func TestDashboardAttentionTilesMirrorEveryShippedRule(t *testing.T) {
 		gate.Spec.Items[0].Spec.Operator != "matches" || gate.Spec.Items[0].Spec.Value != "^[1-9]" {
 		t.Fatal("Needs attention is not shown by a variable matching ^[1-9]")
 	}
-	gateVar := d.variables()[gate.Spec.Items[0].Spec.Variable]
-	counted := variableQuery(&gateVar)
-	var mirrored []string
-	for _, it := range attention.Spec.Layout.Spec.Items {
+	var mirrored, counts []string
+	for i, it := range attention.Spec.Layout.Spec.Items {
 		p := d.Spec.Elements[it.Spec.Element.Name]
 		cr := it.Spec.ConditionalRendering
 		var conds []string
@@ -609,31 +647,38 @@ func TestDashboardAttentionTilesMirrorEveryShippedRule(t *testing.T) {
 			p.Spec.Data.Spec.QueryOptions.MaxDataPoints <= 0 {
 			t.Errorf("%q does not show exactly while its query answers: want a shown group or'ing a has-data rule with a 0s range rule, and a maxDataPoints pin", p.Spec.Title)
 		}
-		for _, e := range panelExprs(&p) {
-			if !strings.Contains(counted, "count("+e+")") {
-				t.Errorf("%q query is not counted by the row's variable", p.Spec.Title)
-			}
-			for _, m := range alertsRe.FindAllStringSubmatch(e, -1) {
-				if !strings.Contains(m[2], `alertstate="firing"`) {
-					t.Errorf("%q reads %s alerts in any state, want only firing ones", p.Spec.Title, m[1])
-				}
-				if !strings.Contains(p.Spec.Description, m[1]) {
-					t.Errorf("%q reads %s, which its description does not name", p.Spec.Title, m[1])
-				}
-				if !slices.Contains(mirrored, m[1]) {
-					mirrored = append(mirrored, m[1])
-				}
-			}
+		exprs := panelExprs(&p)
+		if len(exprs) != 1 {
+			t.Errorf("%q holds %d queries, want 1", p.Spec.Title, len(exprs))
+			continue
+		}
+		counts = append(counts, fmt.Sprintf(`label_replace(count(%s), "tile", "%d", "", "")`, exprs[0], i+1))
+		m := alertsRe.FindStringSubmatch(exprs[0])
+		if m == nil {
+			t.Errorf("%q reads no ALERTS series by alertname: %s", p.Spec.Title, exprs[0])
+			continue
+		}
+		name := m[1]
+		mirrored = append(mirrored, name)
+		if !strings.Contains(p.Spec.Description, name) {
+			t.Errorf("%q reads %s, which its description does not name", p.Spec.Title, name)
+		}
+		expr, ok := rules[name]
+		if !ok {
+			t.Errorf("a tile mirrors %s, which alerts/promql.yaml does not hold", name)
+			continue
+		}
+		if want := attentionTile(name, expr); exprs[0] != want {
+			t.Errorf("%q must read exactly\n%s\nso it shows only the selected instance's firing %s alerts; it reads\n%s", p.Spec.Title, want, name, exprs[0])
 		}
 	}
-	for _, name := range rules {
+	gateVar := d.variables()[gate.Spec.Items[0].Spec.Variable]
+	if got, want := variableQuery(&gateVar), "query_result(count("+strings.Join(counts, " or ")+") or vector(0))"; got != want {
+		t.Errorf("the row's variable must count exactly its tiles in layout order:\n%s\nit reads\n%s", want, got)
+	}
+	for _, name := range slices.Sorted(maps.Keys(rules)) {
 		if !slices.Contains(mirrored, name) {
 			t.Errorf("%s has no Needs attention tile reading its firing alerts", name)
-		}
-	}
-	for _, name := range mirrored {
-		if !slices.Contains(rules, name) {
-			t.Errorf("a tile mirrors %s, which alerts/promql.yaml does not hold", name)
 		}
 	}
 }
@@ -644,14 +689,7 @@ func TestDashboardAttentionTilesMirrorEveryShippedRule(t *testing.T) {
 // no query names fires the alert with its tile and the Needs attention row
 // hidden.
 func TestDashboardUserAttributionNamesEveryStallCause(t *testing.T) {
-	var served []string
-	for _, m := range stallCauseRe.FindAllStringSubmatch(exposition(t), -1) {
-		served = append(served, m[1])
-	}
-	if len(served) == 0 {
-		t.Fatal("Setup: the registry serves no plex_language_sync_user_resolution_stalled series")
-	}
-	slices.Sort(served)
+	served := servedCauses(t)
 	d := loadDashboard(t)
 	for where, expr := range panelQueries(&d) {
 		var causes []string
