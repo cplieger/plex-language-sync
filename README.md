@@ -5,6 +5,8 @@
 <!-- hub-overview BEGIN -->
 plex-language-sync remembers the audio and subtitle languages you pick for each TV show in Plex and sets them on every other episode, for each user of your server. It chooses between the tracks your files already have and downloads nothing.
 
+![The bundled Grafana dashboard showing the Plex connection up, the last and next complete deep scan and the shared users followed, charts of the track selections written and plays handled over 7 days, and the deep scans, connection and reconnects](docs/images/header.png)
+
 ## What it does
 
 plex-language-sync keeps a show on the audio and subtitles you pick once, in four ways:
