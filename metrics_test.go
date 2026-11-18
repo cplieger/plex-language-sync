@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/scheduler/v2"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/deepscan"
@@ -43,21 +43,20 @@ func TestLoadMetricsListenAddr(t *testing.T) {
 }
 
 // Not parallel at the top: one case sets the environment.
-func TestListenMetrics(t *testing.T) {
+func TestListenOps(t *testing.T) {
 	t.Run("unset binds nothing", func(t *testing.T) {
 		t.Parallel()
-		ms, err := listenMetrics(t.Context(), "", obs.New("test"), newTestLiveness(t))
+		ms, err := listenOps(t.Context(), &config{}, obs.New("test"), newTestLiveness(t))
 		if err != nil || ms.Addr() != nil {
-			t.Errorf("listenMetrics(\"\") = %v, %v; want no listener and no error", ms.Addr(), err)
+			t.Errorf("listenOps(\"\") = %v, %v; want no listener and no error", ms.Addr(), err)
 		}
 	})
 	t.Run("a trimmed address binds", func(t *testing.T) {
 		t.Setenv("METRICS_LISTEN_ADDR", " 127.0.0.1:0\t")
-		ms, err := listenMetrics(t.Context(), loadMetricsListenAddr(), obs.New("test"), newTestLiveness(t))
+		ms, err := listenOps(t.Context(), &config{metricsListenAddr: loadMetricsListenAddr()}, obs.New("test"), newTestLiveness(t))
 		if err != nil {
-			t.Fatalf("listenMetrics: %v", err)
+			t.Fatalf("listenOps: %v", err)
 		}
-		defer ms.Close()
 		if host, _, _ := net.SplitHostPort(ms.Addr().String()); host != "127.0.0.1" {
 			t.Errorf("bound %s, want 127.0.0.1", ms.Addr())
 		}
@@ -70,10 +69,9 @@ func TestListenMetrics(t *testing.T) {
 	for _, addr := range []string{"not an address", taken.Addr().String()} {
 		t.Run(addr, func(t *testing.T) {
 			t.Parallel()
-			ms, err := listenMetrics(t.Context(), addr, obs.New("test"), newTestLiveness(t))
+			ms, err := listenOps(t.Context(), &config{metricsListenAddr: addr}, obs.New("test"), newTestLiveness(t))
 			if err == nil {
-				ms.Close()
-				t.Fatalf("listenMetrics(%q) bound %s, want an error", addr, ms.Addr())
+				t.Fatalf("listenOps(%q) bound %s, want an error", addr, ms.Addr())
 			}
 			if !strings.Contains(err.Error(), "METRICS_LISTEN_ADDR") {
 				t.Errorf("error %q does not name METRICS_LISTEN_ADDR", err)
@@ -92,12 +90,12 @@ func newTestLiveness(t *testing.T) *liveness {
 // returns its base URL; stop shuts it down and waits, and runs at cleanup.
 func serveTestMetrics(t *testing.T, m *obs.Metrics, live *liveness) (base string, stop func()) {
 	t.Helper()
-	ms, err := listenMetrics(t.Context(), "127.0.0.1:0", m, live)
+	ms, err := listenOps(t.Context(), &config{metricsListenAddr: "127.0.0.1:0"}, m, live)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	done := serveMetrics(ctx, ms)
+	done := serveOps(ctx, ms)
 	stop = sync.OnceFunc(func() { cancel(); <-done })
 	t.Cleanup(stop)
 	return "http://" + ms.Addr().String(), stop
@@ -155,7 +153,7 @@ func TestServeMetricsLogsStraysButNotScrapes(t *testing.T) {
 }
 
 // Not parallel: run installs its own default logger, restored at cleanup.
-func TestRunExitsOnAnUnbindableMetricsAddr(t *testing.T) {
+func TestRunExitsOnAnUnbindableOpsAddr(t *testing.T) {
 	capture.Default(t)
 	t.Setenv("PLEX_URL", "http://plex.invalid:32400")
 	t.Setenv("PLEX_TOKEN", "test-token")
@@ -347,4 +345,49 @@ func TestCacheSaveFailuresCountedOnBothPaths(t *testing.T) {
 	if got := metrictest.Value(t, m, family); got != 2 {
 		t.Errorf("cache save failures = %v after a failed shutdown save, want 2", got)
 	}
+}
+
+func TestListenOpsAppliesAllowedHosts(t *testing.T) {
+	t.Setenv("PLEX_URL", "http://plex.invalid:32400")
+	t.Setenv("PLEX_TOKEN", "test-token")
+	t.Run("unset serves every Host", func(t *testing.T) {
+		t.Setenv("ALLOWED_HOSTS", "")
+		cfg := loadConfig()
+		if len(strings.TrimSpace(strings.Join(cfg.allowedHosts, ""))) != 0 {
+			t.Fatalf("allowedHosts = %q, want no entry", cfg.allowedHosts)
+		}
+	})
+	t.Run("a listed Host is served and another is refused", func(t *testing.T) {
+		t.Setenv("ALLOWED_HOSTS", "plex-language-sync")
+		cfg := loadConfig()
+		cfg.metricsListenAddr = "127.0.0.1:0"
+		ctx, cancel := context.WithCancel(t.Context())
+		ops, err := listenOps(ctx, &cfg, obs.New("test"), newTestLiveness(t))
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		done := serveOps(ctx, ops)
+		t.Cleanup(func() { cancel(); <-done })
+		for host, want := range map[string]int{"plex-language-sync:9471": http.StatusOK, "attacker.example": http.StatusForbidden} {
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+ops.Addr().String()+"/metrics", http.NoBody)
+			req.Host = host
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != want {
+				t.Errorf("Host %q = %d, want %d", host, resp.StatusCode, want)
+			}
+		}
+	})
+	t.Run("a malformed entry stops the start naming the setting", func(t *testing.T) {
+		t.Setenv("ALLOWED_HOSTS", "https://bad")
+		cfg := loadConfig()
+		cfg.metricsListenAddr = "127.0.0.1:0"
+		if _, err := listenOps(t.Context(), &cfg, obs.New("test"), newTestLiveness(t)); err == nil || !strings.Contains(err.Error(), "ALLOWED_HOSTS") {
+			t.Errorf("listenOps = %v, want an error naming ALLOWED_HOSTS", err)
+		}
+	})
 }

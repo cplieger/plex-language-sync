@@ -29,8 +29,8 @@ import (
 	"github.com/cplieger/go/filesafe"
 	"github.com/cplieger/go/health/v2"
 	"github.com/cplieger/go/httpclient"
-	"github.com/cplieger/go/httpserver"
-	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/httpserver/v2"
+	"github.com/cplieger/go/scheduler/v2"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/deepscan"
@@ -96,15 +96,15 @@ func run() int {
 	live := newLiveness(healthMarkerPath, leases)
 	wsCfg, deepScanLoop := live.wire(wsCfg)
 
-	ms, err := listenMetrics(ctx, cfg.metricsListenAddr, metrics, live)
+	ops, err := listenOps(ctx, &cfg, metrics, live)
 	if err != nil {
-		slog.Error("cannot bind the metrics listener", "error", err)
+		slog.Error("cannot start the ops listener", "error", err)
 		return 1
 	}
-	if addr := ms.Addr(); addr != nil {
-		done := serveMetrics(ctx, ms)
+	if addr := ops.Addr(); addr != nil {
+		done := serveOps(ctx, ops)
 		defer func() { cancel(); <-done }()
-		slog.Info("metrics listener started", "addr", addr.String())
+		slog.Info("ops listener started", "addr", addr.String())
 	}
 
 	tickerDone := make(chan struct{})
@@ -291,17 +291,18 @@ func seedDeepScan(m *obs.Metrics, stamp *scheduler.Stamp, gap time.Duration, sta
 	m.DeepScanDue(gap, from)
 }
 
-// listenMetrics binds the opt-in metrics listener before any work, so a bad
-// address stops the container at once instead of leaving it running with no
-// page. An empty addr opens nothing.
-func listenMetrics(ctx context.Context, addr string, m *obs.Metrics, live *liveness) (*httpserver.MetricsServer, error) {
-	ms, err := httpserver.ListenMetrics(ctx, addr,
-		httpserver.MetricsHandlers{Metrics: m.Handler(), Healthz: newHealthz(live)},
-		httpserver.WithSlogErrorLog(slog.LevelWarn))
-	if err != nil {
-		return nil, fmt.Errorf("METRICS_LISTEN_ADDR: %w", err)
-	}
-	return ms, nil
+// listenOps binds the opt-in ops listener before any work, so a bad address
+// or host list stops the container at once instead of leaving it running with
+// no page. An empty METRICS_LISTEN_ADDR opens nothing.
+func listenOps(ctx context.Context, cfg *config, m *obs.Metrics, live *liveness) (*httpserver.Ops, error) {
+	return httpserver.ListenOps(ctx, httpserver.OpsConfig{
+		Metrics:      m.Handler(),
+		Healthz:      newHealthz(live),
+		Setting:      "METRICS_LISTEN_ADDR",
+		Addr:         cfg.metricsListenAddr,
+		HostsSetting: "ALLOWED_HOSTS",
+		Hosts:        cfg.allowedHosts,
+	})
 }
 
 // newHealthz is the listener's GET /healthz.
@@ -309,14 +310,14 @@ func newHealthz(live *liveness) http.Handler {
 	return health.CheckHandler(live.checks()...)
 }
 
-// serveMetrics serves ms until ctx ends; done closes once the server has shut
+// serveOps serves ops until ctx ends; done closes once the server has shut
 // down.
-func serveMetrics(ctx context.Context, ms *httpserver.MetricsServer) (done <-chan struct{}) {
+func serveOps(ctx context.Context, ops *httpserver.Ops) (done <-chan struct{}) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := ms.Serve(ctx); err != nil {
-			slog.Warn("metrics listener stopped", "error", err)
+		if err := httpserver.RunWithOps(ctx, ops); err != nil {
+			slog.Warn("ops listener stopped", "error", err)
 		}
 	}()
 	return stopped

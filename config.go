@@ -13,9 +13,9 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/httpserver/v2"
 	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
@@ -55,7 +55,8 @@ type config struct {
 	updateLevel       string // "show" or "season"
 	updateStrategy    string // "all" or "next"
 	caCertPath        string
-	metricsListenAddr string // empty: no metrics listener
+	metricsListenAddr string   // empty: no ops listener
+	allowedHosts      []string // ALLOWED_HOSTS entries for the ops listener; none serves every Host
 	ignoreLabels      []string
 	ignoreLibraries   []string
 	schedulerInterval time.Duration // deep-analysis cadence; 0 = disabled
@@ -98,6 +99,7 @@ func loadConfig() config {
 	}
 	cfg.schedulerInterval, cfg.schedulerEnabled = loadSchedulerInterval()
 	cfg.metricsListenAddr = loadMetricsListenAddr()
+	cfg.allowedHosts = strings.Split(os.Getenv("ALLOWED_HOSTS"), ",")
 
 	if v := os.Getenv("IGNORE_LABELS"); v != "" {
 		cfg.ignoreLabels = splitTrim(v)
@@ -249,10 +251,6 @@ func loadSchedulerInterval() (interval time.Duration, enabled bool) {
 
 // loadMetricsListenAddr reads METRICS_LISTEN_ADDR, the opt-in address of the
 // /metrics and /healthz listener; empty means no listener and no port.
-// Invisible edge bytes are trimmed, because an untrimmed " :9471" fails
-// net.Listen on a host lookup the operator cannot see.
 func loadMetricsListenAddr() string {
-	return strings.TrimFunc(os.Getenv("METRICS_LISTEN_ADDR"), func(r rune) bool {
-		return unicode.IsSpace(r) || !unicode.IsPrint(r)
-	})
+	return httpserver.ListenAddr(os.Getenv("METRICS_LISTEN_ADDR"), "")
 }
