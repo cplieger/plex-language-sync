@@ -48,6 +48,11 @@ type Metrics struct {
 	trackUpdates      *measure.LabeledCounter
 	cacheSaveFailures *measure.Counter
 	sharedUsers       *measure.Gauge
+	refreshLast       *measure.Gauge
+	refreshDeadline   *measure.Gauge
+	// refreshGap is how long a successful token refresh may follow the last
+	// one, set by TokenRefreshDue; 0 keeps the deadline at 0.
+	refreshGap atomic.Int64
 	// scanGap is how long a complete scan may follow the last one, set by
 	// DeepScanDue; 0 keeps the deadline at 0.
 	scanGap atomic.Int64
@@ -78,9 +83,13 @@ func New(version string) *Metrics {
 			"Stream selection writes to Plex, by kind (audio, subtitle) and result (set, failed).", measure.UnitCount, []string{"kind", "result"}),
 		cacheSaveFailures: measure.NewCounter("cache_save_failures_total", "Failed saves of the cache to /config by the deep scan or at shutdown.", measure.UnitCount),
 		sharedUsers:       measure.NewGauge("shared_users", "Shared Plex users the app currently follows, besides the admin.", measure.UnitNone),
+		refreshLast: measure.NewGauge("token_refresh_last_success_timestamp_seconds",
+			"Unix time plex.tv last returned the shared users' tokens; 0 before the first success.", measure.UnitSeconds),
+		refreshDeadline: measure.NewGauge("token_refresh_deadline_timestamp_seconds",
+			"Unix time by which the next successful shared-user token refresh is due; 0 before the first refresh starts.", measure.UnitSeconds),
 	}
 	m.reg.MustRegister(buildInfo, m.wsConnected, m.wsReconnects, m.scanLastSuccess, m.scanInterval, m.scanDeadline, m.scanRuns,
-		m.resolutionStalled, m.playEvents, m.trackUpdates, m.cacheSaveFailures, m.sharedUsers)
+		m.resolutionStalled, m.playEvents, m.trackUpdates, m.cacheSaveFailures, m.sharedUsers, m.refreshLast, m.refreshDeadline)
 	buildInfo.Set(1, version)
 	for _, r := range []string{"complete", "incomplete"} {
 		m.scanRuns.Add(0, r)
@@ -215,6 +224,29 @@ func (m *Metrics) CacheSaveFailed() {
 func (m *Metrics) SharedUsers(n int) {
 	if m != nil {
 		m.sharedUsers.Set(float64(n))
+	}
+}
+
+// TokenRefreshDue keeps gap, how long a successful token refresh may follow
+// the last one, and dates the deadline one gap after from. A non-positive gap
+// leaves the deadline at 0.
+func (m *Metrics) TokenRefreshDue(gap time.Duration, from time.Time) {
+	if m == nil || gap <= 0 {
+		return
+	}
+	m.refreshGap.Store(int64(gap))
+	m.refreshDeadline.Set(float64(from.Add(gap).Unix()))
+}
+
+// TokenRefreshed records at as the last successful token refresh and dates
+// the deadline one gap after it.
+func (m *Metrics) TokenRefreshed(at time.Time) {
+	if m == nil {
+		return
+	}
+	m.refreshLast.Set(float64(at.Unix()))
+	if gap := time.Duration(m.refreshGap.Load()); gap > 0 {
+		m.refreshDeadline.Set(float64(at.Add(gap).Unix()))
 	}
 }
 

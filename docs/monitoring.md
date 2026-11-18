@@ -28,6 +28,8 @@ Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET
 | `plex_language_sync_track_updates_total` | counter | `kind`: `audio`, `subtitle`. `result`: `set`, `failed` | Track selections written to Plex, one per request |
 | `plex_language_sync_cache_save_failures_total` | counter | none | Failed saves of what the app learned to `/config` |
 | `plex_language_sync_shared_users` | gauge | none | Shared Plex users the app follows, besides the admin |
+| `plex_language_sync_token_refresh_last_success_timestamp_seconds` | gauge | none | Unix time plex.tv last returned the shared users' tokens. 0 before the first success since the start |
+| `plex_language_sync_token_refresh_deadline_timestamp_seconds` | gauge | none | Unix time by which the next successful token refresh is due: the last success, or else the start, plus two 12-hour refresh intervals. Only a success moves it. 0 until the first refresh starts |
 | `plex_language_sync_build_info` | gauge | `version` | Always 1. `version` is the release the container runs |
 
 The page also carries the Go runtime and process families (`go_*`, `process_*`) under the names Go's official Prometheus client uses, so stock Go dashboards work. Name the scrape job `plex-language-sync`, because `PlexLanguageSyncDown` selects on it. The bundled [dashboard](#dashboard) shows the `plex_language_sync_*` series in Grafana.
@@ -44,11 +46,12 @@ The app writes `key=value` text lines to standard error, with times in UTC.
 - When the Plex notification stream drops, it logs `websocket disconnected, reconnecting`, and again after each failed reconnect. The `websocket connected` line that follows carries how long the stream was down as `duration`. When Plex is unreachable at start, `plex connection recovered; leaving degraded state` carries the same field.
 - When the WebSocket listener, the reconnect loop or the deep scan stops making progress, it logs `a loop stopped making progress` once at WARN. The `loop` field is `websocket`, `reconnect` or `deep_scan`, and `lease` is how long that loop may stay silent. When the loop makes progress again it logs `a loop resumed making progress` with how long it was stale as `duration`.
 - With `METRICS_LISTEN_ADDR` set, the listener logs one `http` line per request: at DEBUG for `/metrics` and `/healthz`, so scrapes and probes stay out of the INFO log, and at INFO for any other path.
+- Every 12 hours, and once at start, the app asks plex.tv for the shared users' tokens. A success logs `shared user tokens refreshed`, and a failure logs `failed to refresh shared user tokens` at WARN. The first success after failures logs `shared user token refresh recovered`, with how long refreshes failed as `duration`.
 - `LOG_LEVEL=debug` adds the reason each event was skipped and the detail of each track match.
 
 ERROR lines are kept for four failures that need you. A bad setting and a `/config` folder the app cannot write to stop the start. The other two are a WebSocket connection that keeps failing to reconnect and a cache save that failed on shutdown.
 
-The rules in `alerts/logql.yaml` read `deep analysis completed` with `complete=true`, `user resolution stalled` and the `level=ERROR` lines. The deep scan line is INFO, so keep `LOG_LEVEL` at `info` or `debug`.
+The rules in `alerts/logql.yaml` read `deep analysis completed` with `complete=true`, `shared user tokens refreshed`, `user resolution stalled` and the `level=ERROR` lines. The deep scan and token refresh lines are INFO, so keep `LOG_LEVEL` at `info` or `debug`.
 
 ## Alerting
 
@@ -62,6 +65,7 @@ Load [`alerts/promql.yaml`](../alerts/promql.yaml) into your Prometheus-compatib
 | `PlexLanguageSyncDeepScanStalled` | both | no complete deep scan in two scan intervals plus 2 hours, 50 hours at the default | warning |
 | `PlexLanguageSyncWebSocketDown` | `promql.yaml` | the Plex notification stream has been down for 10 minutes | warning |
 | `PlexLanguageSyncResolutionStalled` | both | no playback is being attributed to any user | warning |
+| `PlexLanguageSyncTokenRefreshStalled` | both | plex.tv has not returned the shared users' tokens in two 12-hour refreshes | warning |
 | `PlexLanguageSyncCacheSaveFailed` | `promql.yaml` | a save to `/config` failed in the last hour | warning |
 | `PlexLanguageSyncErrorLog` | `logql.yaml` | 3 or more ERROR lines in 15 minutes, such as a token Plex rejects or a WebSocket that will not reconnect | warning |
 
@@ -74,6 +78,9 @@ Each rule's description in its file says what to check first when it fires. Note
 - Until a first complete pass is recorded, the metric rule counts from the process start. So on a new install whose first pass never completes, a container that restarts more often than two intervals plus 2 hours keeps the metric rule silent. The log rule still fires.
 - In `alerts/logql.yaml` the window is a fixed 50 hours, which fits the default `24h` interval. If you changed `DEEP_SCAN_INTERVAL`, set the window to two intervals plus 2 hours. With the scan `off`, `disabled` or `0`, drop the rule, because it would fire forever.
 - The log rule cannot tell a stalled scan from a container that never started, a renamed container or a log pipeline that stopped shipping this stream.
+- `PlexLanguageSyncTokenRefreshStalled` follows the shared users' token refresh. The app needs each shared user's token from plex.tv to set that user's tracks, so while refreshes fail, a user shared since the last success, or one whose token changed, gets no tracks set. Users already known keep working.
+- One failed refresh, a short plex.tv outage, never fires it: the window is two refreshes, 24 hours, plus 15 minutes, and the alert waits 15 more under its `for:`. In `alerts/promql.yaml` the rule reads the deadline from the metrics. In `alerts/logql.yaml` the window is a fixed 24 hours and 30 minutes since the last `shared user tokens refreshed` line.
+- The log rule cannot tell a stalled refresh from a container that never started or a log pipeline that stopped shipping this stream.
 - `PlexLanguageSyncErrorLog` counts ERROR lines. A fatal setting is a bad `PLEX_TOKEN`, a URL that points at another server, a TLS failure on an `https://` `PLEX_URL`, an unusable `METRICS_LISTEN_ADDR` or a `/config` folder the container cannot write. A Plex server error that repeats, such as 501, is fatal too. The app logs it and exits, so the container restarts in a loop. An unreachable Plex at start is not an ERROR, because the app retries at WARN. In `alerts/logql.yaml` this rule is what reports a container that is up and failing, and in `alerts/promql.yaml` `PlexLanguageSyncWebSocketDown` does.
 - A cache save that failed on shutdown logs one ERROR, which alone does not fire `PlexLanguageSyncErrorLog`. `PlexLanguageSyncCacheSaveFailed` counts the saves that fail while the app runs.
 - `PlexLanguageSyncResolutionStalled` follows the app's own stall. The app finds the viewer by matching each playback notification with the server's active sessions. It skips an event it cannot attribute rather than save a language choice under the wrong user. With `cause=sessions_unreadable`, the session list could not be read for 20 events in a row. With `cause=all_clients_absent`, the list was read every time but 5 different client and item pairs were missing from it, and the log's `absent_pairs` field carries that count.

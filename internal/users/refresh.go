@@ -35,6 +35,11 @@ func DefaultRefreshConfig() RefreshConfig {
 // refresh loop.
 const periodicRefreshInterval = 12 * time.Hour
 
+// refreshDeadlineGap is how long a successful refresh may follow the last one
+// before the token refresh deadline passes: two intervals, so one failed
+// refresh, a plex.tv blip, never crosses it and two in a row do.
+const refreshDeadlineGap = 2 * periodicRefreshInterval
+
 // refreshTokens fetches shared user tokens from plex.tv and updates the
 // cache. The plex.tv response is the source of truth: shared users
 // absent from the response are pruned from the manager's shared map,
@@ -45,12 +50,20 @@ const periodicRefreshInterval = 12 * time.Hour
 // user recovers their learned audio→subtitle mappings on return.
 func (m *Manager) refreshTokens(ctx context.Context, adminClient *plex.Client, machineID string) error {
 	servers, err := adminClient.SharedUserTokens(ctx, machineID)
+	now := time.Now()
 	if err != nil {
 		slog.Warn("failed to refresh shared user tokens", "error", err)
+		m.mu.Lock()
+		if m.failingSince.IsZero() {
+			m.failingSince = now
+		}
+		m.mu.Unlock()
 		return err
 	}
 
 	m.mu.Lock()
+	failingSince := m.failingSince
+	m.failingSince = time.Time{}
 	newShared := sharedMapFromServers(servers, m.admin.ID)
 	// Evict cached clients for users who are no longer shared or whose
 	// token rotated.
@@ -79,8 +92,14 @@ func (m *Manager) refreshTokens(ctx context.Context, adminClient *plex.Client, m
 	// so the cache mirrors plex.tv; revoked tokens do not linger across
 	// restarts.
 	m.cache.SetUserTokens(tokensCopy)
+	m.metrics.TokenRefreshed(now)
 
+	// The PlexLanguageSyncTokenRefreshStalled log rule reads this line
+	// (TestTokenRefreshStalledRuleMatchesSuccessesOnly).
 	slog.Info("shared user tokens refreshed", "users", appliedCount)
+	if !failingSince.IsZero() {
+		slog.Info("shared user token refresh recovered", "duration", now.Sub(failingSince).Round(time.Second))
+	}
 	if len(removed) > 0 {
 		slog.Info("shared users pruned (revoked or unshared)",
 			"count", len(removed), "user_ids", removed)
@@ -135,6 +154,7 @@ func sharedMapFromServers(servers []plex.SharedServerXML, adminID id) map[id]rec
 // sees sharedCount > 0 and returns immediately even if plex.tv itself
 // failed.
 func (m *Manager) InitialRefreshWithRetry(ctx context.Context, adminClient *plex.Client, machineID string, cfg RefreshConfig) {
+	m.metrics.TokenRefreshDue(refreshDeadlineGap, time.Now())
 	delay := cfg.BaseDelay
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
 		if ctx.Err() != nil {

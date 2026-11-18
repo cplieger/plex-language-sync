@@ -135,10 +135,10 @@
               "name": "${datasource}"
             },
             "spec": {
-              "query": "query_result(count(label_replace(count(0 * max((ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"$instance\"} or ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"\"}))), \"tile\", \"1\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncDeepScanStalled\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"2\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncWebSocketDown\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"3\", \"\", \"\") or label_replace(count(max(ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"sessions_unreadable\"} * 0 + 1 or ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"all_clients_absent\"} * 0 + 2)), \"tile\", \"4\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncCacheSaveFailed\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"5\", \"\", \"\")) or vector(0))"
+              "query": "query_result(count(label_replace(count(0 * max((ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"$instance\"} or ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"\"}))), \"tile\", \"1\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncDeepScanStalled\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"2\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncWebSocketDown\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"3\", \"\", \"\") or label_replace(count(max(ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"sessions_unreadable\"} * 0 + 1 or ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"all_clients_absent\"} * 0 + 2)), \"tile\", \"4\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncCacheSaveFailed\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"5\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncTokenRefreshStalled\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"6\", \"\", \"\")) or vector(0))"
             }
           },
-          "definition": "query_result(count(label_replace(count(0 * max((ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"$instance\"} or ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"\"}))), \"tile\", \"1\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncDeepScanStalled\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"2\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncWebSocketDown\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"3\", \"\", \"\") or label_replace(count(max(ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"sessions_unreadable\"} * 0 + 1 or ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"all_clients_absent\"} * 0 + 2)), \"tile\", \"4\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncCacheSaveFailed\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"5\", \"\", \"\")) or vector(0))",
+          "definition": "query_result(count(label_replace(count(0 * max((ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"$instance\"} or ALERTS{alertname=\"PlexLanguageSyncDown\", alertstate=\"firing\", instance=\"\"}))), \"tile\", \"1\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncDeepScanStalled\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"2\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncWebSocketDown\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"3\", \"\", \"\") or label_replace(count(max(ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"sessions_unreadable\"} * 0 + 1 or ALERTS{alertname=\"PlexLanguageSyncResolutionStalled\", alertstate=\"firing\", instance=\"$instance\", cause=\"all_clients_absent\"} * 0 + 2)), \"tile\", \"4\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncCacheSaveFailed\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"5\", \"\", \"\") or label_replace(count(0 * max(ALERTS{alertname=\"PlexLanguageSyncTokenRefreshStalled\", alertstate=\"firing\", instance=\"$instance\"})), \"tile\", \"6\", \"\", \"\")) or vector(0))",
           "regex": "/^\\{\\} ([0-9]+) /",
           "sort": "disabled",
           "options": [],
@@ -622,6 +622,102 @@
                         "0": {
                           "index": 0,
                           "text": "Failed",
+                          "color": "red"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-6": {
+        "kind": "Panel",
+        "spec": {
+          "id": 6,
+          "title": "Token refresh",
+          "description": "Shows while the PlexLanguageSyncTokenRefreshStalled alert fires: plex.tv has not returned the shared users' tokens in two 12-hour refreshes, so a user shared since then, or one whose token changed, gets no tracks set. Check that plex.tv is reachable and PLEX_TOKEN is still valid. Needs the rules from alerts/promql.yaml in a ruler that stores its `ALERTS` series beside the metrics, as Prometheus and Mimir do.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "${datasource}"
+                      },
+                      "spec": {
+                        "expr": "0 * max(ALERTS{alertname=\"PlexLanguageSyncTokenRefreshStalled\", alertstate=\"firing\", instance=\"$instance\"})",
+                        "legendFormat": "",
+                        "instant": true,
+                        "range": false
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {
+                "maxDataPoints": 500
+              }
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "",
+            "spec": {
+              "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "values": false
+                },
+                "textMode": "auto",
+                "text": {
+                  "titleSize": 14,
+                  "valueSize": 28
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "noValue": "Nothing to report",
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": null,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "decimals": 0,
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "index": 0,
+                          "text": "Stalled",
                           "color": "red"
                         }
                       }
@@ -1652,6 +1748,36 @@
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-5"
+                        },
+                        "conditionalRendering": {
+                          "kind": "ConditionalRenderingGroup",
+                          "spec": {
+                            "visibility": "show",
+                            "condition": "or",
+                            "items": [
+                              {
+                                "kind": "ConditionalRenderingData",
+                                "spec": {
+                                  "value": true
+                                }
+                              },
+                              {
+                                "kind": "ConditionalRenderingTimeRangeSize",
+                                "spec": {
+                                  "value": "0s"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "AutoGridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-6"
                         },
                         "conditionalRendering": {
                           "kind": "ConditionalRenderingGroup",

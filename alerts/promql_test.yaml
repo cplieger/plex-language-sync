@@ -494,3 +494,30 @@ tests:
             value: 0
           - labels: '{result="Incomplete"}'
             value: 0
+
+  # The token refresh deadline passes at 1h: the rule fires 15m of grace plus
+  # 15m of for later, and a success that moves the deadline resolves it. A
+  # deadline of 0, before the refresh starts, never fires.
+  - interval: 1m
+    input_series:
+      - series: plex_language_sync_token_refresh_deadline_timestamp_seconds{job="plex-language-sync",instance="a"}
+        values: 3600x100 90000x100
+      - series: plex_language_sync_token_refresh_deadline_timestamp_seconds{job="plex-language-sync",instance="b"}
+        values: 0x200
+    alert_rule_test:
+      - eval_time: 85m
+        alertname: PlexLanguageSyncTokenRefreshStalled
+        exp_alerts: []
+      - eval_time: 95m
+        alertname: PlexLanguageSyncTokenRefreshStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: plex-language-sync
+              instance: a
+            exp_annotations:
+              summary: "plex-language-sync cannot refresh its shared users' tokens"
+              description: "plex.tv has not returned the shared users' tokens in two 12h refreshes, so a user shared since then, or one whose token changed, gets no tracks set. Read the `failed to refresh shared user tokens` lines, and check that plex.tv is reachable and PLEX_TOKEN is still valid.\n"
+      - eval_time: 105m
+        alertname: PlexLanguageSyncTokenRefreshStalled
+        exp_alerts: []
