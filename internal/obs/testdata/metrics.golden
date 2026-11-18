@@ -40,3 +40,9 @@ plex_language_sync_deep_scan_deadline_timestamp_seconds 1800187200
 # HELP plex_language_sync_shared_users Shared Plex users the app currently follows, besides the admin.
 # TYPE plex_language_sync_shared_users gauge
 plex_language_sync_shared_users 5
+# HELP plex_language_sync_token_refresh_last_success_timestamp_seconds Unix time plex.tv last returned the shared users' tokens; 0 before the first success.
+# TYPE plex_language_sync_token_refresh_last_success_timestamp_seconds gauge
+plex_language_sync_token_refresh_last_success_timestamp_seconds 1800010800
+# HELP plex_language_sync_token_refresh_deadline_timestamp_seconds Unix time by which the next successful shared-user token refresh is due; 0 before the first refresh starts.
+# TYPE plex_language_sync_token_refresh_deadline_timestamp_seconds gauge
+plex_language_sync_token_refresh_deadline_timestamp_seconds 1800097200

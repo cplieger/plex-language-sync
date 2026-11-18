@@ -120,3 +120,34 @@ func TestDeepScanDeadline(t *testing.T) {
 		}
 	})
 }
+
+// The token refresh deadline is one gap after the last success, or after the
+// start before the first success, and stays 0 until the refresh starts.
+func TestTokenRefreshDeadline(t *testing.T) {
+	t.Parallel()
+	const (
+		last     = "plex_language_sync_token_refresh_last_success_timestamp_seconds"
+		deadline = "plex_language_sync_token_refresh_deadline_timestamp_seconds"
+	)
+	gap := 24 * time.Hour
+	start := time.Unix(1_800_000_000, 0)
+	m := obs.New("test")
+	if got := metrictest.Value(t, m, deadline); got != 0 {
+		t.Errorf("deadline before the refresh starts = %v, want 0", got)
+	}
+	m.TokenRefreshDue(gap, start)
+	if got, want := metrictest.Value(t, m, deadline), float64(start.Add(gap).Unix()); got != want {
+		t.Errorf("deadline at the start = %v, want %v, one gap after the start", got, want)
+	}
+	if got := metrictest.Value(t, m, last); got != 0 {
+		t.Errorf("last success before any success = %v, want 0", got)
+	}
+	ok := start.Add(13 * time.Hour)
+	m.TokenRefreshed(ok)
+	if got := metrictest.Value(t, m, last); got != float64(ok.Unix()) {
+		t.Errorf("last success = %v, want %d", got, ok.Unix())
+	}
+	if got, want := metrictest.Value(t, m, deadline), float64(ok.Add(gap).Unix()); got != want {
+		t.Errorf("deadline after a success = %v, want %v, one gap after it", got, want)
+	}
+}

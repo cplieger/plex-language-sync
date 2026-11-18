@@ -24,6 +24,20 @@ groups:
             intervals plus 2h. Missed episodes then get no tracks. Rule out a
             stopped container or log pipeline, then read the `deep analysis
             completed` lines with `complete=false`.
+      - alert: PlexLanguageSyncTokenRefreshStalled
+        expr: |
+          absent_over_time({container="plex-language-sync"} |= `shared user tokens refreshed` [24h30m])
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync cannot refresh its shared users' tokens"
+          description: >
+            plex.tv has not returned the shared users' tokens in 24h30m, two
+            12h refreshes plus 30m, so a user shared since then, or one whose
+            token changed, gets no tracks set. Rule out a stopped container or
+            log pipeline, then read the `failed to refresh shared user tokens`
+            lines.
       - alert: PlexLanguageSyncErrorLog
         expr: |
           sum by (container) (count_over_time(

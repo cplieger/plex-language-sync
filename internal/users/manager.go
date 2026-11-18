@@ -13,6 +13,7 @@ package users
 
 import (
 	"sync"
+	"time"
 
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/obs"
@@ -65,8 +66,11 @@ type Manager struct {
 	metrics *obs.Metrics
 	shared  map[id]record       // keyed by typed userID
 	clients map[id]*plex.Client // cached per-user clients
-	admin   record
-	mu      sync.Mutex
+	// failingSince is when the current run of failed token refreshes began;
+	// zero while the last refresh succeeded.
+	failingSince time.Time
+	admin        record
+	mu           sync.Mutex
 }
 
 // NewManager returns a Manager with empty shared-user and client maps,

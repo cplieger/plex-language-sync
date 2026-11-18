@@ -17,9 +17,10 @@ import (
 // either file is a decision in this table. PlexLanguageSyncErrorLog has no
 // metric form; the metric rules for its causes cover it.
 var logqlSuccessors = map[string][]string{
-	"PlexLanguageSyncDeepScanStalled":   {"PlexLanguageSyncDeepScanStalled"},
-	"PlexLanguageSyncResolutionStalled": {"PlexLanguageSyncResolutionStalled"},
-	"PlexLanguageSyncErrorLog":          {"PlexLanguageSyncDown", "PlexLanguageSyncWebSocketDown"},
+	"PlexLanguageSyncDeepScanStalled":     {"PlexLanguageSyncDeepScanStalled"},
+	"PlexLanguageSyncResolutionStalled":   {"PlexLanguageSyncResolutionStalled"},
+	"PlexLanguageSyncTokenRefreshStalled": {"PlexLanguageSyncTokenRefreshStalled"},
+	"PlexLanguageSyncErrorLog":            {"PlexLanguageSyncDown", "PlexLanguageSyncWebSocketDown"},
 }
 
 // promqlOnly are the metric alerts with no log form: a dead process or an

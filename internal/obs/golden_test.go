@@ -48,6 +48,8 @@ func TestExpositionMatchesGolden(t *testing.T) {
 	}
 	m.CacheSaveFailed()
 	m.SharedUsers(5)
+	m.TokenRefreshDue(24*time.Hour, base)
+	m.TokenRefreshed(base.Add(3 * time.Hour))
 
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody))

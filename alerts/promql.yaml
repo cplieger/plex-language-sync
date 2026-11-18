@@ -62,6 +62,21 @@ groups:
             No language choices are saved. Read the `cause` label. For
             `sessions_unreadable`, check PLEX_TOKEN admin rights and the server.
             For `all_clients_absent`, session matching is failing.
+      - alert: PlexLanguageSyncTokenRefreshStalled
+        expr: |
+          time() > plex_language_sync_token_refresh_deadline_timestamp_seconds + 900
+          and plex_language_sync_token_refresh_deadline_timestamp_seconds > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "plex-language-sync cannot refresh its shared users' tokens"
+          description: >
+            plex.tv has not returned the shared users' tokens in two 12h
+            refreshes, so a user shared since then, or one whose token changed, gets no
+            tracks set. Read the `failed to refresh shared user tokens`
+            lines, and check that plex.tv is reachable and PLEX_TOKEN is
+            still valid.
       - alert: PlexLanguageSyncCacheSaveFailed
         expr: increase(plex_language_sync_cache_save_failures_total[1h]) > 0
         for: 0m
