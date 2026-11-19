@@ -88,6 +88,7 @@ Settings are environment variables. The app reads them once at start, so restart
 | `PLEX_CA_CERT_PATH` | Certificate authority file for an `https://` Plex address with a self-signed or private certificate | _(unset)_ |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error`. `debug` shows why each event was skipped | `info` |
 | `METRICS_LISTEN_ADDR` | Address for Prometheus metrics at `/metrics` and a health check at `/healthz`, such as `:9471`. Unset opens no port | _(unset)_ |
+| `ALLOWED_HOSTS` | Comma-separated `Host` names or IPs that port serves, such as `plex-language-sync,192.0.2.10`. Unset serves every `Host`. A request from the container itself is always served | _(unset)_ |
 
 Labels and library names match exactly, with case counted. Audio never switches to another language, whatever the tier. [Configuration](docs/configuration.md) explains the subtitle tier, https setup and the files kept in `/config`.
 
@@ -109,7 +110,7 @@ When Plex is unreachable at start, the app keeps retrying instead of exiting, so
 
 - The container restarts in a loop with `cannot establish initial plex connection`. Plex rejected the token or answered a server error that repeats (such as 501), the address reaches another server, or an `https://` connection failed TLS (a certificate the app cannot verify, or a server that does not answer TLS there). Check `.env`, or set `PLEX_CA_CERT_PATH` for your own certificate.
 - The log says `required environment variable is missing or unreadable`. `PLEX_URL` or `PLEX_TOKEN` did not reach the container. Check `.env`, then restart.
-- The container exits with `cannot bind the metrics listener`. Set `METRICS_LISTEN_ADDR` to a free port, such as `:9471`.
+- The container exits with `cannot start the ops listener`. Set `METRICS_LISTEN_ADDR` to a free port, such as `:9471`.
 - The log keeps saying `plex still unreachable; retrying`. Use Plex's network address, not `localhost`, and check that Plex is running.
 - A user you shared the server with is not followed, and the log says `failed to refresh shared user tokens`. The container cannot reach plex.tv. Give it a network with internet access.
 - The container restarts in a loop with `cache directory is not writable`, or the log says `cache save on shutdown failed`. The container user cannot write to `/config`. Run the `chown` from the quick start. The app checks this once it reaches Plex, before it loads anything from `/config`.

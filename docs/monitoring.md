@@ -13,7 +13,7 @@ This page describes the metrics, log lines, alert rules and Grafana dashboard of
 
 ## Metrics
 
-Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET /metrics` and `GET /healthz` there. Unset, it opens no port. An address the app cannot listen on stops the container at start with `cannot bind the metrics listener`. Neither route has a login, so keep the port on your network. No label carries a user name, a show or a token, because every label takes its value from a fixed list.
+Set `METRICS_LISTEN_ADDR` to an address such as `:9471`, and the app serves `GET /metrics` and `GET /healthz` there. Unset, it opens no port. An address the app cannot listen on stops the container at start with `cannot start the ops listener`. Neither route has a login, so keep the port on your network, and set `ALLOWED_HOSTS` to the names your scraper and prober use. With it set, a request whose `Host` is not listed gets `403` with the code `host_not_allowed`. A request from the container itself passes, so the Docker health check needs no entry, and an entry no `Host` can match stops the start with an error naming `ALLOWED_HOSTS`. No label carries a user name, a show or a token, because every label takes its value from a fixed list.
 
 | Series | Type | Labels | Meaning |
 | --- | --- | --- | --- |

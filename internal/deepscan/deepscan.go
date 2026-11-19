@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/go/scheduler"
+	"github.com/cplieger/go/scheduler/v2"
 	"github.com/cplieger/go/textsafe"
 	"github.com/cplieger/plex-language-sync/internal/cache"
 	"github.com/cplieger/plex-language-sync/internal/obs"
