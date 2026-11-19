@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/go/scheduler/v2"
@@ -1044,73 +1044,66 @@ func (p *blockingDeepAnalysisPlex) History(ctx context.Context, since int64) ([]
 // other (the loser) collapses into the in-flight call, logging the
 // WARN key "scheduler: deep analysis already in progress, skipping" EXACTLY ONCE.
 //
-// Ordering is what makes the collapse deterministic rather than schedule-
-// dependent: the winner is held inside deepAnalysisCore (blocked on a History
-// fetch) so it owns the "deep_analysis" singleflight key; only then is the loser
-// started. singleflight.Do blocks the loser on the winner's in-flight call until
-// the winner's callback returns, so releasing the winner AFTER the loser has
-// joined guarantees the loser observes shared==true and logs the skip exactly
-// once. The History call-count oracle (want 1) independently proves the collapse:
-// had the loser failed to join, it would have run a second pass and History would
-// have been called twice. Not parallel: captureSlog mutates the process-global
-// default logger.
+// The winner is held inside deepAnalysisCore (blocked on a History fetch) so it
+// owns the "deep_analysis" singleflight key; only then is the loser started.
+// The test runs in a synctest bubble so synctest.Wait returns only once the
+// loser is parked on the winner's in-flight call inside singleflight.Do (a
+// WaitGroup the bubble added to, so the wait is durably blocking), and the
+// winner is released after that. The History call-count oracle (want 1)
+// independently proves the collapse: had the loser not joined, it would have
+// run a second pass and History would have been called twice. Not parallel:
+// captureSlog mutates the process-global default logger.
 func TestDeepAnalysis_ConcurrentCallCollapsesAndWarnsOnce(t *testing.T) {
-	plx := &blockingDeepAnalysisPlex{
-		Plex:    &fakeapi.Plex{},
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-	sched := New(
-		Config{Enable: true},
-		&Deps{
-			Plex:       plx,
-			Cache:      fakeapi.NewCache(),
-			Stamp:      testStamp(t),
-			UserClient: func(_ string) EpisodeReader { return plx.Plex },
-			Sync:       &fakeSyncer{},
-			SaveCache:  nil,
-		},
-	)
+	synctest.Test(t, func(t *testing.T) {
+		plx := &blockingDeepAnalysisPlex{
+			Plex:    &fakeapi.Plex{},
+			entered: make(chan struct{}),
+			release: make(chan struct{}),
+		}
+		sched := New(
+			Config{Enable: true},
+			&Deps{
+				Plex:       plx,
+				Cache:      fakeapi.NewCache(),
+				Stamp:      testStamp(t),
+				UserClient: func(_ string) EpisodeReader { return plx.Plex },
+				Sync:       &fakeSyncer{},
+				SaveCache:  nil,
+			},
+		)
 
-	out := captureSlog(t, func() {
-		var wg sync.WaitGroup
-		wg.Go(func() {
-			sched.deepAnalysis(t.Context()) // winner: blocks inside History
+		out := captureSlog(t, func() {
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				sched.deepAnalysis(t.Context()) // winner: blocks inside History
+			})
+			// The winner is inside the singleflight callback (blocked in
+			// History), so it owns the "deep_analysis" key before the loser
+			// calls Do.
+			<-plx.entered
+
+			wg.Go(func() {
+				sched.deepAnalysis(t.Context()) // loser: collapses, logs skip
+			})
+			// Every goroutine in the bubble is now durably blocked: the
+			// winner on release, the loser on the winner's in-flight call.
+			synctest.Wait()
+
+			close(plx.release) // winner finishes -> singleflight wakes the loser
+			wg.Wait()
 		})
 
-		// Wait until the winner is inside the singleflight callback (blocked
-		// in History), so it owns the "deep_analysis" key before the loser
-		// calls Do.
-		<-plx.entered
-
-		loserJoined := make(chan struct{})
-		wg.Go(func() {
-			close(loserJoined)              // about to enter Do; hand the scheduler over below
-			sched.deepAnalysis(t.Context()) // loser: collapses, logs skip
-		})
-
-		// Let the loser goroutine run far enough to register as a duplicate
-		// inside singleflight.Do (which then parks on the winner's in-flight
-		// call) before the winner is released. The History call-count assertion
-		// below is the backstop: if the loser had not yet joined when the
-		// winner finished, History would be hit twice and the test fails.
-		<-loserJoined
-		runtime.Gosched()
-
-		close(plx.release) // winner finishes -> singleflight wakes the loser
-		wg.Wait()
+		const skipKey = "scheduler: deep analysis already in progress, skipping"
+		if got := strings.Count(out, skipKey); got != 1 {
+			t.Errorf("skip WARN appeared %d times; want exactly 1 (one winner, one loser); log: %q", got, out)
+		}
+		// Oracle: only the singleflight winner reaches History. Exactly one
+		// call proves the loser collapsed into the in-flight run instead of
+		// executing a second deep-analysis pass.
+		if got := plx.calls.Load(); got != 1 {
+			t.Errorf("History called %d times; want 1 (loser must collapse, not run a second pass)", got)
+		}
 	})
-
-	const skipKey = "scheduler: deep analysis already in progress, skipping"
-	if got := strings.Count(out, skipKey); got != 1 {
-		t.Errorf("skip WARN appeared %d times; want exactly 1 (one winner, one loser); log: %q", got, out)
-	}
-	// Oracle: only the singleflight winner reaches History. Exactly one call
-	// proves the loser collapsed into the in-flight run instead of executing a
-	// second deep-analysis pass.
-	if got := plx.calls.Load(); got != 1 {
-		t.Errorf("History called %d times; want 1 (loser must collapse, not run a second pass)", got)
-	}
 }
 
 // recentlyAddedErrPlex wraps fakeapi.Plex and forces RecentlyAdded to fail for
