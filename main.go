@@ -116,7 +116,7 @@ func run() int {
 
 	// NewClient warns (via the shared library) when the URL is plain http
 	// to a non-local host — the X-Plex-Token would transit unencrypted.
-	client, err := plex.NewClient(plex.Options{ServerURL: cfg.plexURL, Token: plex.Token(cfg.plexToken), CACertPath: cfg.caCertPath})
+	client, err := plex.NewClient(plex.Options{ServerURL: cfg.plexURL, Token: plex.Token(cfg.plexToken.Reveal()), CACertPath: cfg.caCertPath})
 	if err != nil {
 		slog.Error("cannot initialize plex client", "error", err)
 		return 1
@@ -127,7 +127,7 @@ func run() int {
 	// a given token, so decryption works offline on restart. Computing it here,
 	// before the connect loop, means a malformed token is surfaced as a config
 	// error BEFORE the loop can mark the container healthy-degraded.
-	encKey, err := cache.DeriveKey(cfg.plexToken)
+	encKey, err := cache.DeriveKey(cfg.plexToken.Reveal())
 	if err != nil {
 		slog.Error("cannot derive encryption key", "error", err)
 		return 1

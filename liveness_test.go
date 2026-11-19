@@ -43,7 +43,9 @@ func probe(t testing.TB, path string) int {
 	t.Helper()
 	var stderr bytes.Buffer
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHealthSubcommandProcess$", "-test.count=1")
-	cmd.Env = append(os.Environ(), healthProbeEnv+"="+path)
+	// atexit_sleep_ms=0: under -race the child would otherwise sleep a
+	// second at exit, once per probe.
+	cmd.Env = append(os.Environ(), healthProbeEnv+"="+path, "GORACE=atexit_sleep_ms=0")
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err == nil {
