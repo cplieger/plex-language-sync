@@ -156,16 +156,43 @@ func (d *dashboard) variables() map[string]dashVariable {
 }
 
 // variableQuery is a query variable's PromQL, or "" for any other variable.
+// Grafana runs the query's __legacyStringValue, null as "", when that key is
+// present (getDataQueryForVariable), and its query field otherwise.
 func variableQuery(v *dashVariable) string {
 	var q struct {
-		Spec struct {
-			Query string `json:"query"`
-		} `json:"spec"`
+		Spec map[string]json.RawMessage `json:"spec"`
 	}
 	if v.Kind != "QueryVariable" || json.Unmarshal(v.Spec.Query, &q) != nil {
 		return ""
 	}
-	return q.Spec.Query
+	raw, ok := q.Spec["__legacyStringValue"]
+	if !ok {
+		raw = q.Spec["query"]
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
+}
+
+// TestVariableQueryReadsTheQueryGrafanaRuns pins variableQuery to the query
+// Grafana runs, so a pin on query cannot pass while __legacyStringValue holds
+// another one.
+func TestVariableQueryReadsTheQueryGrafanaRuns(t *testing.T) {
+	for _, tc := range []struct{ name, spec, want string }{
+		{"query only", `{"query":"up"}`, "up"},
+		{"legacy wins", `{"query":"up","__legacyStringValue":"down"}`, "down"},
+		{"legacy null is empty", `{"query":"up","__legacyStringValue":null}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := dashVariable{Kind: "QueryVariable"}
+			v.Spec.Query = json.RawMessage(`{"spec":` + tc.spec + `}`)
+			if got := variableQuery(&v); got != tc.want {
+				t.Errorf("variableQuery = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 // panelQueries is every panel query and every query variable's PromQL, with

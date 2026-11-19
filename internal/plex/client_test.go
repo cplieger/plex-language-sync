@@ -151,9 +151,9 @@ func TestNewClient_CACert(t *testing.T) {
 
 // --- Tests: newHTTPClient ---
 
-// --- Tests: newHTTPClient refuses redirects (PLEX-LS-SEC-01) ---
+// --- Tests: newHTTPClient refuses redirects ---
 
-// --- Tests: WarnIfPlaintextURL (PLEX-LS-SEC-02) ---
+// --- Tests: WarnIfPlaintextURL ---
 
 // --- Tests: drainBody ---
 

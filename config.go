@@ -14,8 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/go/envx"
+	"github.com/cplieger/go/envx/v2"
 	"github.com/cplieger/go/httpserver/v2"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/go/slogx"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/tracksync"
@@ -51,7 +52,7 @@ const (
 
 type config struct {
 	plexURL           string
-	plexToken         string
+	plexToken         masked.Secret
 	updateLevel       string // "show" or "season"
 	updateStrategy    string // "all" or "next"
 	caCertPath        string
@@ -86,7 +87,7 @@ func loadConfig() config {
 	levelVar.Set(logLevel)
 
 	cfg := config{
-		plexURL:          requireEnv("PLEX_URL"),
+		plexURL:          requireEnv("PLEX_URL").Reveal(),
 		plexToken:        requireEnv("PLEX_TOKEN"),
 		updateLevel:      cmp.Or(envx.String("UPDATE_LEVEL"), defaultUpdateLevel),
 		updateStrategy:   cmp.Or(envx.String("UPDATE_STRATEGY"), defaultUpdateStrategy),
@@ -172,7 +173,10 @@ func logConfig(cfg *config) {
 
 // requireEnv reads a required env var via envx.Secret, which also supports
 // the Docker-secrets convention (KEY_FILE pointing at a mounted file,
-// size-bounded), and then trims the result.
+// size-bounded), and then trims the result. The result stays a
+// masked.Secret, which no printer or log handler shows: PLEX_TOKEN is
+// revealed only where it is sent and where the cache key is derived, while
+// PLEX_URL is plain configuration and is revealed at load.
 //
 // envx returns a KEY_FILE value verbatim except for one trailing line
 // ending, because a secret MAY legitimately contain whitespace. That
@@ -185,18 +189,18 @@ func logConfig(cfg *config) {
 // blank check keeps that true across the trim — a padded KEY would
 // otherwise trim down to an empty string and start the app with no URL
 // or token at all.
-func requireEnv(key envx.Key) string {
-	v, err := envx.Secret(key)
+func requireEnv(key envx.Key) masked.Secret {
+	s, err := envx.Secret(key)
 	if err != nil {
 		slog.Error("required environment variable is missing or unreadable", "key", string(key), "error", err)
 		os.Exit(1)
 	}
-	v = strings.TrimSpace(v)
+	v := strings.TrimSpace(s.Reveal())
 	if v == "" {
 		slog.Error("required environment variable is blank", "key", string(key))
 		os.Exit(1)
 	}
-	return v
+	return masked.NewSecret(v)
 }
 
 func splitTrim(s string) []string {

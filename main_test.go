@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/cplieger/go/filesafe"
+	"github.com/cplieger/go/masked"
 	"github.com/cplieger/go/slogx/capture"
 	"github.com/cplieger/langtag/v3"
 	"github.com/cplieger/plex-language-sync/internal/cache"
@@ -384,8 +385,8 @@ func TestLoadConfigWithFileSecrets(t *testing.T) {
 	if cfg.plexURL != "http://plex:32400" {
 		t.Errorf("plexURL = %q, want http://plex:32400", cfg.plexURL)
 	}
-	if cfg.plexToken != "secret-token" {
-		t.Errorf("plexToken = %q, want secret-token", cfg.plexToken)
+	if cfg.plexToken.Reveal() != "secret-token" {
+		t.Errorf("plexToken = %q, want secret-token", cfg.plexToken.Reveal())
 	}
 }
 
@@ -397,7 +398,7 @@ func TestLogConfig(t *testing.T) {
 
 	cfg := &config{
 		plexURL:           "http://plex:32400",
-		plexToken:         "super-secret-token-value",
+		plexToken:         masked.NewSecret("super-secret-token-value"),
 		updateLevel:       "show",
 		updateStrategy:    "all",
 		schedulerInterval: 24 * time.Hour,
@@ -428,7 +429,7 @@ func TestRequireEnvFromFile(t *testing.T) {
 	t.Setenv("TEST_SECRET", "")
 	t.Setenv("TEST_SECRET_FILE", secretFile)
 
-	got := requireEnv("TEST_SECRET")
+	got := requireEnv("TEST_SECRET").Reveal()
 	if got != "my-secret-value" {
 		t.Errorf("requireEnv via _FILE = %q, want %q", got, "my-secret-value")
 	}
@@ -470,7 +471,7 @@ func TestRequireEnvTrimsFileWhitespace(t *testing.T) {
 			t.Setenv("TEST_SECRET", "")
 			t.Setenv("TEST_SECRET_FILE", secretFile)
 
-			got := requireEnv("TEST_SECRET")
+			got := requireEnv("TEST_SECRET").Reveal()
 			if got != tt.want {
 				t.Errorf("requireEnv via _FILE with content %q = %q, want %q", tt.content, got, tt.want)
 			}
@@ -486,7 +487,7 @@ func TestRequireEnvTrimsEnvWhitespace(t *testing.T) {
 	t.Setenv("TEST_SECRET_FILE", "")
 	t.Setenv("TEST_SECRET", "  padded-value\t")
 
-	got := requireEnv("TEST_SECRET")
+	got := requireEnv("TEST_SECRET").Reveal()
 	if got != "padded-value" {
 		t.Errorf("requireEnv via env = %q, want %q", got, "padded-value")
 	}
@@ -527,8 +528,8 @@ func TestLoadConfigTrimsFileSecrets(t *testing.T) {
 	if cfg.plexURL != "http://plex:32400" {
 		t.Errorf("plexURL = %q, want http://plex:32400", cfg.plexURL)
 	}
-	if cfg.plexToken != "secret-token" {
-		t.Errorf("plexToken = %q, want secret-token", cfg.plexToken)
+	if cfg.plexToken.Reveal() != "secret-token" {
+		t.Errorf("plexToken = %q, want secret-token", cfg.plexToken.Reveal())
 	}
 }
 
