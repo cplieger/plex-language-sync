@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/cplieger/go/envx/v2 v2.0.0-dev.1
-	github.com/cplieger/go/filesafe v1.2.0-dev.2
+	github.com/cplieger/go/filesafe v1.2.0-dev.3
 	github.com/cplieger/go/health/v2 v2.0.0
 	github.com/cplieger/go/httpclient v1.2.0
 	github.com/cplieger/go/httpserver/v2 v2.0.0-dev.11
